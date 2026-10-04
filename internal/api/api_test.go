@@ -164,7 +164,7 @@ func newFixture(t *testing.T) *fixture {
 // JSON.
 func (f *fixture) do(method, target, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	if body != "" {
+	if method == "POST" || method == "PUT" || method == "PATCH" || body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.AddCookie(f.cookie)
@@ -445,5 +445,53 @@ func TestSetupRequiresToken(t *testing.T) {
 	setup := f.decode(f.do("GET", "/api/setup", ""), http.StatusOK)
 	if setup["githubConfigured"] != false {
 		t.Errorf("setup = %v", setup)
+	}
+}
+
+func TestMutationOrigins(t *testing.T) {
+	for _, tt := range []struct {
+		name, origin, site, contentType string
+		want                            int
+	}{
+		{"sibling", "https://evil.apps.example.com", "same-site", "", 403},
+		{"cross site JSON", "https://evil.example", "cross-site", "application/json", 403},
+		{"null", "null", "cross-site", "application/json", 403},
+		{"missing origin from sibling", "", "same-site", "application/json", 403},
+		{"empty body without JSON", "http://localhost", "same-origin", "", 415},
+		{"same origin", "http://localhost", "same-origin", "application/json", 200},
+		{"nonbrowser JSON", "", "", "application/json", 200},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			svc := createApp(t, f.st)
+			req := httptest.NewRequest("POST", "/api/services/"+svc.ID+"/stop", nil)
+			req.AddCookie(f.cookie)
+			req.Header.Set("Origin", tt.origin)
+			req.Header.Set("Sec-Fetch-Site", tt.site)
+			req.Header.Set("Content-Type", tt.contentType)
+			rec := httptest.NewRecorder()
+			f.handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status %d: %s", rec.Code, rec.Body)
+			}
+			if tt.want != 200 && len(f.deployer.controls) != 0 {
+				t.Fatal("rejected request mutated state")
+			}
+		})
+	}
+	f := newFixture(t)
+	for _, target := range []string{"/api/auth/logout", "/api/projects/ignored"} {
+		method := "POST"
+		if target != "/api/auth/logout" {
+			method = "DELETE"
+		}
+		req := httptest.NewRequest(method, target, nil)
+		req.AddCookie(f.cookie)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		f.handler.ServeHTTP(rec, req)
+		if rec.Code != 403 {
+			t.Fatal(target, rec.Code)
+		}
 	}
 }

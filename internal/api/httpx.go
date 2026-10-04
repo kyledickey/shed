@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
@@ -92,9 +93,28 @@ func requireJSON(next http.Handler) http.Handler {
 		switch r.Method {
 		case http.MethodPost, http.MethodPut, http.MethodPatch:
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-			if r.ContentLength != 0 && mt != "application/json" {
+			if mt != "application/json" {
 				writeJSON(w, http.StatusUnsupportedMediaType,
 					map[string]string{"error": "Content-Type must be application/json"})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// protectMutations checks the configured dashboard origin, including for empty
+// requests. Clients without browser headers still need JSON for POST/PUT/PATCH.
+func protectMutations(baseURL string, next http.Handler) http.Handler {
+	u, _ := url.Parse(baseURL)
+	origin := u.Scheme + "://" + u.Host
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			got, site := r.Header.Get("Origin"), r.Header.Get("Sec-Fetch-Site")
+			if got != "" && got != origin || got == "" && site != "" && site != "same-origin" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
 				return
 			}
 		}

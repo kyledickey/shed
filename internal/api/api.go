@@ -108,7 +108,7 @@ func (s *Server) Handler() http.Handler {
 	// Public routes.
 	mux.HandleFunc("GET /api/auth/login", s.auth.Login)
 	mux.HandleFunc("GET /api/auth/callback", s.auth.Callback)
-	mux.HandleFunc("POST /api/auth/logout", s.auth.Logout)
+	mux.Handle("POST /api/auth/logout", protectMutations(s.baseURL, requireJSON(http.HandlerFunc(s.auth.Logout))))
 	mux.Handle("GET /api/setup", s.handle(s.getSetup))
 	mux.Handle("GET /api/setup/github", s.handle(s.setupGitHub))
 	mux.Handle("GET /api/setup/github/callback", s.handle(s.setupCallback))
@@ -116,7 +116,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Routes that need a session.
 	authed := func(pattern string, h handlerFunc) {
-		mux.Handle(pattern, s.auth.Require(requireJSON(s.handle(h))))
+		mux.Handle(pattern, s.auth.Require(protectMutations(s.baseURL, requireJSON(s.handle(h)))))
 	}
 	authed("GET /api/me", s.me)
 

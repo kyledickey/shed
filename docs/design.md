@@ -352,6 +352,10 @@ and author. Other events are acknowledged and ignored.
 
 JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
 status. All routes except auth, setup, and webhook require a session.
+Mutating browser requests must match the origin of `server.url`; sibling
+application origins are rejected. POST, PUT, and PATCH require
+`Content-Type: application/json`, even with an empty body. Logout has the same
+protections. For Vite development, set `server.url` to the dashboard dev origin.
 SSE endpoints emit `event: log` (one line per event), `event: status`
 (deployment status changes, data `{"status":"…"}`), and `event: end`.
 Reconnecting clients get history replayed. Runtime log lines start with the
