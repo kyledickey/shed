@@ -239,3 +239,76 @@ func TestBuildRemovesWorkspace(t *testing.T) {
 		t.Errorf("workspace not removed: %v", entries)
 	}
 }
+
+func TestBuildRelativeWorkDir(t *testing.T) {
+	tests := []struct {
+		name       string
+		dockerfile bool
+		rootDir    string
+	}{
+		{"dockerfile", true, ""},
+		{"dockerfile subdirectory", true, "app"},
+		{"railpack", false, ""},
+		{"railpack subdirectory", false, "app"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			work := t.TempDir()
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, err := filepath.Rel(cwd, work)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			gitScript := "#!/bin/sh\nset -eu\nmkdir -p app\n"
+			if tt.dockerfile {
+				gitScript += "touch Dockerfile app/Dockerfile\n"
+			}
+			scripts := map[string]string{
+				"git": gitScript,
+				"railpack": `#!/bin/sh
+set -eu
+test "$1" = prepare
+test -d "$2"
+test "$3" = --plan-out
+touch "$4"
+test "$5" = --info-out
+touch "$6"
+`,
+				"docker": `#!/bin/sh
+set -eu
+while [ "$#" -gt 1 ]; do
+  if [ "$1" = -f ]; then
+    shift
+    test -f "$1"
+  fi
+  shift
+done
+test -d "$1"
+case "$1" in
+  /*) ;;
+  *) exit 1 ;;
+esac
+`,
+			}
+			for name, script := range scripts {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			b := &Builder{WorkDir: rel}
+			req := Request{RepoURL: "https://example.com/r.git", Commit: "abc", Image: "x", RootDir: tt.rootDir}
+			var out bytes.Buffer
+			if err := b.Build(context.Background(), "id1", req, &out); err != nil {
+				t.Fatalf("Build() error = %v\n%s", err, out.String())
+			}
+			if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
+				t.Errorf("workspace cleanup: entries = %v, error = %v", entries, err)
+			}
+		})
+	}
+}

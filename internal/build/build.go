@@ -57,7 +57,10 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	if err := req.validate(id); err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
-	workspace := filepath.Join(b.WorkDir, id)
+	workspace, err := filepath.Abs(filepath.Join(b.WorkDir, id))
+	if err != nil {
+		return fmt.Errorf("build: resolve workspace: %w", err)
+	}
 	if err := os.RemoveAll(workspace); err != nil {
 		return fmt.Errorf("build: reset workspace: %w", err)
 	}

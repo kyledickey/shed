@@ -195,6 +195,8 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 - Build logs: `<data>/logs/<deploymentID>.log`. Runtime logs: Docker logs of
   the active container.
 - Builds run in `<data>/builds/<deploymentID>` and are deleted afterwards.
+  Workspace paths are made absolute before running build commands, so relative
+  data directories work with Dockerfile and Railpack builds.
 
 ### Variables
 
