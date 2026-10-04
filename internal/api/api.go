@@ -29,6 +29,9 @@ type Deployer interface {
 	Cancel(ctx context.Context, deploymentID string) (store.Deployment, error)
 	ServiceStatuses(ctx context.Context, projectID string) (map[string]deploy.ServiceStatus, error)
 	ApplyRoutes(ctx context.Context) error
+	StopService(ctx context.Context, serviceID string) error
+	StartService(ctx context.Context, serviceID string) error
+	RestartService(ctx context.Context, serviceID string) error
 	DeleteService(ctx context.Context, serviceID string) error
 	DeleteProject(ctx context.Context, projectID string) error
 	DeleteVolume(ctx context.Context, volumeID string) error
@@ -42,6 +45,7 @@ var _ Deployer = (*deploy.Deployer)(nil)
 type Config struct {
 	Store    *store.Store
 	Deployer Deployer
+	Metrics  Metrics
 	Auth     *auth.Auth
 	// GitHub holds the GitHub client. New fills it from the stored App
 	// credentials, and the setup flow fills it once the App is created.
@@ -62,6 +66,7 @@ type Config struct {
 type Server struct {
 	store      *store.Store
 	deployer   Deployer
+	metrics    Metrics
 	auth       *auth.Auth
 	github     *GitHubHolder
 	baseURL    string
@@ -81,6 +86,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
 		store:      cfg.Store,
 		deployer:   cfg.Deployer,
+		metrics:    cfg.Metrics,
 		auth:       cfg.Auth,
 		github:     cfg.GitHub,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -124,6 +130,9 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/services/{id}", s.getService)
 	authed("PATCH /api/services/{id}", s.patchService)
 	authed("DELETE /api/services/{id}", s.deleteService)
+	authed("POST /api/services/{id}/stop", s.controlService(Deployer.StopService))
+	authed("POST /api/services/{id}/start", s.controlService(Deployer.StartService))
+	authed("POST /api/services/{id}/restart", s.controlService(Deployer.RestartService))
 
 	authed("GET /api/services/{id}/variables", s.getVariables)
 	authed("PUT /api/services/{id}/variables", s.putVariables)
@@ -139,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/deployments/{id}/cancel", s.cancelDeployment)
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
+	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
 
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)

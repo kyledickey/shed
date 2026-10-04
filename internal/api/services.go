@@ -194,6 +194,18 @@ func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// controlService returns a handler that applies op, such as stopping, to a
+// service and responds with the updated service.
+func (s *Server) controlService(op func(Deployer, context.Context, string) error) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		id := r.PathValue("id")
+		if err := op(s.deployer, r.Context(), id); err != nil {
+			return err
+		}
+		return s.getService(w, r)
+	}
+}
+
 func (s *Server) getVariables(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
 	if _, err := s.store.Service(r.Context(), id); err != nil {

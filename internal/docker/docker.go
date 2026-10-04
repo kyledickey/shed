@@ -4,6 +4,7 @@ package docker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/netip"
@@ -296,6 +297,17 @@ func (c *Client) Stop(ctx context.Context, id string, timeout time.Duration) err
 	return nil
 }
 
+// Restart stops the container, killing it if it has not exited within
+// timeout, and starts it again.
+func (c *Client) Restart(ctx context.Context, id string, timeout time.Duration) error {
+	secs := int(timeout.Seconds())
+	_, err := c.api.ContainerRestart(ctx, id, client.ContainerRestartOptions{Timeout: &secs})
+	if err != nil {
+		return fmt.Errorf("docker: restart container %s: %w", id, err)
+	}
+	return nil
+}
+
 // Remove force-removes the container. A missing container is not an error.
 func (c *Client) Remove(ctx context.Context, id string) error {
 	_, err := c.api.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
@@ -319,6 +331,12 @@ type Container struct {
 	Labels map[string]string
 	// Volumes lists the named volumes mounted into the container.
 	Volumes []string
+	// CPULimit is the configured CPU limit in cores; zero means unlimited.
+	// Only Inspect sets it.
+	CPULimit float64
+	// MemoryLimit is the configured memory limit in bytes; zero means
+	// unlimited. Only Inspect sets it.
+	MemoryLimit int64
 }
 
 // Inspect returns the state of the container.
@@ -345,16 +363,24 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	if info.NetworkSettings != nil {
 		addIPs(ctr.IPs, info.NetworkSettings.Networks)
 	}
+	if info.HostConfig != nil {
+		ctr.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
+		ctr.MemoryLimit = info.HostConfig.Memory
+	}
 	ctr.Volumes = volumeNames(info.Mounts)
 	return ctr, nil
 }
 
 // List returns all containers, stopped ones included, that have every one of
-// the given labels.
+// the given labels. An empty label value matches any value.
 func (c *Client) List(ctx context.Context, labels map[string]string) ([]Container, error) {
 	filters := make(client.Filters)
 	for k, v := range labels {
-		filters.Add("label", k+"="+v)
+		if v == "" {
+			filters.Add("label", k)
+		} else {
+			filters.Add("label", k+"="+v)
+		}
 	}
 	res, err := c.api.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filters})
 	if err != nil {
@@ -424,4 +450,75 @@ func (c *Client) Logs(ctx context.Context, id string, tail int, follow bool, w i
 		return fmt.Errorf("docker: logs %s: %w", id, err)
 	}
 	return nil
+}
+
+// Stats is a point-in-time sample of a container's resource usage. Counters
+// are cumulative since the container started; rates come from the difference
+// between two samples.
+type Stats struct {
+	Read time.Time
+	// CPUTotal is the CPU time the container has used, in nanoseconds.
+	CPUTotal uint64
+	// SystemCPU is the CPU time the host has used across all CPUs, in
+	// nanoseconds; zero if the daemon does not report it.
+	SystemCPU  uint64
+	OnlineCPUs uint32
+	// MemoryUsage is the memory in use in bytes, excluding inactive page
+	// cache.
+	MemoryUsage uint64
+	// NetRx and NetTx are bytes received and sent, summed over all
+	// interfaces.
+	NetRx, NetTx uint64
+	// DiskRead and DiskWrite are block device bytes read and written.
+	DiskRead, DiskWrite uint64
+}
+
+// Stats returns a single sample of the container's resource usage.
+func (c *Client) Stats(ctx context.Context, id string) (Stats, error) {
+	res, err := c.api.ContainerStats(ctx, id, client.ContainerStatsOptions{})
+	if err != nil {
+		return Stats{}, fmt.Errorf("docker: stats %s: %w", id, err)
+	}
+	defer res.Body.Close()
+	var resp container.StatsResponse
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		return Stats{}, fmt.Errorf("docker: decode stats %s: %w", id, err)
+	}
+	return statsFrom(resp), nil
+}
+
+func statsFrom(r container.StatsResponse) Stats {
+	s := Stats{
+		Read:        r.Read,
+		CPUTotal:    r.CPUStats.CPUUsage.TotalUsage,
+		SystemCPU:   r.CPUStats.SystemUsage,
+		OnlineCPUs:  r.CPUStats.OnlineCPUs,
+		MemoryUsage: r.MemoryStats.Usage,
+	}
+	if s.OnlineCPUs == 0 {
+		s.OnlineCPUs = uint32(len(r.CPUStats.CPUUsage.PercpuUsage))
+	}
+	// Page cache can be reclaimed, so it does not count as usage. The key is
+	// inactive_file on cgroup v2 and total_inactive_file on cgroup v1.
+	for _, key := range []string{"inactive_file", "total_inactive_file", "cache"} {
+		if v, ok := r.MemoryStats.Stats[key]; ok {
+			if v < s.MemoryUsage {
+				s.MemoryUsage -= v
+			}
+			break
+		}
+	}
+	for _, n := range r.Networks {
+		s.NetRx += n.RxBytes
+		s.NetTx += n.TxBytes
+	}
+	for _, e := range r.BlkioStats.IoServiceBytesRecursive {
+		switch strings.ToLower(e.Op) {
+		case "read":
+			s.DiskRead += e.Value
+		case "write":
+			s.DiskWrite += e.Value
+		}
+	}
+	return s
 }

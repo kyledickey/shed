@@ -50,6 +50,25 @@ export function useDeleteService(service: Service) {
   });
 }
 
+// Stop, start, and restart respond with the updated service. Stopping also
+// cancels deployments in progress.
+function useServiceControl(id: string, action: "stop" | "start" | "restart") {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<Service>(`/services/${id}/${action}`),
+    onSuccess: (service) =>
+      Promise.all([
+        refreshService(qc, service),
+        qc.invalidateQueries({ queryKey: keys.projects }),
+        qc.invalidateQueries({ queryKey: keys.deployments(id) }),
+      ]),
+  });
+}
+
+export const useStopService = (id: string) => useServiceControl(id, "stop");
+export const useStartService = (id: string) => useServiceControl(id, "start");
+export const useRestartService = (id: string) => useServiceControl(id, "restart");
+
 export function useSaveVariables(serviceId: string) {
   const qc = useQueryClient();
   return useMutation({

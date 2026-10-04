@@ -78,13 +78,23 @@ func injected(project store.Project, svc store.Service, domains []store.Domain, 
 	return m
 }
 
-// runContainer creates and starts the container of a deployment on its
-// project network, creating the network and volumes as needed.
-func (d *Deployer) runContainer(ctx context.Context, svc store.Service, dep store.Deployment, env map[string]string, vols []store.Volume) (string, error) {
-	network := networkName(svc.ProjectID)
-	if err := d.docker.EnsureNetwork(ctx, network); err != nil {
+// runContainer creates and starts the container described by spec, creating
+// its network and volumes as needed.
+func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (string, error) {
+	if err := d.docker.EnsureNetwork(ctx, spec.Network); err != nil {
 		return "", err
 	}
+	for _, m := range spec.Mounts {
+		if err := d.docker.EnsureVolume(ctx, m.Volume); err != nil {
+			return "", err
+		}
+	}
+	return d.docker.Run(ctx, spec)
+}
+
+// containerSpec describes the container of a deployment on its project
+// network.
+func containerSpec(svc store.Service, dep store.Deployment, env map[string]string, vols []store.Volume) docker.RunSpec {
 	spec := docker.RunSpec{
 		Name:  containerName(svc.ID, dep.ID),
 		Image: dep.Image,
@@ -94,23 +104,19 @@ func (d *Deployer) runContainer(ctx context.Context, svc store.Service, dep stor
 			labelService:    svc.ID,
 			labelDeployment: dep.ID,
 		},
-		Network: network,
+		Network: networkName(svc.ProjectID),
 		Aliases: []string{svc.Name},
 	}
 	for _, k := range slices.Sorted(maps.Keys(env)) {
 		spec.Env = append(spec.Env, k+"="+env[k])
 	}
 	for _, v := range vols {
-		name := volumeName(v.ID)
-		if err := d.docker.EnsureVolume(ctx, name); err != nil {
-			return "", err
-		}
-		spec.Mounts = append(spec.Mounts, docker.Mount{Volume: name, Target: v.MountPath})
+		spec.Mounts = append(spec.Mounts, docker.Mount{Volume: volumeName(v.ID), Target: v.MountPath})
 	}
 	if svc.PublicPort > 0 && svc.Port > 0 {
 		spec.Publish = []docker.PortBinding{{HostPort: svc.PublicPort, ContainerPort: svc.Port}}
 	}
-	return d.docker.Run(ctx, spec)
+	return spec
 }
 
 // command returns the container command: the start command run by a shell,
@@ -161,8 +167,8 @@ func upstreamAddr(ip string, port int) string {
 	return net.JoinHostPort(ip, strconv.Itoa(port))
 }
 
-// ApplyRoutes points the proxy at the active container of every service with
-// a domain, plus the dashboard. Call it after anything that changes domains
+// ApplyRoutes points the proxy at the active container of every running
+// service with a domain, plus the dashboard. Call it after anything that changes domains
 // or active deployments.
 func (d *Deployer) ApplyRoutes(ctx context.Context) error {
 	if d.proxy == nil {
@@ -201,10 +207,10 @@ func (d *Deployer) routes(ctx context.Context) ([]proxy.Route, error) {
 }
 
 // upstream returns the address of a service's active container, or "" if it
-// has none.
+// has none or the service is stopped.
 func (d *Deployer) upstream(ctx context.Context, serviceID string) string {
 	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil || svc.Port <= 0 {
+	if err != nil || svc.Port <= 0 || svc.Stopped {
 		return ""
 	}
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
@@ -286,8 +292,9 @@ func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
 }
 
 // Reconcile brings Docker in line with the store after a restart: deployments
-// that were in progress are marked failed, every active deployment's
-// container is started (or recreated if it is gone), and routes are applied.
+// that were in progress are marked failed, the active deployment's container
+// of every service that is not stopped is started (or recreated if it is
+// gone), and routes are applied.
 func (d *Deployer) Reconcile(ctx context.Context) error {
 	stale, err := d.store.DeploymentsByStatus(ctx,
 		store.StatusQueued, store.StatusWaiting, store.StatusBuilding, store.StatusDeploying)
@@ -304,6 +311,14 @@ func (d *Deployer) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("deploy: reconcile: %w", err)
 	}
 	for _, dep := range active {
+		svc, err := d.store.Service(ctx, dep.ServiceID)
+		if err != nil {
+			d.log.Error("restore active deployment", "deployment", dep.ID, "err", err)
+			continue
+		}
+		if svc.Stopped {
+			continue
+		}
 		if err := d.ensureRunning(ctx, dep); err != nil {
 			d.log.Error("restore active deployment", "deployment", dep.ID, "err", err)
 		}
@@ -367,7 +382,7 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) erro
 		return err
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
-	id, err := d.runContainer(ctx, svc, dep, env, vols)
+	id, err := d.runContainer(ctx, containerSpec(svc, dep, env, vols))
 	if err != nil {
 		return err
 	}
@@ -382,7 +397,7 @@ func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 	if err != nil {
 		return err
 	}
-	d.halt(serviceID)
+	d.halt(serviceID, errDeleted)
 	if err := d.teardown(ctx, svc); err != nil {
 		return err
 	}
@@ -411,7 +426,7 @@ func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
 	var deps []store.Deployment
 	var errs []error
 	for _, svc := range services {
-		d.halt(svc.ID)
+		d.halt(svc.ID, errDeleted)
 		errs = append(errs, d.teardown(ctx, svc))
 		ds, err := d.store.Deployments(ctx, svc.ID, 0)
 		if err != nil {
@@ -509,11 +524,13 @@ const (
 	StatusActive    ServiceStatus = "active"
 	StatusFailed    ServiceStatus = "failed"
 	StatusCrashed   ServiceStatus = "crashed"
+	StatusStopped   ServiceStatus = "stopped"
 )
 
 // ServiceStatuses returns the status of every service of a project, keyed by
 // service ID. A service is deploying while its latest deployment is in
-// progress; otherwise active or crashed depending on whether its active
+// progress; otherwise stopped if the user stopped it; otherwise active or
+// crashed depending on whether its active
 // deployment's container is running; otherwise failed if its latest
 // deployment failed; otherwise offline.
 func (d *Deployer) ServiceStatuses(ctx context.Context, projectID string) (map[string]ServiceStatus, error) {
@@ -535,15 +552,20 @@ func (d *Deployer) ServiceStatuses(ctx context.Context, projectID string) (map[s
 	statuses := make(map[string]ServiceStatus, len(services))
 	for _, svc := range services {
 		latest, err := d.store.LatestDeployment(ctx, svc.ID)
-		if errors.Is(err, store.ErrNotFound) {
+		switch {
+		case errors.Is(err, store.ErrNotFound) && svc.Stopped:
+			statuses[svc.ID] = StatusStopped
+			continue
+		case errors.Is(err, store.ErrNotFound):
 			statuses[svc.ID] = StatusOffline
 			continue
-		}
-		if err != nil {
+		case err != nil:
 			return nil, err
-		}
-		if !latest.Status.Terminal() {
+		case !latest.Status.Terminal():
 			statuses[svc.ID] = StatusDeploying
+			continue
+		case svc.Stopped:
+			statuses[svc.ID] = StatusStopped
 			continue
 		}
 		active, err := d.store.ActiveDeployment(ctx, svc.ID)

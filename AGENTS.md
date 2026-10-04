@@ -28,6 +28,7 @@ internal/github    GitHub App: manifest, tokens, repos, CI status, OAuth, webhoo
 internal/vars      ${{ KEY }} / ${{ service.KEY }} reference resolution
 internal/catalog   database templates
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
+internal/metrics   container resource sampling and per-service time series
 internal/auth      sessions, GitHub sign-in, middleware
 internal/api       HTTP API, SSE logs, webhook, SPA serving
 web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)

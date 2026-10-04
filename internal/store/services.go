@@ -6,13 +6,13 @@ import (
 )
 
 const serviceCols = `id, project_id, name, kind, repo, branch, root_dir, image, dockerfile_path,
-	start_command, port, healthcheck_path, public_port, auto_deploy, wait_for_ci, created_at`
+	start_command, port, healthcheck_path, public_port, auto_deploy, wait_for_ci, stopped, created_at`
 
 func scanService(r scanner) (Service, error) {
 	var v Service
 	err := r.Scan(&v.ID, &v.ProjectID, &v.Name, &v.Kind, &v.Repo, &v.Branch, &v.RootDir, &v.Image,
 		&v.DockerfilePath, &v.StartCommand, &v.Port, &v.HealthcheckPath, &v.PublicPort,
-		&v.AutoDeploy, &v.WaitForCI, (*timestamp)(&v.CreatedAt))
+		&v.AutoDeploy, &v.WaitForCI, &v.Stopped, (*timestamp)(&v.CreatedAt))
 	return v, err
 }
 
@@ -23,10 +23,10 @@ func (s *Store) CreateService(ctx context.Context, sv Service) (Service, error) 
 	sv.ID = NewID()
 	sv.CreatedAt = now()
 	err := s.exec(ctx, `INSERT INTO services (`+serviceCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sv.ID, sv.ProjectID, sv.Name, sv.Kind, sv.Repo, sv.Branch, sv.RootDir, sv.Image,
 		sv.DockerfilePath, sv.StartCommand, sv.Port, sv.HealthcheckPath, sv.PublicPort,
-		sv.AutoDeploy, sv.WaitForCI, formatTime(sv.CreatedAt))
+		sv.AutoDeploy, sv.WaitForCI, sv.Stopped, formatTime(sv.CreatedAt))
 	if err != nil {
 		return Service{}, fmt.Errorf("store: create service %q: %w", sv.Name, err)
 	}
@@ -77,7 +77,8 @@ func (s *Store) ServicesForPush(ctx context.Context, repo, branch string) ([]Ser
 
 // UpdateService overwrites the editable fields of the service sv.ID: its name,
 // source, build and runtime settings. The ID, project, kind, and creation time
-// are immutable. It returns ErrNotFound for an unknown service.
+// are immutable, and Stopped is changed only by SetServiceStopped. It returns
+// ErrNotFound for an unknown service.
 func (s *Store) UpdateService(ctx context.Context, sv Service) error {
 	err := s.execOne(ctx, `UPDATE services SET name = ?, repo = ?, branch = ?, root_dir = ?, image = ?,
 		dockerfile_path = ?, start_command = ?, port = ?, healthcheck_path = ?, public_port = ?,
@@ -86,6 +87,15 @@ func (s *Store) UpdateService(ctx context.Context, sv Service) error {
 		sv.Port, sv.HealthcheckPath, sv.PublicPort, sv.AutoDeploy, sv.WaitForCI, sv.ID)
 	if err != nil {
 		return fmt.Errorf("store: update service %s: %w", sv.ID, err)
+	}
+	return nil
+}
+
+// SetServiceStopped records whether a service has been stopped. It returns
+// ErrNotFound for an unknown service.
+func (s *Store) SetServiceStopped(ctx context.Context, id string, stopped bool) error {
+	if err := s.execOne(ctx, `UPDATE services SET stopped = ? WHERE id = ?`, stopped, id); err != nil {
+		return fmt.Errorf("store: set service %s stopped: %w", id, err)
 	}
 	return nil
 }

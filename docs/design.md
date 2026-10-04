@@ -79,8 +79,9 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
+| `internal/metrics` | container resource sampling, per-service time series | interfaces only + docker/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, store |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, store |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -132,6 +133,7 @@ CREATE TABLE services (
   public_port INTEGER NOT NULL DEFAULT 0,-- host TCP port to publish (0 = none)
   auto_deploy INTEGER NOT NULL DEFAULT 1,
   wait_for_ci INTEGER NOT NULL DEFAULT 0,
+  stopped INTEGER NOT NULL DEFAULT 0,    -- stopped by the user; see "Stopping a service"
   created_at TEXT NOT NULL,
   UNIQUE (project_id, name)
 );
@@ -175,6 +177,18 @@ CREATE TABLE deployments (
   finished_at TEXT
 );
 CREATE INDEX deployments_service ON deployments(service_id, created_at DESC);
+
+CREATE TABLE metric_samples (            -- one row per service per sampling tick
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  ts INTEGER NOT NULL,                   -- unix seconds
+  cpu REAL NOT NULL,                     -- percent of one core
+  memory INTEGER NOT NULL,               -- bytes
+  net_rx REAL NOT NULL,                  -- bytes/s
+  net_tx REAL NOT NULL,
+  disk_read REAL NOT NULL,
+  disk_write REAL NOT NULL,
+  PRIMARY KEY (service_id, ts)
+) WITHOUT ROWID;
 ```
 
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
@@ -230,17 +244,61 @@ the same service.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
 3. **Start**: resolve variables, create and start the new container.
-   Services with volumes stop the old container first (volumes can't be shared
-   safely, e.g. database data dirs); others overlap for zero downtime.
+   Services with volumes or a public port stop the old container first if it
+   is running (volumes can't be shared safely, e.g. database data dirs); others
+   overlap for zero downtime.
 4. **Health**: if `port > 0`, wait up to 120s for a TCP connect, or a 2xx/3xx
    on `healthcheck_path` if set, at the container's IP on the project network.
-5. **Switch**: rebuild proxy routes, then stop/remove the previous container
-   and mark its deployment `removed`. New deployment → `active`.
+   A service without a port is watched for 3s instead. Either way the
+   deployment fails if the container exits meanwhile.
+5. **Switch**: new deployment → `active`, clear the service's `stopped` flag,
+   rebuild proxy routes, then stop/remove the previous container and mark its
+   deployment `removed`.
 6. On failure at any step: mark `failed`, record `error`, remove the new
-   container, leave the previous one running.
+   container, and restart the previous container if step 3 stopped it.
 
-On boot, `deploy.Reconcile` ensures every active deployment's container is
-running, marks orphaned in-progress deployments `failed`, and applies routes.
+The build log has a `==> ` heading per step with detail lines under it: the
+container's name, image, network and private address, volumes, published
+port, number of variables (never their values), and start command; what the
+health check probes, a "Not ready yet" line every 5s, and how long it took;
+which domains route to the new deployment and which deployment it replaces.
+From start until the health check ends (or the 3s watch for services without
+a port), the new container's own stdout/stderr is copied into the build log
+without Docker's timestamps, so its boot output and last words before an exit
+are visible.
+
+On boot, `deploy.Reconcile` ensures the active deployment's container of every
+service that is not stopped is running, marks orphaned in-progress deployments
+`failed`, and applies routes.
+
+### Stopping a service
+
+`POST /api/services/{id}/stop` sets `stopped`, cancels any deployment in
+progress (recorded as `canceled`, "service stopped"), stops the active
+deployment's container without removing it, and removes the service's routes.
+The active deployment stays `active`: it is what `start` runs again
+(recreating its container if it is gone), and what a reboot leaves stopped.
+`restart` restarts the active container of a running service. Any new
+deployment may still run while stopped; when it goes live it clears `stopped`.
+
+### Metrics
+
+`internal/metrics` samples every running container labeled `shed.service`
+every 10s with a one-shot Docker stats call. Rates come from the difference
+to the same container's previous sample (a container's first sample, or one
+after a counter reset, yields nothing): CPU is percent of one core, memory is
+usage minus inactive page cache, network and block I/O are bytes/s. Containers
+of the same service (overlap during a zero-downtime deploy) are summed into
+one `metric_samples` row per tick. Samples older than 7 days are pruned hourly.
+
+A query for range `1h`, `6h`, `24h`, or `7d` returns 180 buckets of width
+range/180 (20s, 120s, 480s, 3360s), aligned to multiples of the width since
+the Unix epoch. The last bucket is the one containing now if it has samples
+yet; otherwise the window shifts back one step to end at the last complete
+bucket, so the series never ends in a null just because the current bucket is
+young. Each bucket is the average of its samples, or null if it has none. `cpuLimit` and `memoryLimit`
+are the running container's configured limits (0 = unlimited, which is
+always the case today since shed sets none).
 
 ### Proxy
 
@@ -318,6 +376,9 @@ POST   /api/projects/{id}/services  NewService  → Service  (creates + first de
 GET    /api/services/{id}                       → Service
 PATCH  /api/services/{id}       ServicePatch    → Service
 DELETE /api/services/{id}                       204  (containers, volumes, images)
+POST   /api/services/{id}/stop                  → Service  (cancel deploys, stop container, unroute)
+POST   /api/services/{id}/start                 → Service  (409 if nothing was ever deployed)
+POST   /api/services/{id}/restart               → Service  (409 if stopped or nothing deployed)
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
@@ -350,7 +411,7 @@ type User = { login: string; name: string; avatarUrl: string };
 type Setup = { githubConfigured: boolean; appSlug: string; installUrl: string };
 
 type ServiceKind = "app" | "postgres" | "mysql" | "mongo" | "redis";
-type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed";
+type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed" | "stopped";
 type DeploymentStatus =
   | "queued" | "waiting" | "building" | "deploying" | "active"
   | "failed" | "crashed" | "removed" | "canceled" | "skipped";
@@ -411,8 +472,8 @@ type Metrics = {
 ```
 
 Service status is derived: latest deployment non-terminal → `deploying`;
-active deployment whose container is running → `active`, not running →
-`crashed`; latest deployment `failed` with nothing active → `failed`;
+`stopped` flag set → `stopped`; active deployment whose container is running
+→ `active`, not running → `crashed`; latest deployment `failed` with nothing active → `failed`;
 otherwise `offline`.
 
 Settings are saved immediately; the dashboard tells the user to redeploy to

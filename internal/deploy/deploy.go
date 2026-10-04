@@ -5,7 +5,8 @@
 // its health, switches the proxy routes, and retires the previous container.
 // Each service has its own queue, and a newer deployment cancels older ones
 // that are still in progress. The Deployer also reconciles state on boot,
-// tears services and projects down, and derives service status.
+// stops, starts, and restarts services, tears services and projects down, and
+// derives service status.
 //
 // Docker, the image builder, the proxy, and GitHub are reached through small
 // interfaces so they can be replaced, for example by fakes in tests.
@@ -41,6 +42,7 @@ type Docker interface {
 	Run(ctx context.Context, spec docker.RunSpec) (string, error)
 	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string, timeout time.Duration) error
+	Restart(ctx context.Context, id string, timeout time.Duration) error
 	Remove(ctx context.Context, id string) error
 	Inspect(ctx context.Context, id string) (docker.Container, error)
 	List(ctx context.Context, labels map[string]string) ([]docker.Container, error)
@@ -96,8 +98,10 @@ var (
 	// ErrNoImage is returned when redeploying a deployment that has no image.
 	ErrNoImage = errors.New("deploy: deployment has no image to redeploy")
 	// ErrNoContainer is returned for runtime logs of a service that has no
-	// active container.
+	// active container, and when starting or restarting such a service.
 	ErrNoContainer = errors.New("deploy: service has no active container")
+	// ErrServiceStopped is returned when restarting a stopped service.
+	ErrServiceStopped = errors.New("deploy: service is stopped")
 )
 
 // Cancellation causes, which decide how an interrupted deployment is
@@ -106,6 +110,7 @@ var (
 	errCanceled   = errors.New("canceled")
 	errSuperseded = errors.New("superseded by a newer deployment")
 	errDeleted    = errors.New("service deleted")
+	errHalted     = errors.New("service stopped")
 	errShutdown   = errors.New("interrupted by shutdown")
 )
 
@@ -126,14 +131,18 @@ type Deployer struct {
 	ciTimeout      time.Duration
 	healthInterval time.Duration
 	healthTimeout  time.Duration
+	healthReport   time.Duration // how often to report a pending health check
+	startupWatch   time.Duration // how long to watch a service without a port
+	logDrain       time.Duration // how long to wait for an exited container's output
 	stopTimeout    time.Duration
 	logPoll        time.Duration
 	probe          func(ctx context.Context, addr, path string) error
 
-	ctx      context.Context // parent of every job; canceled by Stop
-	shutdown context.CancelCauseFunc
-	wg       sync.WaitGroup
-	routesMu sync.Mutex // serializes computing and applying routes
+	ctx       context.Context // parent of every job; canceled by Stop
+	shutdown  context.CancelCauseFunc
+	wg        sync.WaitGroup
+	routesMu  sync.Mutex // serializes computing and applying routes
+	controlMu sync.Mutex // serializes stopping, starting, and restarting services
 
 	mu      sync.Mutex
 	stopped bool
@@ -167,6 +176,9 @@ func New(cfg Config) *Deployer {
 		ciTimeout:      60 * time.Minute,
 		healthInterval: time.Second,
 		healthTimeout:  120 * time.Second,
+		healthReport:   5 * time.Second,
+		startupWatch:   3 * time.Second,
+		logDrain:       2 * time.Second,
 		stopTimeout:    30 * time.Second,
 		logPoll:        500 * time.Millisecond,
 		probe:          probe,
@@ -307,9 +319,9 @@ func (d *Deployer) Cancel(ctx context.Context, deploymentID string) (store.Deplo
 	return d.store.Deployment(ctx, deploymentID)
 }
 
-// halt cancels everything queued or running for a service and waits for its
-// worker to exit.
-func (d *Deployer) halt(serviceID string) {
+// halt cancels everything queued or running for a service with cause and
+// waits for its worker to exit.
+func (d *Deployer) halt(serviceID string, cause error) {
 	d.mu.Lock()
 	w := d.workers[serviceID]
 	if w == nil {
@@ -317,11 +329,11 @@ func (d *Deployer) halt(serviceID string) {
 		return
 	}
 	if w.pending != nil {
-		d.abandon(*w.pending, store.StatusCanceled, errDeleted.Error())
+		d.abandon(*w.pending, store.StatusCanceled, cause.Error())
 		w.pending = nil
 	}
 	if w.cancel != nil {
-		w.cancel(errDeleted)
+		w.cancel(cause)
 	}
 	d.mu.Unlock()
 	<-w.done

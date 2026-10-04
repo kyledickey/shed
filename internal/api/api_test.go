@@ -24,13 +24,32 @@ import (
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
+	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// fakeDeployer records deployments without running them.
+// fakeDeployer records deployments and service controls without running
+// them.
 type fakeDeployer struct {
-	mu     sync.Mutex
-	deploy []store.Trigger
+	mu         sync.Mutex
+	deploy     []store.Trigger
+	controls   []string // "stop <id>", "start <id>", "restart <id>"
+	controlErr error    // returned by the service controls
+}
+
+func (f *fakeDeployer) control(op, serviceID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.controls = append(f.controls, op+" "+serviceID)
+	return f.controlErr
+}
+
+func (f *fakeDeployer) StopService(_ context.Context, id string) error { return f.control("stop", id) }
+func (f *fakeDeployer) StartService(_ context.Context, id string) error {
+	return f.control("start", id)
+}
+func (f *fakeDeployer) RestartService(_ context.Context, id string) error {
+	return f.control("restart", id)
 }
 
 func (f *fakeDeployer) Deploy(_ context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error) {
@@ -68,10 +87,30 @@ func (f *fakeDeployer) FollowLog(_ context.Context, _ string, line func(string),
 	return nil
 }
 
+// fakeMetrics returns a fixed two-point series and records the range asked
+// for.
+type fakeMetrics struct {
+	mu    sync.Mutex
+	asked []metrics.Range
+}
+
+func (f *fakeMetrics) Query(_ context.Context, _ string, r metrics.Range) (metrics.Series, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, r)
+	one := 1.5
+	series := []*float64{nil, &one}
+	return metrics.Series{
+		Range: r, Start: time.Date(2026, 5, 1, 11, 0, 20, 0, time.UTC), Step: 20 * time.Second,
+		CPU: series, Memory: series, NetRx: series, NetTx: series, DiskRead: series, DiskWrite: series,
+	}, nil
+}
+
 type fixture struct {
 	t        *testing.T
 	st       *store.Store
 	deployer *fakeDeployer
+	metrics  *fakeMetrics
 	github   *GitHubHolder
 	handler  http.Handler
 	cookie   *http.Cookie
@@ -88,10 +127,11 @@ func newFixture(t *testing.T) *fixture {
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", nil, log)
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, github: gh}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, metrics: &fakeMetrics{}, github: gh}
 	srv, err := New(context.Background(), Config{
 		Store:      st,
 		Deployer:   f.deployer,
+		Metrics:    f.metrics,
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    "http://localhost",
@@ -244,6 +284,67 @@ func TestDeploymentLogStream(t *testing.T) {
 	want := "event: log\ndata: hello\n\nevent: status\ndata: {\"status\":\"active\"}\n\nevent: end\ndata: \n\n"
 	if rec.Body.String() != want {
 		t.Errorf("body = %q, want %q", rec.Body, want)
+	}
+}
+
+func TestServiceMetrics(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	base := "/api/services/" + svc.ID + "/metrics"
+
+	rec := f.do("GET", base, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body)
+	}
+	want := `{"range":"1h","start":"2026-05-01T11:00:20Z","step":20,"cpuLimit":0,"memoryLimit":0,` +
+		`"cpu":[null,1.5],"memory":[null,1.5],"netRx":[null,1.5],"netTx":[null,1.5],"diskRead":[null,1.5],"diskWrite":[null,1.5]}` + "\n"
+	if rec.Body.String() != want {
+		t.Errorf("body = %s, want %s", rec.Body, want)
+	}
+
+	f.decode(f.do("GET", base+"?range=7d", ""), http.StatusOK)
+	if got := f.metrics.asked; len(got) != 2 || got[0] != metrics.Range1h || got[1] != metrics.Range7d {
+		t.Errorf("ranges asked = %v, want [1h 7d]", got)
+	}
+	f.decode(f.do("GET", base+"?range=2h", ""), http.StatusBadRequest)
+	f.decode(f.do("GET", "/api/services/nope/metrics", ""), http.StatusNotFound)
+}
+
+func TestServiceControls(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	tests := []struct {
+		op, service string
+		err         error
+		wantStatus  int
+		wantError   string
+	}{
+		{"stop", svc.ID, nil, http.StatusOK, ""},
+		{"start", svc.ID, nil, http.StatusOK, ""},
+		{"restart", svc.ID, nil, http.StatusOK, ""},
+		{"start", svc.ID, deploy.ErrNoContainer, http.StatusConflict, "nothing to run; deploy the service first"},
+		{"restart", svc.ID, deploy.ErrNoContainer, http.StatusConflict, "nothing to run; deploy the service first"},
+		{"restart", svc.ID, deploy.ErrServiceStopped, http.StatusConflict, "service is stopped; start it instead"},
+		{"stop", "nope", store.ErrNotFound, http.StatusNotFound, "not found"},
+		{"stop", "nope", nil, http.StatusNotFound, "not found"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.op+" "+tt.service, func(t *testing.T) {
+			f.deployer.mu.Lock()
+			f.deployer.controls, f.deployer.controlErr = nil, tt.err
+			f.deployer.mu.Unlock()
+
+			body := f.decode(f.do("POST", "/api/services/"+tt.service+"/"+tt.op, ""), tt.wantStatus)
+			if tt.wantError != "" && body["error"] != tt.wantError {
+				t.Errorf("error = %v, want %q", body["error"], tt.wantError)
+			}
+			if tt.wantStatus == http.StatusOK && (body["id"] != svc.ID || body["status"] == nil) {
+				t.Errorf("body = %v, want the service", body)
+			}
+			if want := tt.op + " " + tt.service; len(f.deployer.controls) != 1 || f.deployer.controls[0] != want {
+				t.Errorf("controls = %v, want [%s]", f.deployer.controls, want)
+			}
+		})
 	}
 }
 

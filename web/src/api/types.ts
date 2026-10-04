@@ -2,7 +2,7 @@ export type User = { login: string; name: string; avatarUrl: string };
 export type Setup = { githubConfigured: boolean; appSlug: string; installUrl: string };
 
 export type ServiceKind = "app" | "postgres" | "mysql" | "mongo" | "redis";
-export type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed";
+export type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed" | "stopped";
 export type DeploymentStatus =
   | "queued"
   | "waiting"

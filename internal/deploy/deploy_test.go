@@ -26,7 +26,10 @@ type fakeDocker struct {
 	next       int
 	containers map[string]*docker.Container
 	runs       []docker.RunSpec
-	exposed    []int // ports every image exposes
+	restarts   []string
+	exposed    []int  // ports every image exposes
+	output     string // what every container prints
+	exitCode   int    // if set, new containers exit at once with it
 }
 
 func newFakeDocker() *fakeDocker {
@@ -45,7 +48,26 @@ func (f *fakeDocker) ExposedPorts(context.Context, string) ([]int, error) {
 }
 func (f *fakeDocker) RemoveImage(context.Context, string) error                  { return nil }
 func (f *fakeDocker) ListImages(context.Context, string) ([]docker.Image, error) { return nil, nil }
-func (f *fakeDocker) Logs(context.Context, string, int, bool, io.Writer) error   { return nil }
+
+// Logs writes the output, then, if following, blocks until the container
+// stops or ctx ends.
+func (f *fakeDocker) Logs(ctx context.Context, id string, _ int, follow bool, w io.Writer) error {
+	f.mu.Lock()
+	out := f.output
+	f.mu.Unlock()
+	io.WriteString(w, out)
+	for follow {
+		if c, ok := f.container(id); !ok || !c.Running {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	return nil
+}
 
 func (f *fakeDocker) Run(_ context.Context, spec docker.RunSpec) (string, error) {
 	f.mu.Lock()
@@ -57,6 +79,10 @@ func (f *fakeDocker) Run(_ context.Context, spec docker.RunSpec) (string, error)
 		IPs:    map[string]string{spec.Network: fmt.Sprintf("10.0.0.%d", f.next)},
 		Labels: spec.Labels,
 	}
+	if f.exitCode != 0 {
+		c := f.containers[id]
+		c.State, c.Running, c.ExitCode = "exited", false, f.exitCode
+	}
 	f.runs = append(f.runs, spec)
 	return id, nil
 }
@@ -67,6 +93,13 @@ func (f *fakeDocker) Start(_ context.Context, id string) error {
 
 func (f *fakeDocker) Stop(_ context.Context, id string, _ time.Duration) error {
 	return f.setRunning(id, false)
+}
+
+func (f *fakeDocker) Restart(_ context.Context, id string, _ time.Duration) error {
+	f.mu.Lock()
+	f.restarts = append(f.restarts, id)
+	f.mu.Unlock()
+	return f.setRunning(id, true)
 }
 
 func (f *fakeDocker) setRunning(id string, running bool) error {
@@ -198,6 +231,8 @@ func newFixture(t *testing.T) *fixture {
 	f.d.healthInterval = 10 * time.Millisecond
 	f.d.healthTimeout = 200 * time.Millisecond
 	f.d.logPoll = 10 * time.Millisecond
+	f.d.startupWatch = 50 * time.Millisecond
+	f.d.logDrain = time.Second
 	f.d.probe = func(context.Context, string, string) error {
 		if f.healthy() {
 			return nil
@@ -314,7 +349,7 @@ func TestDeployHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := strings.Join(lines, "\n")
-	for _, want := range []string{"==> Building o/r@abc1234", "building shed/", "==> Starting container", "==> Healthy"} {
+	for _, want := range []string{"==> Building o/r@abc1234", "building shed/", "==> Starting container", "Healthy after"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
 		}

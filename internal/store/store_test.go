@@ -199,6 +199,29 @@ func TestServices(t *testing.T) {
 	if err := s.UpdateService(ctx, Service{ID: "nope"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("UpdateService(nope) error = %v", err)
 	}
+
+	if err := s.SetServiceStopped(ctx, app.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Service(ctx, app.ID); !got.Stopped {
+		t.Error("after SetServiceStopped(true): Stopped = false")
+	}
+	app.Port = 7070 // UpdateService must not clear Stopped.
+	if err := s.UpdateService(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Service(ctx, app.ID); !got.Stopped || got.Port != 7070 {
+		t.Errorf("after update of stopped service: %+v", got)
+	}
+	if err := s.SetServiceStopped(ctx, app.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Service(ctx, app.ID); got.Stopped {
+		t.Error("after SetServiceStopped(false): Stopped = true")
+	}
+	if err := s.SetServiceStopped(ctx, "nope", true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetServiceStopped(nope) error = %v", err)
+	}
 	if svs, _ := s.Services(ctx, p.ID); len(svs) != 4 {
 		t.Errorf("Services() len = %d, want 4", len(svs))
 	}
@@ -366,5 +389,61 @@ func TestStatusTerminal(t *testing.T) {
 		if got := st.Terminal(); got != want {
 			t.Errorf("%s.Terminal() = %v, want %v", st, got, want)
 		}
+	}
+}
+
+func TestMetrics(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	a := mustService(t, s, Service{ProjectID: p.ID, Name: "a", Kind: "app"})
+	b := mustService(t, s, Service{ProjectID: p.ID, Name: "b", Kind: "app"})
+
+	from := time.Unix(1_000_000, 0)
+	at := func(sec int64) time.Time { return from.Add(time.Duration(sec) * time.Second) }
+	samples := []MetricSample{
+		{ServiceID: a.ID, Time: at(-1), CPU: 99},                                     // before the window
+		{ServiceID: a.ID, Time: at(0), CPU: 10, Memory: 100, NetRx: 1, DiskWrite: 4}, // bucket 0
+		{ServiceID: a.ID, Time: at(9), CPU: 30, Memory: 300, NetRx: 3, DiskWrite: 8}, // bucket 0
+		{ServiceID: a.ID, Time: at(25), CPU: 50, Memory: 500, NetTx: 2, DiskRead: 6}, // bucket 2
+		{ServiceID: a.ID, Time: at(30), CPU: 99},                                     // after the window
+		{ServiceID: b.ID, Time: at(5), CPU: 77},
+	}
+	if err := s.InsertMetricSamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	// Replacing a sample at the same second must not conflict.
+	if err := s.InsertMetricSamples(ctx, []MetricSample{{ServiceID: a.ID, Time: at(9), CPU: 30, Memory: 300, NetRx: 3, DiskWrite: 8}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.MetricBuckets(ctx, a.ID, from, 10*time.Second, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MetricBucket{
+		{Index: 0, CPU: 20, Memory: 200, NetRx: 2, DiskWrite: 6},
+		{Index: 2, CPU: 50, Memory: 500, NetTx: 2, DiskRead: 6},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("MetricBuckets() = %+v, want %+v", got, want)
+	}
+	if _, err := s.MetricBuckets(ctx, a.ID, from, time.Millisecond, 3); err == nil {
+		t.Error("MetricBuckets(sub-second step) succeeded")
+	}
+
+	if err := s.DeleteMetricSamplesBefore(ctx, at(25)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.MetricBuckets(ctx, a.ID, from.Add(-time.Hour), time.Hour, 3)
+	if want := []MetricBucket{{Index: 1, CPU: 74.5, Memory: 250, NetTx: 1, DiskRead: 3}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after delete: MetricBuckets() = %+v, want %+v", got, want)
+	}
+
+	if err := s.DeleteService(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.MetricBuckets(ctx, a.ID, from.Add(-time.Hour), time.Hour, 3); len(got) != 0 {
+		t.Errorf("after DeleteService: MetricBuckets() = %+v, want none", got)
 	}
 }

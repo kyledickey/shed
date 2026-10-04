@@ -26,6 +26,7 @@ import (
 	"github.com/kyledickey/shed/internal/config"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/web"
@@ -124,6 +125,8 @@ func run() error {
 	})
 	defer deployer.Stop()
 
+	collector := metrics.New(metrics.Config{Docker: dc, Store: st, Log: log})
+
 	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {
 			return c, true
@@ -134,6 +137,7 @@ func run() error {
 	server, err := api.New(ctx, api.Config{
 		Store:      st,
 		Deployer:   deployer,
+		Metrics:    collector,
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    cfg.Server.URL,
@@ -148,6 +152,15 @@ func run() error {
 	if err := deployer.Reconcile(ctx); err != nil {
 		return err
 	}
+	collectorDone := make(chan struct{})
+	go func() {
+		defer close(collectorDone)
+		collector.Run(ctx)
+	}()
+	defer func() {
+		stop() // Also ends the collector when serve fails.
+		<-collectorDone
+	}()
 	return serve(ctx, cfg.Server.Listen, server.Handler(), log)
 }
 

@@ -3,6 +3,9 @@ package docker
 import (
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 func TestTagRepo(t *testing.T) {
@@ -27,5 +30,49 @@ func TestTCPPorts(t *testing.T) {
 	}
 	if got := tcpPorts(nil); got != nil {
 		t.Errorf("tcpPorts(nil) = %v, want nil", got)
+	}
+}
+
+func TestStatsFrom(t *testing.T) {
+	read := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	base := func(mem map[string]uint64) container.StatsResponse {
+		return container.StatsResponse{
+			Read: read,
+			CPUStats: container.CPUStats{
+				CPUUsage:    container.CPUUsage{TotalUsage: 500, PercpuUsage: []uint64{1, 2}},
+				SystemUsage: 9000,
+			},
+			MemoryStats: container.MemoryStats{Usage: 1000, Stats: mem},
+			Networks: map[string]container.NetworkStats{
+				"eth0": {RxBytes: 10, TxBytes: 20},
+				"eth1": {RxBytes: 1, TxBytes: 2},
+			},
+			BlkioStats: container.BlkioStats{IoServiceBytesRecursive: []container.BlkioStatEntry{
+				{Op: "Read", Value: 100}, {Op: "read", Value: 5},
+				{Op: "Write", Value: 7}, {Op: "Total", Value: 112},
+			}},
+		}
+	}
+	tests := []struct {
+		name    string
+		mem     map[string]uint64
+		wantMem uint64
+	}{
+		{"no stats", nil, 1000},
+		{"cgroup v2", map[string]uint64{"inactive_file": 300, "total_inactive_file": 1}, 700},
+		{"cgroup v1", map[string]uint64{"total_inactive_file": 200, "cache": 1}, 800},
+		{"cache only", map[string]uint64{"cache": 100}, 900},
+		{"inactive above usage", map[string]uint64{"inactive_file": 2000}, 1000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want := Stats{
+				Read: read, CPUTotal: 500, SystemCPU: 9000, OnlineCPUs: 2,
+				MemoryUsage: tt.wantMem, NetRx: 11, NetTx: 22, DiskRead: 105, DiskWrite: 7,
+			}
+			if got := statsFrom(base(tt.mem)); got != want {
+				t.Errorf("statsFrom = %+v, want %+v", got, want)
+			}
+		})
 	}
 }

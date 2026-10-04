@@ -44,7 +44,11 @@ type Service struct {
 	PublicPort int
 	AutoDeploy bool
 	WaitForCI  bool
-	CreatedAt  time.Time
+	// Stopped reports whether the user stopped the service. Its active
+	// deployment is kept, but its container is not run until it is started or
+	// a new deployment goes live.
+	Stopped   bool
+	CreatedAt time.Time
 }
 
 // Volume is persistent storage mounted into a service's container.
@@ -122,4 +126,29 @@ type Deployment struct {
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+}
+
+// MetricSample is a service's resource usage at one instant, summed over its
+// containers.
+type MetricSample struct {
+	ServiceID string
+	// Time is stored at second precision.
+	Time time.Time
+	// CPU is the percentage of one core in use.
+	CPU float64
+	// Memory is the memory in use in bytes.
+	Memory int64
+	// NetRx, NetTx, DiskRead, and DiskWrite are rates in bytes per second.
+	NetRx, NetTx        float64
+	DiskRead, DiskWrite float64
+}
+
+// MetricBucket holds the averages of the metric samples that fall into one
+// bucket of a time window.
+type MetricBucket struct {
+	// Index is the bucket's position in the window, from zero.
+	Index               int
+	CPU, Memory         float64
+	NetRx, NetTx        float64
+	DiskRead, DiskWrite float64
 }

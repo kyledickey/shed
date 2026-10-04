@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/build"
+	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -22,7 +23,7 @@ type job struct {
 	dep     store.Deployment
 	svc     store.Service
 	project store.Project
-	out     io.Writer // the build log
+	out     io.Writer // the build log, safe for concurrent use
 
 	container   string // ID of the new container, once created
 	stoppedPrev string // ID of the previous container, if it was stopped early
@@ -38,7 +39,7 @@ func (d *Deployer) run(ctx context.Context, dep store.Deployment) {
 	}
 	defer f.Close()
 
-	j := &job{Deployer: d, dep: dep, out: f}
+	j := &job{Deployer: d, dep: dep, out: &syncWriter{w: f}}
 	if err := j.execute(ctx); err != nil {
 		j.fail(ctx, err)
 	}
@@ -207,61 +208,123 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 		return err
 	}
 	if len(vols) > 0 || j.svc.PublicPort > 0 {
-		prev, err := j.store.ActiveDeployment(ctx, j.svc.ID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
+		if err := j.stopPrevious(ctx); err != nil {
 			return err
-		}
-		if err == nil && prev.ContainerID != "" {
-			j.step("Stopping previous deployment")
-			if err := j.docker.Stop(ctx, prev.ContainerID, j.stopTimeout); err != nil {
-				j.printf("Stopping previous container: %v", err)
-			}
-			j.stoppedPrev = prev.ContainerID
 		}
 	}
 
 	j.step("Starting container")
-	id, err := j.runContainer(ctx, j.svc, j.dep, env, vols)
+	spec := containerSpec(j.svc, j.dep, env, vols)
+	j.describe(spec)
+	id, err := j.runContainer(ctx, spec)
 	if err != nil {
 		return err
 	}
+	j.printf("Started container %s", shortID(id))
 	j.container = id
 	j.dep.ContainerID = id
 	j.save()
 	return nil
 }
 
-// checkHealth waits until the new container accepts connections on its port,
-// or answers its health check path.
-func (j *job) checkHealth(ctx context.Context) error {
-	if j.svc.Port <= 0 {
+// stopPrevious stops the running container of the active deployment, so fail
+// can start it again.
+func (j *job) stopPrevious(ctx context.Context) error {
+	prev, err := j.store.ActiveDeployment(ctx, j.svc.ID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && prev.ContainerID == "") {
 		return nil
 	}
-	what := fmt.Sprintf("port %d", j.svc.Port)
+	if err != nil {
+		return err
+	}
+	c, err := j.docker.Inspect(ctx, prev.ContainerID)
+	if err != nil || !c.Running {
+		return nil // Gone or already stopped, as for a stopped service.
+	}
+	j.step("Stopping previous deployment %s", prev.ID)
+	j.printf("Volumes and published ports cannot be shared, so the previous container stops first")
+	if err := j.docker.Stop(ctx, prev.ContainerID, j.stopTimeout); err != nil {
+		j.printf("Stopping container %s: %v", c.Name, err)
+	} else {
+		j.printf("Stopped container %s", c.Name)
+	}
+	j.stoppedPrev = prev.ContainerID
+	return nil
+}
+
+// describe writes what the container will run with to the build log. It
+// prints the names of variables at most, never their values.
+func (j *job) describe(spec docker.RunSpec) {
+	j.printf("Name: %s", spec.Name)
+	j.printf("Image: %s", spec.Image)
+	if j.svc.Port > 0 {
+		j.printf("Network: %s, private address %s:%d", spec.Network, j.svc.Name, j.svc.Port)
+	} else {
+		j.printf("Network: %s, private host %s", spec.Network, j.svc.Name)
+	}
+	for _, m := range spec.Mounts {
+		j.printf("Volume: %s → %s", m.Volume, m.Target)
+	}
+	for _, p := range spec.Publish {
+		j.printf("Publishing host port %d → container port %d", p.HostPort, p.ContainerPort)
+	}
+	if len(spec.Env) == 1 {
+		j.printf("Environment: 1 variable")
+	} else {
+		j.printf("Environment: %d variables", len(spec.Env))
+	}
+	if j.svc.StartCommand != "" {
+		j.printf("Start command: %s", j.svc.StartCommand)
+	}
+}
+
+// checkHealth waits until the new container accepts connections on its port,
+// or answers its health check path, copying the container's output to the
+// build log meanwhile. A service without a port is watched briefly instead.
+func (j *job) checkHealth(ctx context.Context) error {
+	if j.svc.Port <= 0 {
+		return j.watchStartup(ctx)
+	}
+	what, how := fmt.Sprintf("port %d", j.svc.Port), "TCP connect to"
 	if j.svc.HealthcheckPath != "" {
-		what = j.svc.HealthcheckPath
+		what, how = j.svc.HealthcheckPath, "GET "+j.svc.HealthcheckPath+" on"
 	}
 	j.step("Waiting for %s to become healthy", what)
 
+	start := time.Now()
+	logs := j.follow(ctx, j.container)
+	defer logs.stop()
 	ctx, cancel := context.WithTimeoutCause(ctx, j.healthTimeout,
 		fmt.Errorf("health check timed out after %s", j.healthTimeout))
 	defer cancel()
 	var lastErr error
+	lastReport := start
+	probing := ""
 	for {
 		c, err := j.docker.Inspect(ctx, j.container)
 		switch {
 		case err != nil:
 			lastErr = err
 		case c.State == "exited" || c.State == "dead" || c.State == "restarting":
+			logs.drain(j.logDrain)
 			return fmt.Errorf("container exited with code %d", c.ExitCode)
 		case c.IPs[networkName(j.svc.ProjectID)] == "":
 			lastErr = errors.New("container has no IP address yet")
 		default:
 			addr := upstreamAddr(c.IPs[networkName(j.svc.ProjectID)], j.svc.Port)
+			if addr != probing {
+				probing = addr
+				j.printf("Probing %s %s (timeout %s)", how, addr, j.healthTimeout)
+			}
 			if lastErr = j.probe(ctx, addr, j.svc.HealthcheckPath); lastErr == nil {
-				j.step("Healthy")
+				logs.stop()
+				j.printf("Healthy after %s", roundDuration(time.Since(start)))
 				return nil
 			}
+		}
+		if time.Since(lastReport) >= j.healthReport {
+			lastReport = time.Now()
+			j.printf("Not ready yet: %v", lastErr)
 		}
 		select {
 		case <-ctx.Done():
@@ -274,16 +337,75 @@ func (j *job) checkHealth(ctx context.Context) error {
 	}
 }
 
+// watchStartup copies the first moments of a container's output to the build
+// log, failing if the container exits meanwhile. It stands in for the health
+// check of services without a port.
+func (j *job) watchStartup(ctx context.Context) error {
+	j.step("Watching the container start")
+	j.printf("No port, so no health check; watching for %s", j.startupWatch)
+	start := time.Now()
+	logs := j.follow(ctx, j.container)
+	defer logs.stop()
+	for {
+		c, err := j.docker.Inspect(ctx, j.container)
+		if err == nil && (c.State == "exited" || c.State == "dead" || c.State == "restarting") {
+			logs.drain(j.logDrain)
+			return fmt.Errorf("container exited with code %d", c.ExitCode)
+		}
+		if time.Since(start) >= j.startupWatch {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-time.After(j.healthInterval):
+		}
+	}
+	logs.stop()
+	j.printf("Still running after %s", roundDuration(time.Since(start)))
+	return nil
+}
+
 // switchOver makes the new deployment the active one: routes point at it, and
-// the previous container is removed.
+// the previous container is removed. Everything is written to the build log
+// before the deployment turns active, since log followers stop reading then.
 func (j *job) switchOver(ctx context.Context) error {
 	prev, err := j.store.ActiveDeployment(ctx, j.svc.ID)
 	hasPrev := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	svc, err := j.store.Service(ctx, j.svc.ID)
+	if err != nil {
+		return err
+	}
+	domains, err := j.store.Domains(ctx, j.svc.ID)
+	if err != nil {
+		return err
+	}
 
 	j.step("Switching traffic")
+	switch {
+	case len(domains) == 0:
+		j.printf("No public domains")
+	case j.svc.Port <= 0:
+		j.printf("No port, so its domains are not routed")
+	default:
+		for _, d := range domains {
+			j.printf("Routing %s → port %d", d.Host, j.svc.Port)
+		}
+	}
+	if svc.Stopped {
+		j.printf("The service was stopped; this deployment starts it again")
+	}
+	if hasPrev {
+		if prev.ContainerID != "" {
+			j.printf("Removing previous deployment %s (container %s)", prev.ID, shortID(prev.ContainerID))
+		} else {
+			j.printf("Removing previous deployment %s", prev.ID)
+		}
+	}
+
 	now := time.Now()
 	j.dep.Status, j.dep.FinishedAt = store.StatusActive, &now
 	j.save()
@@ -292,9 +414,13 @@ func (j *job) switchOver(ctx context.Context) error {
 	// The new deployment is live; the rest is cleanup that must not be
 	// interrupted by a cancellation.
 	ctx = context.WithoutCancel(ctx)
+	if svc.Stopped {
+		if err := j.store.SetServiceStopped(ctx, j.svc.ID, false); err != nil {
+			j.log.Error("clear stopped flag", "service", j.svc.Name, "err", err)
+		}
+	}
 	if err := j.ApplyRoutes(ctx); err != nil {
 		j.log.Error("apply routes", "err", err)
-		j.printf("Applying routes: %v", err)
 	}
 	if hasPrev {
 		prev.Status = store.StatusRemoved
@@ -370,6 +496,19 @@ func (j *job) step(format string, args ...any) {
 // printf writes a line to the build log.
 func (j *job) printf(format string, args ...any) {
 	fmt.Fprintf(j.out, format+"\n", args...)
+}
+
+// shortID returns the short form of a container ID.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// roundDuration rounds d for display.
+func roundDuration(d time.Duration) time.Duration {
+	return d.Round(100 * time.Millisecond)
 }
 
 func shortSHA(sha string) string {
