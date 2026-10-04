@@ -13,6 +13,12 @@ import (
 	"strings"
 )
 
+const (
+	maxValueBytes     = 64 << 10
+	maxResolvedBytes  = 1 << 20
+	maxReferenceDepth = 64
+)
+
 // refPattern matches a reference and captures its body.
 var refPattern = regexp.MustCompile(`\$\{\{\s*([^\s{}]+)\s*\}\}`)
 
@@ -20,7 +26,7 @@ var refPattern = regexp.MustCompile(`\$\{\{\s*([^\s{}]+)\s*\}\}`)
 //
 // all maps service name to the raw variables of that service. A reference to a
 // missing service or variable expands to the empty string. Resolve returns an
-// error if references form a cycle.
+// error if references form a cycle or exceed size or depth limits.
 func Resolve(self string, all map[string]map[string]string) (map[string]string, error) {
 	r := &resolver{
 		all:      all,
@@ -54,6 +60,7 @@ type resolver struct {
 	resolved map[ref]string
 	visiting map[ref]bool
 	stack    []ref // visiting refs in order, for cycle reporting
+	bytes    int
 }
 
 // value returns the fully expanded value of v, or "" if it does not exist.
@@ -68,6 +75,12 @@ func (r *resolver) value(v ref) (string, error) {
 	if r.visiting[v] {
 		return "", r.cycleError(v)
 	}
+	if len(r.stack) >= maxReferenceDepth {
+		return "", fmt.Errorf("vars: reference depth exceeds %d at %s", maxReferenceDepth, v)
+	}
+	if len(raw) > maxValueBytes {
+		return "", fmt.Errorf("vars: value %s exceeds %d bytes", v, maxValueBytes)
+	}
 	r.visiting[v] = true
 	r.stack = append(r.stack, v)
 
@@ -78,6 +91,10 @@ func (r *resolver) value(v ref) (string, error) {
 
 	r.stack = r.stack[:len(r.stack)-1]
 	delete(r.visiting, v)
+	if len(s) > maxResolvedBytes-r.bytes {
+		return "", fmt.Errorf("vars: resolved values exceed %d bytes", maxResolvedBytes)
+	}
+	r.bytes += len(s)
 	r.resolved[v] = s
 	return s, nil
 }
@@ -85,9 +102,18 @@ func (r *resolver) value(v ref) (string, error) {
 // expand replaces the references in raw, evaluated in the scope of service.
 func (r *resolver) expand(service, raw string) (string, error) {
 	var b strings.Builder
+	appendPart := func(s string) error {
+		if len(s) > maxValueBytes-b.Len() {
+			return fmt.Errorf("vars: expanded value exceeds %d bytes", maxValueBytes)
+		}
+		b.WriteString(s)
+		return nil
+	}
 	last := 0
 	for _, m := range refPattern.FindAllStringSubmatchIndex(raw, -1) {
-		b.WriteString(raw[last:m[0]])
+		if err := appendPart(raw[last:m[0]]); err != nil {
+			return "", err
+		}
 		last = m[1]
 
 		target := ref{service: service, key: raw[m[2]:m[3]]}
@@ -98,9 +124,13 @@ func (r *resolver) expand(service, raw string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(s)
+		if err := appendPart(s); err != nil {
+			return "", err
+		}
 	}
-	b.WriteString(raw[last:])
+	if err := appendPart(raw[last:]); err != nil {
+		return "", err
+	}
 	return b.String(), nil
 }
 

@@ -84,22 +84,34 @@ func (s *sseStream) close() {
 	close(s.stop)
 }
 
-// lineWriter is an io.Writer that emits each complete line it is given.
+const maxLogLineBytes = 64 << 10
+
+// lineWriter emits complete lines, splitting oversized lines into bounded chunks.
 type lineWriter struct {
 	emit func(string)
 	buf  []byte
 }
 
 func (lw *lineWriter) Write(p []byte) (int, error) {
-	lw.buf = append(lw.buf, p...)
-	for {
-		i := bytes.IndexByte(lw.buf, '\n')
-		if i < 0 {
-			return len(p), nil
+	n := len(p)
+	for len(p) > 0 {
+		size := min(len(p), maxLogLineBytes-len(lw.buf))
+		part := p[:size]
+		if i := bytes.IndexByte(part, '\n'); i >= 0 {
+			lw.buf = append(lw.buf, part[:i]...)
+			lw.emit(strings.TrimSuffix(string(lw.buf), "\r"))
+			lw.buf = lw.buf[:0]
+			p = p[i+1:]
+			continue
 		}
-		lw.emit(strings.TrimSuffix(string(lw.buf[:i]), "\r"))
-		lw.buf = lw.buf[i+1:]
+		lw.buf = append(lw.buf, part...)
+		p = p[size:]
+		if len(lw.buf) == maxLogLineBytes {
+			lw.emit(string(lw.buf))
+			lw.buf = lw.buf[:0]
+		}
 	}
+	return n, nil
 }
 
 // flush emits a final unterminated line, if any.

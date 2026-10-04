@@ -54,12 +54,25 @@ func (d *Deployer) FollowLog(ctx context.Context, deploymentID string, line func
 			}
 		}
 		for r != nil {
-			s, err := r.ReadString('\n')
+			chunk, err := r.ReadSlice('\n')
+			s := string(chunk)
+			if errors.Is(err, bufio.ErrBufferFull) {
+				partial += s
+				if len(partial) >= maxLine {
+					line(partial)
+					partial = ""
+				}
+				continue
+			}
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					return err
 				}
 				partial += s
+				if len(partial) >= maxLine {
+					line(partial)
+					partial = ""
+				}
 				break
 			}
 			line(strings.TrimSuffix(partial+s, "\n"))

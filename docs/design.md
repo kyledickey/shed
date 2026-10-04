@@ -542,3 +542,12 @@ Service and project deletion mark their targets as deleting under the deployment
 queue lock before canceling workers. New deploys and redeploys targeting them are
 rejected throughout teardown. Runtime start, stop, restart, and deletion are
 serialized. Failed deletion clears the admission guard so deletion can be retried.
+
+### Expansion and log memory limits
+
+Variable resolution rejects raw or expanded values over 64 KiB, cumulative
+resolved values over 1 MiB, and reference chains deeper than 64. Limits are checked
+before appending expanded content. Build redaction streams chunks while retaining
+only enough overlap to mask secrets split across writes. Runtime SSE and build-log
+replay split oversized unterminated lines into bounded chunks (approximately
+64 KiB), preserving their content without accumulating arbitrary-length lines.

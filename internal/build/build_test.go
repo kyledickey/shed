@@ -397,3 +397,27 @@ func TestPrepareEnvironmentBlocksHostOverrides(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactorBoundedStreaming(t *testing.T) {
+	var out bytes.Buffer
+	r := NewRedactor(&out, []string{"secret-value", "line\nbreak"})
+	chunk := bytes.Repeat([]byte("x"), 1024*1024)
+	if _, err := r.Write(chunk); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.buf) > len("secret-value") {
+		t.Fatalf("retained %d bytes", len(r.buf))
+	}
+	for _, s := range []string{"secret-", "value line\n", "break tail"} {
+		if _, err := r.Write([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	want := string(chunk) + "*** *** tail"
+	if out.String() != want {
+		t.Fatal("streamed output did not redact boundary-spanning and multiline secrets")
+	}
+}

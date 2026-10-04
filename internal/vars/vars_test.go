@@ -1,6 +1,7 @@
 package vars
 
 import (
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -206,5 +207,41 @@ func TestResolveCycle(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestResolveLimits(t *testing.T) {
+	tests := []struct {
+		name   string
+		values vs
+	}{
+		{"raw value", vs{"A": strings.Repeat("x", maxValueBytes+1)}},
+		{"expansion", vs{"A": strings.Repeat("x", maxValueBytes/2+1), "B": "${{A}}${{A}}"}},
+	}
+	depth := vs{}
+	for i := 0; i <= maxReferenceDepth; i++ {
+		depth[fmt.Sprintf("V%03d", i)] = fmt.Sprintf("${{V%03d}}", i+1)
+	}
+	tests = append(tests, struct {
+		name   string
+		values vs
+	}{"depth", depth})
+	total := vs{}
+	for i := 0; i <= maxResolvedBytes/maxValueBytes; i++ {
+		total[fmt.Sprint(i)] = strings.Repeat("x", maxValueBytes)
+	}
+	tests = append(tests, struct {
+		name   string
+		values vs
+	}{"total", total})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Resolve("web", map[string]vs{"web": tt.values}); err == nil {
+				t.Fatal("Resolve accepted oversized input")
+			}
+		})
+	}
+	if _, err := Resolve("web", map[string]vs{"web": {"A": strings.Repeat("x", maxValueBytes)}}); err != nil {
+		t.Fatal(err)
 	}
 }

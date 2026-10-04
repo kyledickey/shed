@@ -29,47 +29,79 @@ func secrets(repoURL string) []string {
 }
 
 // Redactor is an io.Writer that replaces secrets in the text written to it.
-// It works line by line so that a secret split across writes is still caught.
+// It retains only a secret-sized tail so matches split across writes are caught.
 // Callers must call Flush when done.
 type Redactor struct {
 	w       io.Writer
 	secrets []string
 	buf     []byte
+	tail    int
 }
 
 // NewRedactor returns a writer that masks literal secret values across writes.
 func NewRedactor(w io.Writer, secrets []string) *Redactor {
 	secrets = slices.Clone(secrets)
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
-	return &Redactor{w: w, secrets: secrets}
+	tail := 0
+	if len(secrets) > 0 {
+		tail = max(0, len(secrets[0])-1)
+	}
+	return &Redactor{w: w, secrets: secrets, tail: tail}
 }
 
-// Write buffers output until a complete line is available.
+// Write streams redacted output while retaining a bounded tail for split matches.
 func (r *Redactor) Write(p []byte) (int, error) {
-	r.buf = append(r.buf, p...)
-	for {
-		i := bytes.IndexByte(r.buf, '\n')
-		if i < 0 {
-			break
-		}
-		line := r.buf[:i+1]
-		_, err := io.WriteString(r.w, r.Redact(string(line)))
-		r.buf = r.buf[i+1:]
-		if err != nil {
-			return 0, err
+	written := 0
+	for len(p) > 0 {
+		n := min(len(p), 32*1024)
+		r.buf = append(r.buf, p[:n]...)
+		p = p[n:]
+		written += n
+		if err := r.drain(false); err != nil {
+			return written, err
 		}
 	}
-	return len(p), nil
+	return written, nil
 }
 
-// Flush writes any buffered partial line.
-func (r *Redactor) Flush() error {
-	if len(r.buf) == 0 {
-		return nil
+// Flush writes any buffered partial match.
+func (r *Redactor) Flush() error { return r.drain(true) }
+
+func (r *Redactor) drain(final bool) error {
+	consumed := 0
+	defer func() { r.buf = append(r.buf[:0], r.buf[consumed:]...) }()
+	for consumed < len(r.buf) {
+		remaining := r.buf[consumed:]
+		safe := len(remaining)
+		if !final {
+			safe -= r.tail
+		}
+		if safe <= 0 {
+			return nil
+		}
+		first, length := safe, 0
+		for _, secret := range r.secrets {
+			if secret == "" {
+				continue
+			}
+			if i := bytes.Index(remaining, []byte(secret)); i >= 0 && i < first {
+				first, length = i, len(secret)
+			}
+		}
+		if first > 0 {
+			if _, err := r.w.Write(remaining[:first]); err != nil {
+				return err
+			}
+			consumed += first
+		}
+		if length > 0 {
+			if _, err := io.WriteString(r.w, redacted); err != nil {
+				return err
+			}
+			consumed += length
+		}
 	}
-	_, err := io.WriteString(r.w, r.Redact(string(r.buf)))
-	r.buf = nil
-	return err
+	return nil
 }
 
 // Redact masks literal secret values in s.
