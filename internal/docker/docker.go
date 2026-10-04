@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -131,6 +132,35 @@ func (c *Client) RemoveImage(ctx context.Context, ref string) error {
 		return fmt.Errorf("docker: remove image %s: %w", ref, err)
 	}
 	return nil
+}
+
+// ExposedPorts returns the TCP ports that the image ref declares as exposed,
+// in ascending order.
+func (c *Client) ExposedPorts(ctx context.Context, ref string) ([]int, error) {
+	res, err := c.api.ImageInspect(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("docker: inspect image %s: %w", ref, err)
+	}
+	if res.Config == nil {
+		return nil, nil
+	}
+	return tcpPorts(res.Config.ExposedPorts), nil
+}
+
+// tcpPorts returns the TCP port numbers in exposed, whose keys look like
+// "80/tcp", in ascending order. Other protocols and malformed keys are
+// skipped.
+func tcpPorts(exposed map[string]struct{}) []int {
+	var ports []int
+	for key := range exposed {
+		p, err := network.ParsePort(key)
+		if err != nil || p.Proto() != network.TCP {
+			continue
+		}
+		ports = append(ports, int(p.Num()))
+	}
+	slices.Sort(ports)
+	return ports
 }
 
 // Image is a tagged local image.

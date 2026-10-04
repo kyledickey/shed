@@ -1,6 +1,9 @@
 package docker
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestTagRepo(t *testing.T) {
 	tests := []struct{ ref, want string }{
@@ -13,5 +16,16 @@ func TestTagRepo(t *testing.T) {
 		if got := tagRepo(tt.ref); got != tt.want {
 			t.Errorf("tagRepo(%q) = %q, want %q", tt.ref, got, tt.want)
 		}
+	}
+}
+
+func TestTCPPorts(t *testing.T) {
+	exposed := map[string]struct{}{"8080/tcp": {}, "80/tcp": {}, "53/udp": {}, "443": {}, "bogus": {}}
+	got := tcpPorts(exposed)
+	if want := []int{80, 443, 8080}; !slices.Equal(got, want) {
+		t.Errorf("tcpPorts = %v, want %v", got, want)
+	}
+	if got := tcpPorts(nil); got != nil {
+		t.Errorf("tcpPorts(nil) = %v, want nil", got)
 	}
 }

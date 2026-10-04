@@ -68,6 +68,16 @@ func (j *job) execute(ctx context.Context) error {
 	if err := j.buildImage(ctx, env); err != nil {
 		return err
 	}
+	if j.svc.Port == 0 {
+		if found, err := j.detectPort(ctx); err != nil {
+			return err
+		} else if found {
+			// PORT is injected only once the service has a port.
+			if env, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA); err != nil {
+				return err
+			}
+		}
+	}
 	if err := j.start(ctx, env); err != nil {
 		return err
 	}
@@ -162,6 +172,29 @@ func (j *job) buildImage(ctx context.Context, env map[string]string) error {
 	}
 	j.save()
 	return nil
+}
+
+// detectPort gives a service without a port the lowest TCP port its image
+// exposes, and reports whether it found one.
+func (j *job) detectPort(ctx context.Context) (bool, error) {
+	ports, err := j.docker.ExposedPorts(ctx, j.dep.Image)
+	if err != nil || len(ports) == 0 {
+		return false, err
+	}
+	// Patches may have landed since the job started; change only the port.
+	svc, err := j.store.Service(ctx, j.svc.ID)
+	if err != nil {
+		return false, err
+	}
+	if svc.Port == 0 {
+		svc.Port = ports[0]
+		if err := j.store.UpdateService(ctx, svc); err != nil {
+			return false, err
+		}
+	}
+	j.svc.Port = svc.Port
+	j.step("Detected port %d from the image", svc.Port)
+	return true, nil
 }
 
 // start runs the new container. Services with volumes or a published port

@@ -225,6 +225,8 @@ the same service.
 2. **Build**: repo apps clone the commit with an installation token and build
    `shed/<serviceID>:<deploymentID>`. Image apps and databases pull their
    image. Redeploys of an old deployment reuse its image and skip this step.
+   Once the image is available, a service with `port` 0 gets the lowest TCP
+   port the image exposes (`EXPOSE`) as its `port`, which is saved.
 3. **Start**: resolve variables, create and start the new container.
    Services with volumes stop the old container first (volumes can't be shared
    safely, e.g. database data dirs); others overlap for zero downtime.

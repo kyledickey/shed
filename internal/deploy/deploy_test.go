@@ -26,17 +26,23 @@ type fakeDocker struct {
 	next       int
 	containers map[string]*docker.Container
 	runs       []docker.RunSpec
+	exposed    []int // ports every image exposes
 }
 
 func newFakeDocker() *fakeDocker {
 	return &fakeDocker{containers: make(map[string]*docker.Container)}
 }
 
-func (f *fakeDocker) EnsureNetwork(context.Context, string) error                { return nil }
-func (f *fakeDocker) RemoveNetwork(context.Context, string) error                { return nil }
-func (f *fakeDocker) EnsureVolume(context.Context, string) error                 { return nil }
-func (f *fakeDocker) RemoveVolume(context.Context, string) error                 { return nil }
-func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error         { return nil }
+func (f *fakeDocker) EnsureNetwork(context.Context, string) error        { return nil }
+func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { return nil }
+func (f *fakeDocker) EnsureVolume(context.Context, string) error         { return nil }
+func (f *fakeDocker) RemoveVolume(context.Context, string) error         { return nil }
+func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
+func (f *fakeDocker) ExposedPorts(context.Context, string) ([]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.exposed, nil
+}
 func (f *fakeDocker) RemoveImage(context.Context, string) error                  { return nil }
 func (f *fakeDocker) ListImages(context.Context, string) ([]docker.Image, error) { return nil, nil }
 func (f *fakeDocker) Logs(context.Context, string, int, bool, io.Writer) error   { return nil }
@@ -323,6 +329,45 @@ func TestDeployHappyPath(t *testing.T) {
 	}
 	if statusOf[f.svc.ID] != StatusActive {
 		t.Errorf("service status = %s, want active", statusOf[f.svc.ID])
+	}
+}
+
+func TestDeployDetectsPort(t *testing.T) {
+	tests := []struct {
+		name     string
+		port     int
+		exposed  []int
+		wantPort int
+	}{
+		{"lowest exposed", 0, []int{3000, 8080}, 3000},
+		{"nothing exposed", 0, nil, 0},
+		{"keeps configured", 9000, []int{80}, 9000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.docker.exposed = tt.exposed
+			f.svc.Port = tt.port
+			if err := f.st.UpdateService(context.Background(), f.svc); err != nil {
+				t.Fatal(err)
+			}
+			dep := f.wait(t, f.deploy(t).ID, terminal)
+			f.settle(t)
+
+			if dep.Status != store.StatusActive {
+				t.Fatalf("status = %s (%q), want active", dep.Status, dep.Error)
+			}
+			svc, err := f.st.Service(context.Background(), f.svc.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if svc.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", svc.Port, tt.wantPort)
+			}
+			if got := strings.Contains(strings.Join(f.docker.runs[0].Env, "\n"), fmt.Sprintf("PORT=%d", tt.wantPort)); got != (tt.wantPort > 0) {
+				t.Errorf("env %v: PORT injected = %v, want %v", f.docker.runs[0].Env, got, tt.wantPort > 0)
+			}
+		})
 	}
 }
 

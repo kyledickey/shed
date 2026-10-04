@@ -36,6 +36,7 @@ type Docker interface {
 	RemoveVolume(ctx context.Context, name string) error
 	PullImage(ctx context.Context, ref string, w io.Writer) error
 	ListImages(ctx context.Context, repo string) ([]docker.Image, error)
+	ExposedPorts(ctx context.Context, ref string) ([]int, error)
 	RemoveImage(ctx context.Context, ref string) error
 	Run(ctx context.Context, spec docker.RunSpec) (string, error)
 	Start(ctx context.Context, id string) error
