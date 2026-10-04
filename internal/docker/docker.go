@@ -248,6 +248,14 @@ func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
 	return created.ID, nil
 }
 
+// Start starts an existing, stopped container.
+func (c *Client) Start(ctx context.Context, id string) error {
+	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("docker: start container %s: %w", id, err)
+	}
+	return nil
+}
+
 // Stop stops the container, killing it if it has not exited within timeout.
 func (c *Client) Stop(ctx context.Context, id string, timeout time.Duration) error {
 	secs := int(timeout.Seconds())
@@ -279,6 +287,8 @@ type Container struct {
 	// IPs maps network name to the container's IP address on it.
 	IPs    map[string]string
 	Labels map[string]string
+	// Volumes lists the named volumes mounted into the container.
+	Volumes []string
 }
 
 // Inspect returns the state of the container.
@@ -305,6 +315,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	if info.NetworkSettings != nil {
 		addIPs(ctr.IPs, info.NetworkSettings.Networks)
 	}
+	ctr.Volumes = volumeNames(info.Mounts)
 	return ctr, nil
 }
 
@@ -335,6 +346,7 @@ func (c *Client) List(ctx context.Context, labels map[string]string) ([]Containe
 		if s.NetworkSettings != nil {
 			addIPs(ctr.IPs, s.NetworkSettings.Networks)
 		}
+		ctr.Volumes = volumeNames(s.Mounts)
 		containers = append(containers, ctr)
 	}
 	return containers, nil
@@ -346,6 +358,16 @@ func addIPs(ips map[string]string, networks map[string]*network.EndpointSettings
 			ips[name] = ep.IPAddress.String()
 		}
 	}
+}
+
+func volumeNames(mounts []container.MountPoint) []string {
+	var names []string
+	for _, m := range mounts {
+		if m.Type == mount.TypeVolume && m.Name != "" {
+			names = append(names, m.Name)
+		}
+	}
+	return names
 }
 
 // Logs copies the container's stdout and stderr to w. A negative tail means
