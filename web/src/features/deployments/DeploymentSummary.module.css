@@ -1,0 +1,36 @@
+.summary {
+  min-width: 0;
+}
+
+.title {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+
+  & > * + *::before {
+    content: "·";
+    margin: 0 6px;
+    color: var(--fg-subtle);
+  }
+}
+
+.sha {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+
+  & svg {
+    color: var(--fg-subtle);
+  }
+}

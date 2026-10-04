@@ -1,0 +1,11 @@
+export const keys = {
+  me: ["me"] as const,
+  setup: ["setup"] as const,
+  projects: ["projects"] as const,
+  project: (id: string) => ["projects", id] as const,
+  service: (id: string) => ["services", id] as const,
+  variables: (serviceId: string) => ["services", serviceId, "variables"] as const,
+  deployments: (serviceId: string) => ["services", serviceId, "deployments"] as const,
+  repos: ["github", "repos"] as const,
+  branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
+};

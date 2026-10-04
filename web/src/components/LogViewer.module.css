@@ -1,0 +1,52 @@
+.wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+}
+
+.viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: inherit;
+  overscroll-behavior: contain;
+}
+
+.pre {
+  margin: 0;
+  padding: var(--space-3) 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.65;
+}
+
+.line {
+  padding: 0 var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-8);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.jump {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  box-shadow: var(--shadow-popover);
+}
