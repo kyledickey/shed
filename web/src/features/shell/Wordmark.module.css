@@ -1,8 +1,0 @@
-.wordmark {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--text-base);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}

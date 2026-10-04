@@ -1,0 +1,324 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--backdrop);
+  backdrop-filter: blur(3px);
+  transition: opacity var(--dur-slow) var(--ease);
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+}
+
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 41;
+  width: calc(100vw - 32px);
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
+  padding: 0 4px 4px;
+  background: var(--layer);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  transform: translate(-50%, -50%);
+  transition:
+    opacity var(--dur-slow) var(--ease),
+    transform var(--dur-slow) var(--ease-spring);
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+}
+
+.sm {
+  max-width: 420px;
+}
+
+.md {
+  max-width: 560px;
+}
+
+.lg {
+  max-width: 760px;
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3) var(--space-3) var(--space-4);
+}
+
+.dialogIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-md);
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+}
+
+.dialogHeading {
+  flex: 1;
+  padding-top: 2px;
+}
+
+.dialogTitle {
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.dialogDescription {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+/* Content sits on a raised sheet; header and footer live on the layer. */
+.dialogSheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--r-xl) - 4px);
+}
+
+.dialogFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+}
+
+.positioner {
+  z-index: 50;
+  outline: none;
+}
+
+.menu {
+  min-width: 200px;
+  padding: 5px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-sm);
+  cursor: default;
+  outline: none;
+
+  &[data-highlighted] {
+    background: var(--hover);
+  }
+
+  &[data-danger] {
+    color: var(--danger-ink);
+  }
+
+  &[data-danger][data-highlighted] {
+    background: var(--danger-soft);
+  }
+
+  &[data-disabled] {
+    opacity: 0.5;
+  }
+}
+
+.menuIcon {
+  display: flex;
+  color: var(--ink-3);
+
+  [data-danger] & {
+    color: inherit;
+  }
+}
+
+.menuLabel {
+  flex: 1;
+}
+
+.menuShortcut {
+  color: var(--ink-4);
+  font-size: var(--text-xs);
+}
+
+.menuSeparator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line-soft);
+}
+
+.menuGroupLabel {
+  padding: 6px 9px 4px;
+  color: var(--ink-4);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tooltip {
+  padding: 5px 9px;
+  background: var(--ink);
+  color: var(--panel);
+  border-radius: var(--r-xs);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+/* Toasts: stacked deck that fans out on hover (Base UI drives the vars). */
+
+.toastViewport {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  width: min(360px, calc(100vw - 40px));
+}
+
+.toast {
+  --gap: 10px;
+  --peek: 8px;
+  --scale: calc(max(0, 1 - (var(--toast-index) * 0.06)));
+  --shrink: calc(1 - var(--scale));
+  --height: var(--toast-frontmost-height, var(--toast-height));
+  --offset-y: calc(
+    var(--toast-offset-y) * -1 + (var(--toast-index) * var(--gap) * -1) +
+      var(--toast-swipe-movement-y)
+  );
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: var(--height);
+  z-index: calc(1000 - var(--toast-index));
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  transform-origin: bottom center;
+  transform: translateX(var(--toast-swipe-movement-x))
+    translateY(
+      calc(
+        var(--toast-swipe-movement-y) - (var(--toast-index) * var(--peek)) -
+          (var(--shrink) * var(--height))
+      )
+    )
+    scale(var(--scale));
+  transition:
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.45s,
+    height 0.15s;
+  user-select: none;
+
+  &[data-expanded] {
+    transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--offset-y));
+    height: var(--toast-height);
+  }
+
+  &[data-starting-style],
+  &[data-ending-style] {
+    transform: translateY(150%);
+  }
+
+  &[data-limited],
+  &[data-ending-style] {
+    opacity: 0;
+  }
+
+  &::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    height: calc(var(--gap) + 1px);
+  }
+}
+
+.toastContent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 12px 10px 12px 14px;
+  overflow: hidden;
+  transition: opacity 0.25s;
+
+  &[data-behind] {
+    opacity: 0;
+  }
+
+  &[data-expanded] {
+    opacity: 1;
+  }
+}
+
+.toastIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+}
+
+.toastText {
+  flex: 1;
+  min-width: 0;
+  padding-top: 3px;
+}
+
+.toastTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.toastDescription {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}

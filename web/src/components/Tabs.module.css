@@ -1,48 +1,90 @@
 .tabs {
+  position: relative;
   display: flex;
-  gap: var(--space-1);
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border);
   scrollbar-width: none;
+  isolation: isolate;
 }
 
 .tab {
-  position: relative;
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   height: 36px;
-  padding: 0 var(--space-2);
-  color: var(--fg-muted);
+  padding: 0 13px;
+  border: 0;
+  background: none;
+  border-radius: var(--r-md);
+  color: var(--ink-3);
   font-size: var(--text-sm);
   font-weight: 500;
   white-space: nowrap;
   transition: color var(--dur) var(--ease);
 
+  & svg {
+    flex: none;
+    opacity: 0.85;
+  }
+
   &:hover {
-    color: var(--fg);
+    color: var(--ink);
   }
 
-  &::after {
-    content: "";
-    position: absolute;
-    right: var(--space-2);
-    bottom: -1px;
-    left: var(--space-2);
-    height: 2px;
-    border-radius: 2px 2px 0 0;
-    background: transparent;
-    transition: background-color var(--dur) var(--ease);
+  &[aria-selected="true"] {
+    color: var(--ink);
   }
 
-  &[data-status="active"] {
-    color: var(--fg);
+  &[aria-selected="true"] svg {
+    color: var(--accent-ink);
+    opacity: 1;
+  }
+}
+
+.indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  pointer-events: none;
+  transition:
+    transform var(--dur-slow) var(--ease),
+    width var(--dur-slow) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+
+.pill .indicator {
+  background: var(--raised);
+  border-radius: var(--r-md);
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    0 1px 0 var(--edge);
+}
+
+.line {
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--line);
+
+  & .tab {
+    height: 40px;
+    padding: 0 10px;
+    border-radius: 0;
+  }
+
+  & .indicator {
+    background: none;
 
     &::after {
-      background: var(--fg);
+      content: "";
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 0;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: var(--accent);
     }
-  }
-
-  &:focus-visible {
-    border-radius: var(--radius-sm);
   }
 }

@@ -1,16 +1,56 @@
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/geist-mono";
+@font-face {
+  font-family: "Open Runde";
+  src: url("./fonts/OpenRunde-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
 
+@font-face {
+  font-family: "Open Runde";
+  src: url("./fonts/OpenRunde-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Open Runde";
+  src: url("./fonts/OpenRunde-Semibold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Open Runde";
+  src: url("./fonts/OpenRunde-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Commit Mono";
+  src: url("./fonts/commit-mono-vf.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/*
+ * Design tokens. Every color is a light-dark() pair so components never need
+ * a theme branch. No gradients anywhere: surfaces are flat, edges are crisp
+ * borders. In dark mode crayon tints are translucent so they sit cleanly on
+ * any surface.
+ */
 :root {
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-sans: "Open Runde", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Commit Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
+  --text-2xs: 11px;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
   --text-lg: 16px;
   --text-xl: 20px;
-  --text-2xl: 24px;
+  --text-2xl: 26px;
+  --text-3xl: 36px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -22,80 +62,230 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 8px;
+  /* Softness is one knob: scale every radius together. */
+  --soft: 1;
+  --r-xs: calc(5px * var(--soft));
+  --r-sm: calc(8px * var(--soft));
+  --r-md: calc(10px * var(--soft));
+  --r-lg: calc(14px * var(--soft));
+  --r-xl: calc(18px * var(--soft));
+  --r-full: 999px;
 
-  --control-h: 32px;
+  --control-h: 34px;
   --control-h-sm: 28px;
-  --content-w: 1080px;
+  --control-h-lg: 40px;
 
   --ease: cubic-bezier(0.2, 0, 0, 1);
-  --dur: 120ms;
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur: 140ms;
+  --dur-slow: 260ms;
 
-  --bg: #ffffff;
-  --bg-subtle: #fafafa;
-  --bg-muted: #f4f4f5;
-  --bg-hover: #f4f4f5;
-  --bg-active: #e4e4e7;
-  --bg-inverse: #18181b;
-  --border: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --fg: #18181b;
-  --fg-muted: #71717a;
-  --fg-subtle: #a1a1aa;
-  --fg-inverse: #fafafa;
+  /*
+   * Neutrals: warm paper in light, near-neutral graphite in dark.
+   * Layering, back to front: bg/shell → panel → layer → raised. A layer is
+   * the tinted outer sheet of a LayerCard; raised is the content sheet on it.
+   */
+  --bg: light-dark(oklch(0.952 0.005 85), oklch(0.125 0.004 270));
+  --shell: light-dark(oklch(0.952 0.005 85), oklch(0.125 0.004 270));
+  --panel: light-dark(oklch(0.993 0.002 85), oklch(0.163 0.004 270));
+  --layer: light-dark(oklch(0.966 0.004 85), oklch(0.192 0.005 270));
+  --raised: light-dark(oklch(1 0 0), oklch(0.232 0.006 270));
+  --sunken: light-dark(oklch(0.972 0.004 85), oklch(0.15 0.004 270));
+  --hover: light-dark(oklch(0.948 0.005 85), oklch(0.26 0.006 270));
+  --active: light-dark(oklch(0.92 0.007 85), oklch(0.285 0.007 270));
 
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-fg: #ffffff;
-  --accent-subtle: #eef2ff;
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px color-mix(in srgb, var(--accent) 55%, transparent);
+  --line: light-dark(oklch(0.9 0.006 85), oklch(0.275 0.006 270));
+  --line-soft: light-dark(oklch(0.935 0.005 85), oklch(0.235 0.005 270));
+  --line-strong: light-dark(oklch(0.84 0.008 85), oklch(0.36 0.008 270));
+  /* The darker bottom edge that gives controls some material. */
+  --edge: light-dark(oklch(0.79 0.009 85), oklch(0.08 0.004 270));
 
-  --green: #16a34a;
-  --amber: #d97706;
-  --red: #dc2626;
-  --red-hover: #b91c1c;
-  --red-subtle: #fef2f2;
-  --gray: #a1a1aa;
+  --ink: light-dark(oklch(0.25 0.012 285), oklch(0.96 0.003 85));
+  --ink-2: light-dark(oklch(0.45 0.012 285), oklch(0.79 0.006 270));
+  --ink-3: light-dark(oklch(0.6 0.01 285), oklch(0.63 0.008 270));
+  --ink-4: light-dark(oklch(0.72 0.008 285), oklch(0.49 0.008 270));
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 4%);
-  --shadow-popover: 0 4px 16px rgb(0 0 0 / 8%), 0 1px 3px rgb(0 0 0 / 6%);
-  --backdrop: rgb(0 0 0 / 24%);
+  /*
+   * Crayons. Per hue:
+   *   --c        solid mark (fills, chart lines, solid badges)
+   *   --c-soft   tinted background
+   *   --c-ink    readable text on --c-soft or the panel
+   *   --c-line   tinted border
+   */
+  --tangerine: light-dark(oklch(0.68 0.19 52), oklch(0.74 0.18 52));
+  --tangerine-soft: light-dark(oklch(0.965 0.03 52), oklch(0.74 0.19 52 / 0.14));
+  --tangerine-ink: light-dark(oklch(0.5 0.17 52), oklch(0.83 0.13 52));
+  --tangerine-line: light-dark(oklch(0.88 0.06 52), oklch(0.74 0.19 52 / 0.32));
+
+  --sunflower: light-dark(oklch(0.79 0.17 82), oklch(0.83 0.16 82));
+  --sunflower-soft: light-dark(oklch(0.965 0.03 82), oklch(0.83 0.17 82 / 0.14));
+  --sunflower-ink: light-dark(oklch(0.5 0.15 82), oklch(0.83 0.13 82));
+  --sunflower-line: light-dark(oklch(0.88 0.06 82), oklch(0.83 0.17 82 / 0.32));
+
+  --grass: light-dark(oklch(0.66 0.19 148), oklch(0.74 0.18 148));
+  --grass-soft: light-dark(oklch(0.965 0.03 148), oklch(0.74 0.19 148 / 0.14));
+  --grass-ink: light-dark(oklch(0.5 0.17 148), oklch(0.83 0.13 148));
+  --grass-line: light-dark(oklch(0.88 0.06 148), oklch(0.74 0.19 148 / 0.32));
+
+  --teal: light-dark(oklch(0.66 0.13 185), oklch(0.75 0.12 185));
+  --teal-soft: light-dark(oklch(0.965 0.03 185), oklch(0.75 0.13 185 / 0.14));
+  --teal-ink: light-dark(oklch(0.5 0.11 185), oklch(0.83 0.13 185));
+  --teal-line: light-dark(oklch(0.88 0.06 185), oklch(0.75 0.13 185 / 0.32));
+
+  --sky: light-dark(oklch(0.6 0.19 248), oklch(0.7 0.18 248));
+  --sky-soft: light-dark(oklch(0.965 0.03 248), oklch(0.7 0.19 248 / 0.14));
+  --sky-ink: light-dark(oklch(0.48 0.17 248), oklch(0.83 0.13 248));
+  --sky-line: light-dark(oklch(0.88 0.06 248), oklch(0.7 0.19 248 / 0.32));
+
+  --grape: light-dark(oklch(0.56 0.22 295), oklch(0.68 0.21 295));
+  --grape-soft: light-dark(oklch(0.965 0.03 295), oklch(0.68 0.22 295 / 0.14));
+  --grape-ink: light-dark(oklch(0.44 0.2 295), oklch(0.83 0.13 295));
+  --grape-line: light-dark(oklch(0.88 0.06 295), oklch(0.68 0.22 295 / 0.32));
+
+  --bubblegum: light-dark(oklch(0.63 0.21 355), oklch(0.72 0.2 355));
+  --bubblegum-soft: light-dark(oklch(0.965 0.03 355), oklch(0.72 0.21 355 / 0.14));
+  --bubblegum-ink: light-dark(oklch(0.5 0.19 355), oklch(0.83 0.13 355));
+  --bubblegum-line: light-dark(oklch(0.88 0.06 355), oklch(0.72 0.21 355 / 0.32));
+
+  --tomato: light-dark(oklch(0.6 0.21 27), oklch(0.68 0.2 27));
+  --tomato-soft: light-dark(oklch(0.965 0.03 27), oklch(0.68 0.21 27 / 0.14));
+  --tomato-ink: light-dark(oklch(0.48 0.19 27), oklch(0.83 0.13 27));
+  --tomato-line: light-dark(oklch(0.88 0.06 27), oklch(0.68 0.21 27 / 0.32));
+
+  /* Semantic roles. */
+  --success: var(--grass);
+  --success-soft: var(--grass-soft);
+  --success-ink: var(--grass-ink);
+  --warn: var(--sunflower);
+  --warn-soft: var(--sunflower-soft);
+  --warn-ink: var(--sunflower-ink);
+  --danger: var(--tomato);
+  --danger-soft: var(--tomato-soft);
+  --danger-ink: var(--tomato-ink);
+  --danger-line: var(--tomato-line);
+  --danger-strong: light-dark(oklch(0.6 0.19 28), oklch(0.6 0.18 28));
+  --info: var(--sky);
+  --info-soft: var(--sky-soft);
+  --info-ink: var(--sky-ink);
+
+  /* Accent defaults to grass; [data-accent] on <html> swaps the hue. */
+  --accent-h: 148;
+  --accent: light-dark(oklch(0.66 0.19 var(--accent-h)), oklch(0.74 0.18 var(--accent-h)));
+  --accent-soft: light-dark(
+    oklch(0.965 0.03 var(--accent-h)),
+    oklch(0.74 0.18 var(--accent-h) / 0.14)
+  );
+  --accent-ink: light-dark(oklch(0.48 0.16 var(--accent-h)), oklch(0.83 0.14 var(--accent-h)));
+  --accent-line: light-dark(
+    oklch(0.86 0.08 var(--accent-h)),
+    oklch(0.74 0.18 var(--accent-h) / 0.36)
+  );
+  /* Buttons: deep fill with white text in light, bright fill with dark text in dark. */
+  --accent-strong: light-dark(oklch(0.55 0.17 var(--accent-h)), oklch(0.74 0.18 var(--accent-h)));
+  --on-accent: light-dark(oklch(0.99 0.01 var(--accent-h)), oklch(0.17 0.04 var(--accent-h)));
+
+  --focus-ring:
+    0 0 0 2px var(--panel), 0 0 0 4px color-mix(in oklch, var(--accent) 70%, transparent);
+
+  /* light-dark() only takes colors, so shadows vary by their color stops. */
+  --shadow-faint: light-dark(oklch(0.3 0.02 85 / 0.05), oklch(0 0 0 / 0));
+  --shadow-soft: light-dark(oklch(0.3 0.02 85 / 0.1), oklch(0 0 0 / 0.35));
+  --shadow-deep: light-dark(oklch(0.3 0.02 85 / 0.18), oklch(0 0 0 / 0.6));
+  --shadow-sm: 0 1px 2px var(--shadow-faint);
+  --shadow-md: 0 1px 2px var(--shadow-faint), 0 8px 24px -8px var(--shadow-soft);
+  --shadow-lg: 0 2px 6px var(--shadow-faint), 0 24px 60px -16px var(--shadow-deep);
+  --backdrop: light-dark(oklch(0.3 0.02 85 / 0.22), oklch(0.05 0.005 270 / 0.65));
 
   color-scheme: light dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0b0c;
-    --bg-subtle: #111113;
-    --bg-muted: #18181b;
-    --bg-hover: #1c1c1f;
-    --bg-active: #27272a;
-    --bg-inverse: #fafafa;
-    --border: #232326;
-    --border-strong: #34343a;
-    --fg: #f4f4f5;
-    --fg-muted: #a1a1aa;
-    --fg-subtle: #6b6b74;
-    --fg-inverse: #18181b;
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 
-    --accent: #6d68f5;
-    --accent-hover: #807bf7;
-    --accent-subtle: #1c1b33;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
 
-    --green: #22c55e;
-    --amber: #f59e0b;
-    --red: #ef4444;
-    --red-hover: #f87171;
-    --red-subtle: #2a1214;
-    --gray: #6b6b74;
+:root[data-accent="tangerine"] {
+  --accent-h: 52;
+}
+:root[data-accent="grass"] {
+  --accent-h: 148;
+}
+:root[data-accent="teal"] {
+  --accent-h: 192;
+}
+:root[data-accent="sky"] {
+  --accent-h: 248;
+}
+:root[data-accent="grape"] {
+  --accent-h: 295;
+}
+:root[data-accent="bubblegum"] {
+  --accent-h: 355;
+}
 
-    --shadow-sm: none;
-    --shadow-popover: 0 8px 24px rgb(0 0 0 / 40%);
-    --backdrop: rgb(0 0 0 / 56%);
-  }
+/* [data-tone] exposes one crayon as --tone* for components to consume. */
+[data-tone] {
+  --tone: var(--ink-3);
+  --tone-soft: var(--sunken);
+  --tone-ink: var(--ink-2);
+  --tone-line: var(--line);
+}
+[data-tone="accent"] {
+  --tone: var(--accent);
+  --tone-soft: var(--accent-soft);
+  --tone-ink: var(--accent-ink);
+  --tone-line: var(--accent-line);
+}
+[data-tone="tangerine"] {
+  --tone: var(--tangerine);
+  --tone-soft: var(--tangerine-soft);
+  --tone-ink: var(--tangerine-ink);
+  --tone-line: var(--tangerine-line);
+}
+[data-tone="sunflower"] {
+  --tone: var(--sunflower);
+  --tone-soft: var(--sunflower-soft);
+  --tone-ink: var(--sunflower-ink);
+  --tone-line: var(--sunflower-line);
+}
+[data-tone="grass"] {
+  --tone: var(--grass);
+  --tone-soft: var(--grass-soft);
+  --tone-ink: var(--grass-ink);
+  --tone-line: var(--grass-line);
+}
+[data-tone="teal"] {
+  --tone: var(--teal);
+  --tone-soft: var(--teal-soft);
+  --tone-ink: var(--teal-ink);
+  --tone-line: var(--teal-line);
+}
+[data-tone="sky"] {
+  --tone: var(--sky);
+  --tone-soft: var(--sky-soft);
+  --tone-ink: var(--sky-ink);
+  --tone-line: var(--sky-line);
+}
+[data-tone="grape"] {
+  --tone: var(--grape);
+  --tone-soft: var(--grape-soft);
+  --tone-ink: var(--grape-ink);
+  --tone-line: var(--grape-line);
+}
+[data-tone="bubblegum"] {
+  --tone: var(--bubblegum);
+  --tone-soft: var(--bubblegum-soft);
+  --tone-ink: var(--bubblegum-ink);
+  --tone-line: var(--bubblegum-line);
+}
+[data-tone="tomato"] {
+  --tone: var(--tomato);
+  --tone-soft: var(--tomato-soft);
+  --tone-ink: var(--tomato-ink);
+  --tone-line: var(--tomato-line);
 }
 
 *,
@@ -112,13 +302,12 @@ body {
 
 body {
   background: var(--bg);
-  color: var(--fg);
+  color: var(--ink);
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
 }
 
 #root {
@@ -136,7 +325,8 @@ p {
 
 h1,
 h2,
-h3 {
+h3,
+h4 {
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -154,10 +344,13 @@ select {
   color: inherit;
 }
 
+button {
+  cursor: pointer;
+}
+
 code,
 kbd,
-pre,
-.mono {
+pre {
   font-family: var(--font-mono);
   font-size: 0.92em;
 }
@@ -168,7 +361,11 @@ pre,
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: color-mix(in oklch, var(--accent) 30%, transparent);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -176,6 +373,7 @@ pre,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
 }

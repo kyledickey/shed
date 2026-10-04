@@ -1,27 +1,39 @@
-import type { ComponentProps } from "react";
 import { LoaderCircle } from "lucide-react";
+import type { ComponentProps, ReactNode } from "react";
+import { cx } from "../lib/cx";
 import styles from "./Button.module.css";
+import type { Tone } from "./tone";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
-type Size = "sm" | "md";
+type Variant = "primary" | "secondary" | "ghost" | "soft" | "danger";
+type Size = "sm" | "md" | "lg";
 
-type StyleProps = { variant?: Variant; size?: Size; icon?: boolean };
+type Look = {
+  variant?: Variant;
+  size?: Size;
+  /** Square, icon-only button. Pair with aria-label. */
+  icon?: boolean;
+  /** Crayon for the soft variant. */
+  tone?: Tone;
+};
 
-export function buttonClass({ variant = "secondary", size = "md", icon = false }: StyleProps = {}) {
-  return [styles.button, styles[variant], styles[size], icon && styles.icon]
-    .filter(Boolean)
-    .join(" ");
+export function buttonClass({ variant = "secondary", size = "md", icon }: Look = {}): string {
+  return cx(styles.button, styles[variant], styles[size], icon && styles.icon);
 }
 
-type ButtonProps = ComponentProps<"button"> & StyleProps & { loading?: boolean };
+type ButtonProps = ComponentProps<"button"> &
+  Look & {
+    loading?: boolean;
+    children?: ReactNode;
+  };
 
 export function Button({
   variant,
   size,
   icon,
-  loading = false,
-  className,
+  tone = "accent",
+  loading,
   disabled,
+  className,
   children,
   type = "button",
   ...rest
@@ -29,9 +41,10 @@ export function Button({
   return (
     <button
       type={type}
-      className={[buttonClass({ variant, size, icon }), className].filter(Boolean).join(" ")}
+      className={cx(buttonClass({ variant, size, icon }), className)}
+      data-tone={variant === "soft" ? tone : undefined}
+      data-loading={loading || undefined}
       disabled={disabled || loading}
-      aria-busy={loading || undefined}
       {...rest}
     >
       {loading && <LoaderCircle className={styles.spinner} size={14} aria-hidden />}
@@ -40,12 +53,18 @@ export function Button({
   );
 }
 
-type LinkButtonProps = ComponentProps<"a"> & StyleProps;
-
-export function LinkButton({ variant, size, icon, className, ...rest }: LinkButtonProps) {
+export function LinkButton({
+  variant,
+  size,
+  icon,
+  tone = "accent",
+  className,
+  ...rest
+}: ComponentProps<"a"> & Look) {
   return (
     <a
-      className={[buttonClass({ variant, size, icon }), className].filter(Boolean).join(" ")}
+      className={cx(buttonClass({ variant, size, icon }), className)}
+      data-tone={variant === "soft" ? tone : undefined}
       {...rest}
     />
   );

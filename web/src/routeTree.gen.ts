@@ -9,267 +9,68 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as AppRouteImport } from './routes/_app'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as SetupRouteImport } from './routes/setup'
-import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
-import { Route as AppProjectsProjectIdServicesServiceIdRouteImport } from './routes/_app/projects/$projectId/services/$serviceId'
-import { Route as AppProjectsProjectIdServicesServiceIdIndexRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/index'
-import { Route as AppProjectsProjectIdServicesServiceIdLogsRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/logs'
-import { Route as AppProjectsProjectIdServicesServiceIdSettingsRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/settings'
-import { Route as AppProjectsProjectIdServicesServiceIdVariablesRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/variables'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as ShowcaseRouteImport } from './routes/showcase'
 
-const AppRoute = AppRouteImport.update({
-  id: '/_app',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SetupRoute = SetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppIndexRoute = AppIndexRouteImport.update({
+const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AppRoute,
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AppProjectsProjectIdIndexRoute =
-  AppProjectsProjectIdIndexRouteImport.update({
-    id: '/projects/$projectId/',
-    path: '/projects/$projectId/',
-    getParentRoute: () => AppRoute,
-  } as any)
-const AppProjectsProjectIdServicesServiceIdRoute =
-  AppProjectsProjectIdServicesServiceIdRouteImport.update({
-    id: '/projects/$projectId/services/$serviceId',
-    path: '/projects/$projectId/services/$serviceId',
-    getParentRoute: () => AppRoute,
-  } as any)
-const AppProjectsProjectIdServicesServiceIdIndexRoute =
-  AppProjectsProjectIdServicesServiceIdIndexRouteImport.update({
-    id: '/',
-    path: '/',
-    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
-  } as any)
-const AppProjectsProjectIdServicesServiceIdLogsRoute =
-  AppProjectsProjectIdServicesServiceIdLogsRouteImport.update({
-    id: '/logs',
-    path: '/logs',
-    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
-  } as any)
-const AppProjectsProjectIdServicesServiceIdSettingsRoute =
-  AppProjectsProjectIdServicesServiceIdSettingsRouteImport.update({
-    id: '/settings',
-    path: '/settings',
-    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
-  } as any)
-const AppProjectsProjectIdServicesServiceIdVariablesRoute =
-  AppProjectsProjectIdServicesServiceIdVariablesRouteImport.update({
-    id: '/variables',
-    path: '/variables',
-    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
-  } as any)
+const ShowcaseRoute = ShowcaseRouteImport.update({
+  id: '/showcase',
+  path: '/showcase',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof AppIndexRoute
-  '/login': typeof LoginRoute
-  '/setup': typeof SetupRoute
-  '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
-  '/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
-  '/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
-  '/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
-  '/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
-  '/projects/$projectId/services/$serviceId/': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
+  '/': typeof IndexRoute
+  '/showcase': typeof ShowcaseRoute
 }
 export interface FileRoutesByTo {
-  '/login': typeof LoginRoute
-  '/setup': typeof SetupRoute
-  '/': typeof AppIndexRoute
-  '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
-  '/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
-  '/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
-  '/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
-  '/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
+  '/': typeof IndexRoute
+  '/showcase': typeof ShowcaseRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/_app': typeof AppRouteWithChildren
-  '/login': typeof LoginRoute
-  '/setup': typeof SetupRoute
-  '/_app/': typeof AppIndexRoute
-  '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
-  '/_app/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
-  '/_app/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
-  '/_app/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
-  '/_app/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
-  '/_app/projects/$projectId/services/$serviceId/': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
+  '/': typeof IndexRoute
+  '/showcase': typeof ShowcaseRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/login'
-    | '/setup'
-    | '/projects/$projectId/'
-    | '/projects/$projectId/services/$serviceId'
-    | '/projects/$projectId/services/$serviceId/logs'
-    | '/projects/$projectId/services/$serviceId/settings'
-    | '/projects/$projectId/services/$serviceId/variables'
-    | '/projects/$projectId/services/$serviceId/'
+  fullPaths: '/' | '/showcase'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/login'
-    | '/setup'
-    | '/'
-    | '/projects/$projectId'
-    | '/projects/$projectId/services/$serviceId/logs'
-    | '/projects/$projectId/services/$serviceId/settings'
-    | '/projects/$projectId/services/$serviceId/variables'
-    | '/projects/$projectId/services/$serviceId'
-  id:
-    | '__root__'
-    | '/_app'
-    | '/login'
-    | '/setup'
-    | '/_app/'
-    | '/_app/projects/$projectId/'
-    | '/_app/projects/$projectId/services/$serviceId'
-    | '/_app/projects/$projectId/services/$serviceId/logs'
-    | '/_app/projects/$projectId/services/$serviceId/settings'
-    | '/_app/projects/$projectId/services/$serviceId/variables'
-    | '/_app/projects/$projectId/services/$serviceId/'
+  to: '/' | '/showcase'
+  id: '__root__' | '/' | '/showcase'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  AppRoute: typeof AppRouteWithChildren
-  LoginRoute: typeof LoginRoute
-  SetupRoute: typeof SetupRoute
+  IndexRoute: typeof IndexRoute
+  ShowcaseRoute: typeof ShowcaseRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/_app': {
-      id: '/_app'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AppRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/setup': {
-      id: '/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof SetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_app/': {
-      id: '/_app/'
+    '/': {
+      id: '/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRoute
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_app/projects/$projectId/': {
-      id: '/_app/projects/$projectId/'
-      path: '/projects/$projectId'
-      fullPath: '/projects/$projectId/'
-      preLoaderRoute: typeof AppProjectsProjectIdIndexRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/projects/$projectId/services/$serviceId': {
-      id: '/_app/projects/$projectId/services/$serviceId'
-      path: '/projects/$projectId/services/$serviceId'
-      fullPath: '/projects/$projectId/services/$serviceId'
-      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/projects/$projectId/services/$serviceId/': {
-      id: '/_app/projects/$projectId/services/$serviceId/'
-      path: '/'
-      fullPath: '/projects/$projectId/services/$serviceId/'
-      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdIndexRouteImport
-      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
-    }
-    '/_app/projects/$projectId/services/$serviceId/logs': {
-      id: '/_app/projects/$projectId/services/$serviceId/logs'
-      path: '/logs'
-      fullPath: '/projects/$projectId/services/$serviceId/logs'
-      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRouteImport
-      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
-    }
-    '/_app/projects/$projectId/services/$serviceId/settings': {
-      id: '/_app/projects/$projectId/services/$serviceId/settings'
-      path: '/settings'
-      fullPath: '/projects/$projectId/services/$serviceId/settings'
-      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdSettingsRouteImport
-      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
-    }
-    '/_app/projects/$projectId/services/$serviceId/variables': {
-      id: '/_app/projects/$projectId/services/$serviceId/variables'
-      path: '/variables'
-      fullPath: '/projects/$projectId/services/$serviceId/variables'
-      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdVariablesRouteImport
-      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    '/showcase': {
+      id: '/showcase'
+      path: '/showcase'
+      fullPath: '/showcase'
+      preLoaderRoute: typeof ShowcaseRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
-
-interface AppProjectsProjectIdServicesServiceIdRouteChildren {
-  AppProjectsProjectIdServicesServiceIdLogsRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRoute
-  AppProjectsProjectIdServicesServiceIdSettingsRoute: typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
-  AppProjectsProjectIdServicesServiceIdVariablesRoute: typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
-  AppProjectsProjectIdServicesServiceIdIndexRoute: typeof AppProjectsProjectIdServicesServiceIdIndexRoute
-}
-
-const AppProjectsProjectIdServicesServiceIdRouteChildren: AppProjectsProjectIdServicesServiceIdRouteChildren =
-  {
-    AppProjectsProjectIdServicesServiceIdLogsRoute:
-      AppProjectsProjectIdServicesServiceIdLogsRoute,
-    AppProjectsProjectIdServicesServiceIdSettingsRoute:
-      AppProjectsProjectIdServicesServiceIdSettingsRoute,
-    AppProjectsProjectIdServicesServiceIdVariablesRoute:
-      AppProjectsProjectIdServicesServiceIdVariablesRoute,
-    AppProjectsProjectIdServicesServiceIdIndexRoute:
-      AppProjectsProjectIdServicesServiceIdIndexRoute,
-  }
-
-const AppProjectsProjectIdServicesServiceIdRouteWithChildren =
-  AppProjectsProjectIdServicesServiceIdRoute._addFileChildren(
-    AppProjectsProjectIdServicesServiceIdRouteChildren,
-  )
-
-interface AppRouteChildren {
-  AppIndexRoute: typeof AppIndexRoute
-  AppProjectsProjectIdIndexRoute: typeof AppProjectsProjectIdIndexRoute
-  AppProjectsProjectIdServicesServiceIdRoute: typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
-}
-
-const AppRouteChildren: AppRouteChildren = {
-  AppIndexRoute: AppIndexRoute,
-  AppProjectsProjectIdIndexRoute: AppProjectsProjectIdIndexRoute,
-  AppProjectsProjectIdServicesServiceIdRoute:
-    AppProjectsProjectIdServicesServiceIdRouteWithChildren,
-}
-
-const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  AppRoute: AppRouteWithChildren,
-  LoginRoute: LoginRoute,
-  SetupRoute: SetupRoute,
+  IndexRoute: IndexRoute,
+  ShowcaseRoute: ShowcaseRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

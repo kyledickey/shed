@@ -78,8 +78,6 @@ and [Go doc comments](https://go.dev/doc/comment).
 - React + TypeScript (strict), TanStack Router (file-based, `src/routes/`),
   TanStack Query (hooks in `src/api/`), CSS Modules with design tokens in
   `src/styles/`. Don't use Tailwind or CSS-in-JS.
-- The design should be clean, restrained, and quick to use. Don't add new
-  visual flourishes.
 - `src/api/types.ts` mirrors the types in `docs/design.md`. Change both
   together.
 - `bun run build` writes `web/dist`, which the Go binary embeds through

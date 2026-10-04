@@ -4,14 +4,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { isApiError } from "./api/client";
 import { keys } from "./api/keys";
-import { ErrorView, PendingView } from "./components/RouteStates";
 import { routeTree } from "./routeTree.gen";
 import "./styles/global.css";
 
 function onUnauthorized(err: unknown, queryKey?: readonly unknown[]) {
   if (isApiError(err, 401) && queryKey?.[0] !== keys.me[0]) {
     queryClient.clear();
-    void router.navigate({ to: "/login" });
+    // TODO: send to /login once the auth pages are rebuilt.
+    void router.navigate({ to: "/" });
   }
 }
 
@@ -31,8 +31,6 @@ const router = createRouter({
   context: { queryClient },
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
-  defaultPendingComponent: PendingView,
-  defaultErrorComponent: ErrorView,
   scrollRestoration: true,
 });
 
