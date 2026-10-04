@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PendingLines } from "./pending";
 import type { DeploymentStatus } from "./types";
 
 export type StreamState = "connecting" | "open" | "reconnecting" | "ended" | "closed";
@@ -56,34 +57,56 @@ export function useEventSource(url: string | null, handlers: Handlers): StreamSt
 export type LogLine = { id: number; text: string };
 
 const MAX_LINES = 5000;
+/** Characters of text buffered between renders; the server splits lines at about 64 KiB. */
+const MAX_PENDING_CHARS = 4 << 20;
+/** How often lines are flushed while the tab is hidden and animation frames pause. */
+const HIDDEN_FLUSH_MS = 1000;
 // oxlint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
 /**
  * Collects `log` events into a capped list of lines, batching updates per
- * animation frame. The server replays history on (re)connect, so lines reset
- * whenever the stream opens.
+ * animation frame, or on a timer while the tab is hidden. Lines waiting for
+ * a render are bounded too; if older ones are dropped, a marker line says how
+ * many. The server replays history on (re)connect, so lines reset whenever
+ * the stream opens.
  */
 export function useLogStream(url: string | null, onStatus?: (status: DeploymentStatus) => void) {
   const [lines, setLines] = useState<LogLine[]>([]);
-  const pending = useRef<LogLine[]>([]);
-  const frame = useRef(0);
+  const pending = useRef(new PendingLines<LogLine>(MAX_LINES, MAX_PENDING_CHARS));
+  const cancelFlush = useRef<(() => void) | null>(null);
   const nextId = useRef(0);
 
-  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  useEffect(() => () => cancelFlush.current?.(), []);
 
   const flush = () => {
-    frame.current = 0;
-    const batch = pending.current;
-    pending.current = [];
+    cancelFlush.current = null;
+    const { lines: batch, dropped } = pending.current.take();
+    if (dropped > 0) {
+      batch.unshift({
+        id: nextId.current++,
+        text: `… ${dropped} earlier ${dropped === 1 ? "line" : "lines"} dropped`,
+      });
+    }
     setLines((prev) => {
       const next = prev.concat(batch);
       return next.length > MAX_LINES ? next.slice(-MAX_LINES) : next;
     });
   };
 
+  const scheduleFlush = () => {
+    if (cancelFlush.current) return;
+    if (document.hidden) {
+      const timer = setTimeout(flush, HIDDEN_FLUSH_MS);
+      cancelFlush.current = () => clearTimeout(timer);
+    } else {
+      const frame = requestAnimationFrame(flush);
+      cancelFlush.current = () => cancelAnimationFrame(frame);
+    }
+  };
+
   const clear = () => {
-    pending.current = [];
+    pending.current.clear();
     setLines([]);
   };
 
@@ -94,7 +117,7 @@ export function useLogStream(url: string | null, onStatus?: (status: DeploymentS
         id: nextId.current++,
         text: raw.replace(ANSI, "").replace(/\r$/, ""),
       });
-      if (!frame.current) frame.current = requestAnimationFrame(flush);
+      scheduleFlush();
     },
     status: onStatus,
   });
