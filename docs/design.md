@@ -461,7 +461,9 @@ a long time.
 
 **Encryption.** Encryption is a global setting (`backup.encrypt`, `true` or
 `false`). When it is first enabled, shed generates an age X25519 identity and
-stores it in `settings` (`backup.age_identity`). While encryption is on,
+stores it in `settings` (`backup.age_identity`) with an insert that does
+nothing if the key exists, then reads the stored one back, so concurrent
+saves agree on one identity and a stored identity is never replaced. While encryption is on,
 every new archive, local and remote, is encrypted to that identity's
 recipient. Turning encryption off keeps the identity. Older archives keep
 their own `encrypted` flag, and shed decrypts them with the stored identity.

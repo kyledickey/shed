@@ -86,6 +86,20 @@ func TestSettings(t *testing.T) {
 	}
 }
 
+func TestAddSetting(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	if added, err := s.AddSetting(ctx, "k", "one"); err != nil || !added {
+		t.Fatalf("first AddSetting() = %v, %v; want added", added, err)
+	}
+	if added, err := s.AddSetting(ctx, "k", "two"); err != nil || added {
+		t.Fatalf("second AddSetting() = %v, %v; want not added", added, err)
+	}
+	if got, _ := s.Setting(ctx, "k"); got != "one" {
+		t.Errorf("Setting() = %q, want one", got)
+	}
+}
+
 func TestUsersAndSessions(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

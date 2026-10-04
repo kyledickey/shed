@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -1329,6 +1331,75 @@ func TestSettings(t *testing.T) {
 	bad := S3Input{Endpoint: "https://s3.example.com", AccessKeyID: "AK", SecretAccessKey: "S"}
 	if _, err := e.m.SetSettings(e.ctx, SettingsInput{S3: &bad}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("SetSettings without a bucket = %v, want ErrInvalid", err)
+	}
+}
+
+// racingStore stores an age identity right after the first time the
+// identity is found missing, like a concurrent request would.
+type racingStore struct {
+	*store.Store
+	once  sync.Once
+	other string
+}
+
+func (s *racingStore) Setting(ctx context.Context, key string) (string, error) {
+	v, err := s.Store.Setting(ctx, key)
+	if key == keyAgeIdentity && errors.Is(err, store.ErrNotFound) {
+		s.once.Do(func() {
+			if err := s.Store.SetSetting(ctx, keyAgeIdentity, s.other); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return v, err
+}
+
+func TestSetSettingsKeepsConcurrentIdentity(t *testing.T) {
+	e := newEnv(t)
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.m.store = &racingStore{Store: e.st, other: other.String()}
+	got, err := e.m.SetSettings(e.ctx, SettingsInput{Encrypt: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key, _ := e.m.Identity(e.ctx); key != other.String() {
+		t.Error("SetSettings replaced the identity another request stored")
+	}
+	if got.Recipient != other.Recipient().String() {
+		t.Errorf("Recipient = %s, want the stored identity's", got.Recipient)
+	}
+}
+
+func TestSetSettingsConcurrentEncryption(t *testing.T) {
+	e := newEnv(t)
+	const n = 8
+	recipients := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			s, err := e.m.SetSettings(e.ctx, SettingsInput{Encrypt: true})
+			if err != nil {
+				t.Error(err)
+			}
+			recipients[i] = s.Recipient
+		})
+	}
+	wg.Wait()
+	key, err := e.m.Identity(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := age.ParseX25519Identity(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range recipients {
+		if r != id.Recipient().String() {
+			t.Errorf("request %d encrypts to %s, but the stored identity is %s", i, r, id.Recipient())
+		}
 	}
 }
 

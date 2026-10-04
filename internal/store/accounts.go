@@ -30,6 +30,21 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// AddSetting stores a setting unless the key already has a value, atomically.
+// It reports whether it stored value.
+func (s *Store) AddSetting(ctx context.Context, key, value string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO NOTHING`, key, value)
+	if err != nil {
+		return false, fmt.Errorf("store: add setting %q: %w", key, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: add setting %q: %w", key, err)
+	}
+	return n == 1, nil
+}
+
 const userCols = `github_id, login, name, avatar_url, created_at`
 
 func scanUser(r scanner) (User, error) {

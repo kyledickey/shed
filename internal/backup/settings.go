@@ -146,6 +146,25 @@ func (m *Manager) identity(ctx context.Context) (*age.X25519Identity, error) {
 	return id, nil
 }
 
+// ensureIdentity generates and stores the age identity if there is none. It
+// never replaces a stored identity: when concurrent calls race, the first
+// write wins and the others keep it.
+func (m *Manager) ensureIdentity(ctx context.Context) error {
+	_, err := m.identity(ctx)
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		return fmt.Errorf("backup: generate age identity: %w", err)
+	}
+	if _, err := m.store.AddSetting(ctx, keyAgeIdentity, id.String()); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	_, err = m.identity(ctx)
+	return err
+}
+
 // recipient returns the recipient new archives are encrypted to, or nil
 // while encryption is off.
 func (m *Manager) recipient(ctx context.Context) (age.Recipient, error) {
@@ -242,15 +261,7 @@ func (m *Manager) SetSettings(ctx context.Context, in SettingsInput) (Settings, 
 		v = string(b)
 	}
 	if in.Encrypt {
-		if _, err := m.identity(ctx); errors.Is(err, store.ErrNotFound) {
-			id, err := age.GenerateX25519Identity()
-			if err != nil {
-				return Settings{}, fmt.Errorf("backup: generate age identity: %w", err)
-			}
-			if err := m.store.SetSetting(ctx, keyAgeIdentity, id.String()); err != nil {
-				return Settings{}, fmt.Errorf("backup: %w", err)
-			}
-		} else if err != nil {
+		if err := m.ensureIdentity(ctx); err != nil {
 			return Settings{}, err
 		}
 	}

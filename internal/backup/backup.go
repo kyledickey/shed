@@ -39,6 +39,7 @@ type Store interface {
 	ServicesWithVolumes(ctx context.Context) ([]store.Service, error)
 	Setting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
+	AddSetting(ctx context.Context, key, value string) (bool, error)
 	BackupPolicy(ctx context.Context, serviceID string) (store.BackupPolicy, error)
 	PutBackupPolicy(ctx context.Context, p store.BackupPolicy) error
 	CreateBackup(ctx context.Context, b store.Backup) (store.Backup, error)
