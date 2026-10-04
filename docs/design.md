@@ -558,6 +558,14 @@ The callback exchanges `code` via `POST /app-manifests/{code}/conversions`,
 stores app ID, slug, client ID/secret, webhook secret, and private key in
 `settings`, then redirects to `https://github.com/apps/<slug>/installations/new`.
 
+To reuse an App that already exists (for example after losing the database),
+the setup page instead posts the token and credentials the user generated in
+the App's GitHub settings to `POST /api/setup/github/import`. shed signs an
+App JWT with the key and calls `GET /app` to confirm the ID, key, and client
+ID belong together and to learn the slug, then stores the credentials the
+same way. GitHub has no API to check the client or webhook secret. The App's
+webhook and callback URLs must already point at `server.url`.
+
 ### Sign-in
 
 `/api/auth/login` → GitHub OAuth authorize (app client ID, random state cookie)
@@ -582,8 +590,9 @@ JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
 status. All routes except auth, setup, and webhook require a session.
 Mutating browser requests must match the origin of `server.url`; sibling
 application origins are rejected. POST, PUT, and PATCH require
-`Content-Type: application/json`, even with an empty body. Logout has the same
-protections. For Vite development, set `server.url` to the dashboard dev origin.
+`Content-Type: application/json`, even with an empty body. Logout and the
+setup import have the same protections. For Vite development, set `server.url`
+to the dashboard dev origin.
 SSE endpoints emit `event: log` (one line per event), `event: status`
 (deployment status changes, data `{"status":"…"}`), and `event: end`.
 Reconnecting clients get history replayed. Runtime log lines start with the
@@ -599,6 +608,7 @@ POST   /api/auth/logout                         204
 GET    /api/setup                               → Setup
 GET    /api/setup/github?token=                 HTML auto-submit form
 GET    /api/setup/github/callback?code=&state=  302 → GitHub install page
+POST   /api/setup/github/import  ImportApp     → Setup
 
 GET    /api/projects                            → Project[]
 POST   /api/projects            {name}          → Project
@@ -657,6 +667,14 @@ GET    /*                                       SPA (web/dist, index.html fallba
 ```ts
 type User = { login: string; name: string; avatarUrl: string };
 type Setup = { githubConfigured: boolean; appSlug: string; installUrl: string };
+type ImportApp = {
+  token: string;
+  appId: number;
+  clientId: string;
+  clientSecret: string;
+  webhookSecret: string;
+  privateKey: string;
+};
 
 type ServiceKind = "app" | "postgres" | "mysql" | "mongo" | "redis";
 type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed" | "stopped";

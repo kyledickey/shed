@@ -138,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/setup", s.handle(s.getSetup))
 	mux.Handle("GET /api/setup/github", s.handle(s.setupGitHub))
 	mux.Handle("GET /api/setup/github/callback", s.handle(s.setupCallback))
+	mux.Handle("POST /api/setup/github/import", protectMutations(s.baseURL, requireJSON(s.handle(s.importApp))))
 	mux.Handle("POST /api/github/webhook", s.handle(s.webhook))
 
 	// Routes that need a session.

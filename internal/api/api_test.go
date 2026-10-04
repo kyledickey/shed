@@ -125,6 +125,7 @@ type fixture struct {
 	backups  *fakeBackups
 	metrics  *fakeMetrics
 	github   *GitHubHolder
+	server   *Server
 	handler  http.Handler
 	cookie   *http.Cookie
 }
@@ -159,6 +160,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.server = srv
 	f.handler = srv.Handler()
 
 	// Sign in by creating a session directly, as auth would.
@@ -466,6 +468,41 @@ func TestSetupRequiresToken(t *testing.T) {
 	setup := f.decode(f.do("GET", "/api/setup", ""), http.StatusOK)
 	if setup["githubConfigured"] != false {
 		t.Errorf("setup = %v", setup)
+	}
+}
+
+func TestImportAppRejects(t *testing.T) {
+	f := newFixture(t)
+	token := f.server.setupToken
+	body := func(token, key string) string {
+		b, _ := json.Marshal(importRequest{
+			Token: token, AppID: 42, ClientID: "cid", ClientSecret: "csecret",
+			WebhookSecret: "whs", PrivateKey: key,
+		})
+		return string(b)
+	}
+	for _, tt := range []struct {
+		name, body string
+		want       int
+	}{
+		{"wrong token", body("wrong", "junk"), http.StatusForbidden},
+		{"missing fields", `{"token":"` + token + `","appId":42}`, http.StatusBadRequest},
+		{"bad key", body(token, "junk"), http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := f.do("POST", "/api/setup/github/import", tt.body)
+			if rec.Code != tt.want {
+				t.Errorf("status = %d, want %d; body: %s", rec.Code, tt.want, rec.Body)
+			}
+		})
+	}
+	if f.github.Get() != nil {
+		t.Fatal("rejected import configured GitHub")
+	}
+
+	f.github.Set(newGitHubClient(t, "s3cret"))
+	if rec := f.do("POST", "/api/setup/github/import", body(token, "junk")); rec.Code != http.StatusConflict {
+		t.Errorf("import when configured = %d, want 409", rec.Code)
 	}
 }
 

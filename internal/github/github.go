@@ -80,6 +80,21 @@ func (c *Client) App() App {
 	return c.app
 }
 
+// Lookup fetches the App's own record from GitHub, which confirms that the App
+// ID and private key belong together, and returns the App's slug and client
+// ID.
+func (c *Client) Lookup(ctx context.Context) (slug, clientID string, err error) {
+	client, err := c.appClient()
+	if err != nil {
+		return "", "", err
+	}
+	app, _, err := client.Apps.Get(ctx, "")
+	if err != nil {
+		return "", "", fmt.Errorf("github: get app %d: %w", c.app.ID, err)
+	}
+	return app.GetSlug(), app.GetClientID(), nil
+}
+
 func orDefault(hc *http.Client) *http.Client {
 	if hc == nil {
 		return &http.Client{Timeout: 30 * time.Second}

@@ -197,45 +197,110 @@ func (s *Server) setupCallback(w http.ResponseWriter, r *http.Request) error {
 		setupRedirect(w, r, "invalid_token")
 		return nil
 	}
-	app, client, err := s.createApp(r.Context(), q.Get("code"))
+	app, err := s.createApp(r.Context(), q.Get("code"))
 	if err != nil {
 		s.log.Error("GitHub App setup failed", "err", err)
 		setupRedirect(w, r, "failed")
 		return nil
+	}
+	http.Redirect(w, r, installURL(app.Slug), http.StatusFound)
+	return nil
+}
+
+// createApp converts the manifest code into App credentials and saves them.
+func (s *Server) createApp(ctx context.Context, code string) (github.App, error) {
+	if code == "" {
+		return github.App{}, errors.New("missing code")
+	}
+	app, err := github.ConvertManifest(ctx, s.httpClient, code)
+	if err != nil {
+		return github.App{}, err
+	}
+	client, err := github.New(app, s.httpClient)
+	if err != nil {
+		return github.App{}, err
+	}
+	return app, s.saveApp(ctx, client)
+}
+
+// importRequest is the body of POST /api/setup/github/import.
+type importRequest struct {
+	Token         string `json:"token"`
+	AppID         int64  `json:"appId"`
+	ClientID      string `json:"clientId"`
+	ClientSecret  string `json:"clientSecret"`
+	WebhookSecret string `json:"webhookSecret"`
+	PrivateKey    string `json:"privateKey"`
+}
+
+// importApp configures an App that already exists on GitHub from credentials
+// the user generated in its settings, after checking the ID and key with
+// GitHub.
+func (s *Server) importApp(w http.ResponseWriter, r *http.Request) error {
+	var in importRequest
+	if err := decodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	if s.github.Get() != nil {
+		return errorf(http.StatusConflict, "GitHub App is already configured")
+	}
+	if !s.validSetupToken(in.Token) {
+		return errorf(http.StatusForbidden, "invalid setup token")
+	}
+	in.ClientID = strings.TrimSpace(in.ClientID)
+	in.ClientSecret = strings.TrimSpace(in.ClientSecret)
+	in.WebhookSecret = strings.TrimSpace(in.WebhookSecret)
+	if in.AppID <= 0 || in.ClientID == "" || in.ClientSecret == "" || in.WebhookSecret == "" {
+		return errorf(http.StatusBadRequest, "app ID, client ID, client secret, and webhook secret are required")
+	}
+	app := github.App{
+		ID: in.AppID, ClientID: in.ClientID, ClientSecret: in.ClientSecret,
+		WebhookSecret: in.WebhookSecret, PrivateKey: []byte(strings.TrimSpace(in.PrivateKey) + "\n"),
+	}
+	client, err := github.New(app, s.httpClient)
+	if err != nil {
+		return errorf(http.StatusBadRequest, "private key is not a valid PEM-encoded RSA key")
+	}
+	slug, clientID, err := client.Lookup(r.Context())
+	if err != nil {
+		s.log.Warn("GitHub App import: lookup failed", "app", in.AppID, "err", err)
+		return errorf(http.StatusBadRequest, "GitHub rejected App ID %d with this private key", in.AppID)
+	}
+	if clientID != in.ClientID {
+		return errorf(http.StatusBadRequest, "client ID does not belong to App %d", in.AppID)
+	}
+	app.Slug = slug
+	if client, err = github.New(app, s.httpClient); err != nil {
+		return err
+	}
+	if err := s.saveApp(r.Context(), client); err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, setupJSON{GitHubConfigured: true, AppSlug: slug, InstallURL: installURL(slug)})
+}
+
+// saveApp stores the client's App credentials, installs the client, and ends
+// setup. The caller holds setupMu.
+func (s *Server) saveApp(ctx context.Context, client *github.Client) error {
+	app := client.App()
+	raw, err := json.Marshal(storedApp{
+		ID: app.ID, Slug: app.Slug, ClientID: app.ClientID, ClientSecret: app.ClientSecret,
+		WebhookSecret: app.WebhookSecret, PrivateKey: string(app.PrivateKey),
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.store.SetSetting(ctx, githubAppKey, string(raw)); err != nil {
+		return err
 	}
 	s.github.Set(client)
 	s.tokenMu.Lock()
 	s.setupToken = ""
 	s.tokenMu.Unlock()
 	s.log.Info("GitHub App configured", "slug", app.Slug)
-	http.Redirect(w, r, installURL(app.Slug), http.StatusFound)
 	return nil
-}
-
-// createApp converts the manifest code into App credentials and stores them.
-func (s *Server) createApp(ctx context.Context, code string) (github.App, *github.Client, error) {
-	if code == "" {
-		return github.App{}, nil, errors.New("missing code")
-	}
-	app, err := github.ConvertManifest(ctx, s.httpClient, code)
-	if err != nil {
-		return github.App{}, nil, err
-	}
-	client, err := github.New(app, s.httpClient)
-	if err != nil {
-		return github.App{}, nil, err
-	}
-	raw, err := json.Marshal(storedApp{
-		ID: app.ID, Slug: app.Slug, ClientID: app.ClientID, ClientSecret: app.ClientSecret,
-		WebhookSecret: app.WebhookSecret, PrivateKey: string(app.PrivateKey),
-	})
-	if err != nil {
-		return github.App{}, nil, err
-	}
-	if err := s.store.SetSetting(ctx, githubAppKey, string(raw)); err != nil {
-		return github.App{}, nil, err
-	}
-	return app, client, nil
 }
 
 // webhook handles GitHub deliveries: a push to a branch deploys every app

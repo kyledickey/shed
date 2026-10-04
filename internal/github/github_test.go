@@ -176,6 +176,11 @@ func newFakeGitHub(t *testing.T) (*fakeGitHub, *Client) {
 			jsonOut(w, `{"id":7}`)
 		}
 	})
+	mux.HandleFunc("GET /app", func(w http.ResponseWriter, r *http.Request) {
+		if requireApp(w, r) {
+			jsonOut(w, `{"id":42,"slug":"shed-app","client_id":"cid"}`)
+		}
+	})
 	mux.HandleFunc("GET /app/installations", func(w http.ResponseWriter, r *http.Request) {
 		if requireApp(w, r) {
 			jsonOut(w, `[{"id":7}]`)
@@ -240,6 +245,32 @@ func newFakeGitHub(t *testing.T) (*fakeGitHub, *Client) {
 	c.apiURL = f.srv.URL + "/"
 	c.webURL = f.srv.URL
 	return f, c
+}
+
+func TestLookup(t *testing.T) {
+	_, c := newFakeGitHub(t)
+	slug, clientID, err := c.Lookup(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slug != "shed-app" || clientID != "cid" {
+		t.Errorf("Lookup = %q, %q; want shed-app, cid", slug, clientID)
+	}
+
+	other, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := New(App{ID: 42, PrivateKey: pem.EncodeToMemory(&pem.Block{
+		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(other),
+	})}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.apiURL = c.apiURL
+	if _, _, err := wrong.Lookup(t.Context()); err == nil {
+		t.Error("Lookup with a key from another App succeeded")
+	}
 }
 
 func TestNewRejectsBadKey(t *testing.T) {

@@ -1,5 +1,13 @@
 export type User = { login: string; name: string; avatarUrl: string };
 export type Setup = { githubConfigured: boolean; appSlug: string; installUrl: string };
+export type ImportApp = {
+  token: string;
+  appId: number;
+  clientId: string;
+  clientSecret: string;
+  webhookSecret: string;
+  privateKey: string;
+};
 
 export type ServiceKind = "app" | "postgres" | "mysql" | "mongo" | "redis";
 export type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed" | "stopped";

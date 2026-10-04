@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { Setup, User } from "./types";
+import type { ImportApp, Setup, User } from "./types";
 
 export const meQuery = queryOptions({
   queryKey: keys.me,
@@ -20,5 +20,13 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => api.post<void>("/auth/logout"),
     onSuccess: () => qc.clear(),
+  });
+}
+
+export function useImportApp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (app: ImportApp) => api.post<Setup>("/setup/github/import", app),
+    onSuccess: (setup) => qc.setQueryData(keys.setup, setup),
   });
 }
