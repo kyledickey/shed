@@ -25,6 +25,8 @@ type job struct {
 	project store.Project
 	out     io.Writer // the build log, safe for concurrent use
 
+	secrets []string
+
 	container   string // ID of the new container, once created
 	stoppedPrev string // ID of the previous container, if it was stopped early
 }
@@ -64,6 +66,9 @@ func (j *job) execute(ctx context.Context) error {
 	}
 	env, err := j.environment(ctx, j.svc, j.project, j.dep.CommitSHA)
 	if err != nil {
+		return err
+	}
+	if j.secrets, err = j.logSecrets(ctx, j.svc, env); err != nil {
 		return err
 	}
 	if err := j.buildImage(ctx, env); err != nil {
@@ -436,7 +441,7 @@ func (j *job) switchOver(ctx context.Context) error {
 // fail records that the deployment did not go live, removes its container,
 // and restarts the previous container if it was stopped.
 func (j *job) fail(ctx context.Context, err error) {
-	status, msg := store.StatusFailed, err.Error()
+	status, msg := store.StatusFailed, build.NewRedactor(io.Discard, j.secrets).Redact(err.Error())
 	switch cause := context.Cause(ctx); {
 	case errors.Is(err, errCIFailed):
 		status = store.StatusSkipped

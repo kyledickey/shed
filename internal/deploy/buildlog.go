@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/kyledickey/shed/internal/build"
 	"io"
 	"strings"
 	"sync"
@@ -84,7 +85,11 @@ func (j *job) follow(ctx context.Context, id string) *follower {
 	go func() {
 		defer close(f.done)
 		lw := &lineWriter{out: j.out}
-		err := j.docker.Logs(ctx, id, -1, true, lw)
+		redactor := build.NewRedactor(lw, j.secrets)
+		err := j.docker.Logs(ctx, id, -1, true, redactor)
+		if flushErr := redactor.Flush(); err == nil {
+			err = flushErr
+		}
 		lw.Flush()
 		if err != nil && ctx.Err() == nil {
 			j.printf("Reading container output: %v", err)

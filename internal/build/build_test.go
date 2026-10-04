@@ -122,9 +122,9 @@ func TestArgs(t *testing.T) {
 	req := Request{Image: "shed/a:b", Env: map[string]string{"B": "2", "A": "1"}}
 
 	t.Run("dockerfile", func(t *testing.T) {
-		got := dockerfileArgs(req, "/ctx/Dockerfile", "/ctx")
+		got := dockerfileArgs(req, "/ctx/Dockerfile", "/ctx", "/secrets")
 		want := []string{"buildx", "build", "--load", "-t", "shed/a:b", "-f", "/ctx/Dockerfile",
-			"--build-arg", "A=1", "--build-arg", "B=2", "/ctx"}
+			"--secret", "id=A,src=/secrets/A", "--secret", "id=B,src=/secrets/B", "/ctx"}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -132,29 +132,20 @@ func TestArgs(t *testing.T) {
 	t.Run("railpack prepare", func(t *testing.T) {
 		got := railpackPrepareArgs(req, "/ctx", "/ctx/plan.json", "/ctx/info.json")
 		want := []string{"prepare", "/ctx", "--plan-out", "/ctx/plan.json", "--info-out", "/ctx/info.json",
-			"--env", "A=1", "--env", "B=2"}
+			"--env", "A", "--env", "B"}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	})
+
 	t.Run("railpack build", func(t *testing.T) {
-		args, env := railpackBuildArgs(req, "/ctx", "/ctx/plan.json")
-		want := []string{"buildx", "build", "--load", "-t", "shed/a:b",
-			"--build-arg", "BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend", "-f", "/ctx/plan.json",
-			"--secret", "id=A,env=A", "--secret", "id=B,env=B", "/ctx"}
-		if !slices.Equal(args, want) {
-			t.Errorf("args = %q, want %q", args, want)
-		}
-		if wantEnv := []string{"A=1", "B=2"}; !slices.Equal(env, wantEnv) {
-			t.Errorf("env = %q, want %q", env, wantEnv)
+		args := railpackBuildArgs(req, "/ctx", "/ctx/plan.json", "/secrets")
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "A=1") || strings.Contains(joined, "B=2") || !strings.Contains(joined, "id=A,src=/secrets/A") {
+			t.Fatal(args)
 		}
 	})
-	t.Run("no env", func(t *testing.T) {
-		args, env := railpackBuildArgs(Request{Image: "x"}, "/ctx", "/p")
-		if slices.Contains(args, "--secret") || len(env) != 0 {
-			t.Errorf("unexpected secrets: %q %q", args, env)
-		}
-	})
+
 }
 
 func TestRedactor(t *testing.T) {
@@ -173,7 +164,7 @@ func TestRedactor(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			r := newRedactor(&buf, secrets(url))
+			r := NewRedactor(&buf, secrets(url))
 			for _, w := range tt.writes {
 				if _, err := r.Write([]byte(w)); err != nil {
 					t.Fatal(err)
@@ -345,5 +336,64 @@ printf '{}' > "$6"
 	got, err := os.ReadFile(sentinel)
 	if err != nil || string(got) != "untouched" {
 		t.Fatalf("external file changed: %q, %v", got, err)
+	}
+}
+
+func TestBuildSecretIsolation(t *testing.T) {
+	work, bin := t.TempDir(), t.TempDir()
+	scripts := map[string]string{
+		"git": `#!/bin/sh
+set -eu
+case "$*" in *private-token*) exit 1;; esac
+case "$1" in
+ fetch) test "$GIT_CONFIG_VALUE_1" = 'Authorization: Basic dXNlcjpwcml2YXRlLXRva2Vu';;
+esac
+`,
+		"railpack": `#!/bin/sh
+set -eu
+test "$PASSWORD" = 'private-value'
+case "$*" in *private-value*) exit 1;; esac
+printf '{}\n' > "$4"
+printf '{}\n' > "$6"
+echo "$PASSWORD"
+`,
+		"docker": `#!/bin/sh
+set -eu
+test "${PASSWORD-unset}" = unset
+case "$*" in *private-value*|*private-token*) exit 1;; esac
+while [ "$#" -gt 0 ]; do
+ if [ "$1" = --secret ]; then
+ shift
+ file="${1#*,src=}"
+ test "$(cat "$file")" = 'private-value'
+ test "$(stat -c %a "$file")" = 600
+ echo 'private-value'
+ fi
+ shift
+done
+`,
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	var out bytes.Buffer
+	b := Builder{WorkDir: work}
+	req := Request{RepoURL: "https://user:private-token@example.com/r.git", Commit: "abc", Image: "x", Env: map[string]string{"PASSWORD": "private-value"}}
+	if err := b.Build(context.Background(), "safe", req, &out); err != nil {
+		t.Fatalf("build: %v; %s", err, &out)
+	}
+	if strings.Contains(out.String(), "private-value") {
+		t.Fatalf("secret in output: %s", &out)
+	}
+}
+
+func TestPrepareEnvironmentBlocksHostOverrides(t *testing.T) {
+	for _, key := range []string{"PATH", "HOME", "TMPDIR", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "GIT_CONFIG_COUNT", "DOCKER_HOST", "XDG_CONFIG_HOME"} {
+		if prepareKey(key) {
+			t.Errorf("accepted host control variable %s", key)
+		}
 	}
 }

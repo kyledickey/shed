@@ -6,11 +6,13 @@ package build
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"maps"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,7 +72,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	}
 	defer os.RemoveAll(workspace)
 
-	w := newRedactor(out, secrets(req.RepoURL))
+	w := NewRedactor(out, append(secrets(req.RepoURL), slices.Collect(maps.Values(req.Env))...))
 	defer w.Flush()
 
 	fmt.Fprintln(w, "==> Cloning")
@@ -82,6 +84,10 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	if err != nil {
 		return fmt.Errorf("build: root directory: %w", err)
 	}
+	secretDir := filepath.Join(workspace, "secrets")
+	if err := writeSecrets(secretDir, req.Env); err != nil {
+		return err
+	}
 	dockerfile, err := findDockerfile(repo, contextDir, req.DockerfilePath)
 	if err != nil {
 		return fmt.Errorf("build: dockerfile: %w", err)
@@ -89,7 +95,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 
 	if dockerfile != "" {
 		fmt.Fprintln(w, "==> Building with Dockerfile")
-		err = run(ctx, contextDir, nil, w, "docker", dockerfileArgs(req, dockerfile, contextDir)...)
+		err = run(ctx, contextDir, nil, w, "docker", dockerfileArgs(req, dockerfile, contextDir, secretDir)...)
 		if err != nil {
 			return fmt.Errorf("build: docker build: %w", err)
 		}
@@ -99,12 +105,12 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	fmt.Fprintln(w, "==> Building with Railpack")
 	plan := filepath.Join(workspace, "railpack-plan.json")
 	info := filepath.Join(workspace, "railpack-info.json")
-	err = run(ctx, contextDir, nil, w, "railpack", railpackPrepareArgs(req, contextDir, plan, info)...)
+	err = run(ctx, contextDir, prepareEnv(req.Env), w, "railpack", railpackPrepareArgs(req, contextDir, plan, info)...)
 	if err != nil {
 		return fmt.Errorf("build: railpack prepare: %w", err)
 	}
-	args, env := railpackBuildArgs(req, contextDir, plan)
-	if err := run(ctx, contextDir, env, w, "docker", args...); err != nil {
+	args := railpackBuildArgs(req, contextDir, plan, secretDir)
+	if err := run(ctx, contextDir, nil, w, "docker", args...); err != nil {
 		return fmt.Errorf("build: docker build: %w", err)
 	}
 	return nil
@@ -142,12 +148,24 @@ func isLocal(rel string) bool {
 // clone fetches req.Commit into the empty directory dir.
 func clone(ctx context.Context, dir string, req Request, out io.Writer) error {
 	env := []string{"GIT_TERMINAL_PROMPT=0"}
+	repoURL, err := url.Parse(req.RepoURL)
+	if err != nil {
+		return fmt.Errorf("build: parse clone URL: %w", err)
+	}
+	if repoURL.User != nil {
+		password, _ := repoURL.User.Password()
+		basic := base64.StdEncoding.EncodeToString([]byte(repoURL.User.Username() + ":" + password))
+		repoURL.User = nil
+		env = append(env, "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
+			"GIT_CONFIG_KEY_1=http."+repoURL.Scheme+"://"+repoURL.Host+"/.extraHeader", "GIT_CONFIG_VALUE_1=Authorization: Basic "+basic)
+	}
+
 	steps := []struct {
 		name string
 		args []string
 	}{
 		{"init", []string{"init", "--quiet"}},
-		{"fetch", []string{"fetch", "--quiet", "--depth", "1", req.RepoURL, req.Commit}},
+		{"fetch", []string{"fetch", "--quiet", "--depth", "1", repoURL.String(), req.Commit}},
 		{"checkout", []string{"checkout", "--quiet", "FETCH_HEAD"}},
 	}
 	for _, s := range steps {
@@ -193,10 +211,10 @@ func findDockerfile(repo, contextDir, configured string) (string, error) {
 }
 
 // dockerfileArgs returns the docker arguments for a Dockerfile build.
-func dockerfileArgs(req Request, dockerfile, contextDir string) []string {
+func dockerfileArgs(req Request, dockerfile, contextDir, secretDir string) []string {
 	args := []string{"buildx", "build", "--load", "-t", req.Image, "-f", dockerfile}
 	for _, k := range sortedKeys(req.Env) {
-		args = append(args, "--build-arg", k+"="+req.Env[k])
+		args = append(args, "--secret", "id="+k+",src="+filepath.Join(secretDir, k))
 	}
 	return append(args, contextDir)
 }
@@ -205,24 +223,53 @@ func dockerfileArgs(req Request, dockerfile, contextDir string) []string {
 func railpackPrepareArgs(req Request, contextDir, plan, info string) []string {
 	args := []string{"prepare", contextDir, "--plan-out", plan, "--info-out", info}
 	for _, k := range sortedKeys(req.Env) {
-		args = append(args, "--env", k+"="+req.Env[k])
+		if prepareKey(k) {
+			args = append(args, "--env", k)
+		}
 	}
 	return args
 }
 
-// railpackBuildArgs returns the docker arguments that build plan with the
-// Railpack frontend, and the environment variables that carry its secrets.
-func railpackBuildArgs(req Request, contextDir, plan string) (args, env []string) {
-	args = []string{
-		"buildx", "build", "--load", "-t", req.Image,
-		"--build-arg", "BUILDKIT_SYNTAX=" + railpackFrontend,
-		"-f", plan,
+// railpackBuildArgs passes secret files without altering the Docker client's environment.
+func railpackBuildArgs(req Request, contextDir, plan, secretDir string) []string {
+	args := dockerfileArgs(req, plan, contextDir, secretDir)
+	return append(args[:len(args)-1], "--build-arg", "BUILDKIT_SYNTAX="+railpackFrontend, contextDir)
+}
+
+func writeSecrets(dir string, env map[string]string) error {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("build: create secrets: %w", err)
 	}
-	for _, k := range sortedKeys(req.Env) {
-		args = append(args, "--secret", "id="+k+",env="+k)
-		env = append(env, k+"="+req.Env[k])
+	for k, v := range env {
+		if err := os.WriteFile(filepath.Join(dir, k), []byte(v), 0600); err != nil {
+			return fmt.Errorf("build: write secret: %w", err)
+		}
 	}
-	return append(args, contextDir), env
+	return nil
+}
+
+// prepareKey excludes variables that control execution of host tools. They are
+// still available as build secrets and in the workload's environment.
+func prepareKey(k string) bool {
+	if k == "PATH" || k == "HOME" || k == "TMPDIR" {
+		return false
+	}
+	for _, p := range []string{"LD_", "DYLD_", "XDG_", "GIT_", "DOCKER_"} {
+		if strings.HasPrefix(k, p) {
+			return false
+		}
+	}
+	return true
+}
+
+func prepareEnv(env map[string]string) []string {
+	var out []string
+	for _, k := range sortedKeys(env) {
+		if prepareKey(k) {
+			out = append(out, k+"="+env[k])
+		}
+	}
+	return out
 }
 
 func sortedKeys(m map[string]string) []string {

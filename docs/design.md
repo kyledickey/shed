@@ -486,3 +486,25 @@ otherwise `offline`.
 
 Settings are saved immediately; the dashboard tells the user to redeploy to
 apply them.
+
+### Build secret handling
+
+Resolved service variables are supplied to Dockerfile and Railpack builds as
+BuildKit secrets in private files outside the source context, never as implicit
+Docker build arguments. Dockerfiles consume them explicitly with
+`RUN --mount=type=secret,id=KEY` (at `/run/secrets/KEY`). Existing Dockerfiles
+using `ARG KEY` for service variables must migrate to secret mounts. Railpack
+preparation receives variable values through its process environment; host-tool
+control variables such as `PATH`, `HOME`, `LD_*`, `GIT_*`, and `DOCKER_*` are
+excluded from preparation but remain available as build secrets and at runtime.
+Git clone credentials use a scoped HTTP authorization header in the child
+process environment, rather than the command line or repository configuration.
+Build logs mask literal service-variable and clone-credential values, including
+credentials split across writes. A build can still intentionally embed or encode
+secrets it receives; secret mounts do not make untrusted build scripts safe.
+
+Container startup and runtime log streams mask literal resolved values of stored
+service variables, including matches split across writes. Injected metadata
+(ports and service names) is not treated as secret unless explicitly configured
+as a service variable. Runtime redaction uses the current variable configuration;
+changing variables cannot retroactively remove secrets from older saved logs.

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -93,5 +94,23 @@ func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, 
 	if err != nil {
 		return err
 	}
-	return d.docker.Logs(ctx, dep.ContainerID, tail, true, w)
+	svc, err := d.store.Service(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	project, err := d.store.Project(ctx, svc.ProjectID)
+	if err != nil {
+		return err
+	}
+	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+	if err != nil {
+		return err
+	}
+	secrets, err := d.logSecrets(ctx, svc, env)
+	if err != nil {
+		return err
+	}
+	redactor := build.NewRedactor(w, secrets)
+	err = d.docker.Logs(ctx, dep.ContainerID, tail, true, redactor)
+	return errors.Join(err, redactor.Flush())
 }

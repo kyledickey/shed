@@ -2,6 +2,7 @@ package build
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
 	"net/url"
 	"slices"
@@ -19,27 +20,32 @@ func secrets(repoURL string) []string {
 		} else if name := u.User.Username(); name != "" {
 			list = append(list, name) // Token as the user name.
 		}
-		list = append(list, u.User.String())
+		password, _ := u.User.Password()
+		list = append(list, u.User.String(), base64.StdEncoding.EncodeToString([]byte(u.User.Username()+":"+password)))
 	}
 	// Replace longest first so partial matches do not leave remnants.
 	slices.SortFunc(list, func(a, b string) int { return len(b) - len(a) })
 	return list
 }
 
-// redactor is an io.Writer that replaces secrets in the text written to it.
+// Redactor is an io.Writer that replaces secrets in the text written to it.
 // It works line by line so that a secret split across writes is still caught.
 // Callers must call Flush when done.
-type redactor struct {
+type Redactor struct {
 	w       io.Writer
 	secrets []string
 	buf     []byte
 }
 
-func newRedactor(w io.Writer, secrets []string) *redactor {
-	return &redactor{w: w, secrets: secrets}
+// NewRedactor returns a writer that masks literal secret values across writes.
+func NewRedactor(w io.Writer, secrets []string) *Redactor {
+	secrets = slices.Clone(secrets)
+	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
+	return &Redactor{w: w, secrets: secrets}
 }
 
-func (r *redactor) Write(p []byte) (int, error) {
+// Write buffers output until a complete line is available.
+func (r *Redactor) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
 	for {
 		i := bytes.IndexByte(r.buf, '\n')
@@ -47,7 +53,7 @@ func (r *redactor) Write(p []byte) (int, error) {
 			break
 		}
 		line := r.buf[:i+1]
-		_, err := io.WriteString(r.w, r.redact(string(line)))
+		_, err := io.WriteString(r.w, r.Redact(string(line)))
 		r.buf = r.buf[i+1:]
 		if err != nil {
 			return 0, err
@@ -57,16 +63,17 @@ func (r *redactor) Write(p []byte) (int, error) {
 }
 
 // Flush writes any buffered partial line.
-func (r *redactor) Flush() error {
+func (r *Redactor) Flush() error {
 	if len(r.buf) == 0 {
 		return nil
 	}
-	_, err := io.WriteString(r.w, r.redact(string(r.buf)))
+	_, err := io.WriteString(r.w, r.Redact(string(r.buf)))
 	r.buf = nil
 	return err
 }
 
-func (r *redactor) redact(s string) string {
+// Redact masks literal secret values in s.
+func (r *Redactor) Redact(s string) string {
 	for _, secret := range r.secrets {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, redacted)
