@@ -124,7 +124,11 @@ type Deployment struct {
 	CommitMessage string
 	CommitAuthor  string
 	// Image is the built or pulled image reference.
-	Image       string
+	Image string
+	// Port is the container port the deployment was started with; zero
+	// means none. Routes to the deployment use it, not the service's
+	// current port.
+	Port        int
 	ContainerID string
 	// Error describes why the deployment failed.
 	Error      string

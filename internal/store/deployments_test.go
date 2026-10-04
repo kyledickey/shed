@@ -30,7 +30,7 @@ func TestActivateDeployment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	next.ContainerID = "c2"
+	next.ContainerID, next.Port = "c2", 8080
 	if err := s.ActivateDeployment(ctx, next); err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +40,8 @@ func TestActivateDeployment(t *testing.T) {
 			t.Errorf("deployment %s = %s, %v; want %s", id, got.Status, err, want)
 		}
 	}
-	if got, _ := s.Deployment(ctx, next.ID); got.ContainerID != "c2" {
-		t.Errorf("container = %q, want c2", got.ContainerID)
+	if got, _ := s.Deployment(ctx, next.ID); got.ContainerID != "c2" || got.Port != 8080 {
+		t.Errorf("container, port = %q, %d; want c2, 8080", got.ContainerID, got.Port)
 	}
 	if err := s.ActivateDeployment(ctx, Deployment{ID: "nope", ServiceID: a.ID}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ActivateDeployment(nope) error = %v", err)
@@ -87,7 +87,7 @@ func TestMigrationKeepsNewestActiveDeployment(t *testing.T) {
 	}
 	for _, q := range []string{
 		`INSERT INTO projects (id, name, created_at) VALUES ('p', 'p', '2026-01-01T00:00:00.000Z')`,
-		`INSERT INTO services (id, project_id, name, kind, created_at) VALUES ('a', 'p', 'a', 'app', '2026-01-01T00:00:00.000Z')`,
+		`INSERT INTO services (id, project_id, name, kind, port, created_at) VALUES ('a', 'p', 'a', 'app', 5432, '2026-01-01T00:00:00.000Z')`,
 		`INSERT INTO deployments (id, service_id, status, trigger, created_at) VALUES
 			('old', 'a', 'active', 'push', '2026-01-01T00:00:01.000Z'),
 			('new', 'a', 'active', 'push', '2026-01-01T00:00:02.000Z'),
@@ -110,6 +110,10 @@ func TestMigrationKeepsNewestActiveDeployment(t *testing.T) {
 	// Equal creation times are broken by insertion order, as ActiveDeployment does.
 	if len(ds) != 1 || ds[0].ID != "tie" {
 		t.Fatalf("active deployments = %+v, want only tie", ds)
+	}
+	// Deployments from before ports were recorded take the service's.
+	if ds[0].Port != 5432 {
+		t.Errorf("port = %d, want 5432", ds[0].Port)
 	}
 	for _, id := range []string{"old", "new", "gone"} {
 		if d, err := s.Deployment(ctx, id); err != nil || d.Status != StatusRemoved {

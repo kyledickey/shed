@@ -17,7 +17,8 @@ func crashAfterActivation(t *testing.T, f *fixture) (prev, next store.Deployment
 	prev = f.wait(t, f.deploy(t).ID, terminal)
 	f.settle(t)
 	next, err := f.st.CreateDeployment(ctx, store.Deployment{
-		ServiceID: f.svc.ID, Status: store.StatusDeploying, Trigger: store.TriggerManual, Image: prev.Image,
+		ServiceID: f.svc.ID, Status: store.StatusDeploying, Trigger: store.TriggerManual,
+		Image: prev.Image, Port: prev.Port,
 	})
 	if err != nil {
 		t.Fatal(err)

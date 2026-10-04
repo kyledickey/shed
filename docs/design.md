@@ -181,6 +181,7 @@ CREATE TABLE deployments (
   commit_message TEXT NOT NULL DEFAULT '',
   commit_author TEXT NOT NULL DEFAULT '',
   image TEXT NOT NULL DEFAULT '',         -- built or pulled image ref
+  port INTEGER NOT NULL DEFAULT 0,        -- service port it was started with; routes use it
   container_id TEXT NOT NULL DEFAULT '',
   error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
@@ -323,8 +324,8 @@ the same service.
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
-3. **Start**: resolve variables, create and start the new container.
-   Services with volumes or a public port stop the old container first if it
+3. **Start**: resolve variables, record the service's port on the deployment,
+   and create and start the new container. Services with volumes or a public port stop the old container first if it
    is running (volumes can't be shared safely, e.g. database data dirs); others
    overlap for zero downtime.
 4. **Health**: if `port > 0`, wait up to 120s for a TCP connect, or a 2xx/3xx
@@ -634,7 +635,10 @@ then `zstd -d -o /var/lib/shed/shed.db`, and start shed.
 
 Embedded Caddy (`caddy.Load` with a generated JSON config). Routes:
 - dashboard: host of `server.url` → `server.listen`
-- each domain → `<container IP>:<port>` of the service's active container.
+- each domain → `<container IP>:<port>` of the service's active container,
+  where `port` is the one recorded on the active deployment. Editing a
+  service's port takes effect with its next deployment; until then routes,
+  and a container recreated for the active deployment, keep the old port.
 Automatic HTTPS with `acme_email`. Generated domains are
 `<service>-<project>.<base_domain>` (requires wildcard DNS).
 

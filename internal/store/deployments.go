@@ -7,14 +7,25 @@ import (
 )
 
 const deploymentCols = `id, service_id, status, trigger, commit_sha, commit_message, commit_author,
-	image, container_id, error, created_at, started_at, finished_at`
+	image, port, container_id, error, created_at, started_at, finished_at`
 
 func scanDeployment(r scanner) (Deployment, error) {
 	var d Deployment
 	err := r.Scan(&d.ID, &d.ServiceID, &d.Status, &d.Trigger, &d.CommitSHA, &d.CommitMessage,
-		&d.CommitAuthor, &d.Image, &d.ContainerID, &d.Error, (*timestamp)(&d.CreatedAt),
+		&d.CommitAuthor, &d.Image, &d.Port, &d.ContainerID, &d.Error, (*timestamp)(&d.CreatedAt),
 		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt})
 	return d, err
+}
+
+// updateDeployment overwrites the mutable fields of a deployment; its
+// arguments come from updateArgs.
+const updateDeployment = `UPDATE deployments SET status = ?, commit_sha = ?, commit_message = ?,
+	commit_author = ?, image = ?, port = ?, container_id = ?, error = ?, started_at = ?,
+	finished_at = ? WHERE id = ?`
+
+func updateArgs(d Deployment) []any {
+	return []any{d.Status, d.CommitSHA, d.CommitMessage, d.CommitAuthor, d.Image, d.Port,
+		d.ContainerID, d.Error, optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.ID}
 }
 
 // CreateDeployment stores d under a new ID and creation time, which it
@@ -23,9 +34,9 @@ func (s *Store) CreateDeployment(ctx context.Context, d Deployment) (Deployment,
 	d.ID = NewID()
 	d.CreatedAt = now()
 	err := s.exec(ctx, `INSERT INTO deployments (`+deploymentCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.ServiceID, d.Status, d.Trigger, d.CommitSHA, d.CommitMessage, d.CommitAuthor,
-		d.Image, d.ContainerID, d.Error, formatTime(d.CreatedAt),
+		d.Image, d.Port, d.ContainerID, d.Error, formatTime(d.CreatedAt),
 		optionalTime(d.StartedAt), optionalTime(d.FinishedAt))
 	if err != nil {
 		return Deployment{}, fmt.Errorf("store: create deployment for service %s: %w", d.ServiceID, err)
@@ -58,15 +69,10 @@ func (s *Store) Deployments(ctx context.Context, serviceID string, limit int) ([
 }
 
 // UpdateDeployment overwrites the mutable fields of the deployment d.ID: its
-// status, commit details, image, container, error, and start and finish
-// times. It returns ErrNotFound for an unknown deployment.
+// status, commit details, image, port, container, error, and start and
+// finish times. It returns ErrNotFound for an unknown deployment.
 func (s *Store) UpdateDeployment(ctx context.Context, d Deployment) error {
-	err := s.execOne(ctx, `UPDATE deployments SET status = ?, commit_sha = ?, commit_message = ?,
-		commit_author = ?, image = ?, container_id = ?, error = ?, started_at = ?, finished_at = ?
-		WHERE id = ?`,
-		d.Status, d.CommitSHA, d.CommitMessage, d.CommitAuthor, d.Image, d.ContainerID, d.Error,
-		optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.ID)
-	if err != nil {
+	if err := s.execOne(ctx, updateDeployment, updateArgs(d)...); err != nil {
 		return fmt.Errorf("store: update deployment %s: %w", d.ID, err)
 	}
 	return nil
@@ -94,12 +100,9 @@ func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
 		StatusRemoved, d.ServiceID, StatusActive, d.ID); err != nil {
 		return mapError(err)
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE deployments SET status = ?, commit_sha = ?,
-		commit_message = ?, commit_author = ?, image = ?, container_id = ?, error = ?,
-		started_at = ?, finished_at = ?
-		WHERE id = ? AND service_id = ?`,
-		StatusActive, d.CommitSHA, d.CommitMessage, d.CommitAuthor, d.Image, d.ContainerID, d.Error,
-		optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.ID, d.ServiceID)
+	d.Status = StatusActive
+	res, err := tx.ExecContext(ctx, updateDeployment+` AND service_id = ?`,
+		append(updateArgs(d), d.ServiceID)...)
 	if err != nil {
 		return mapError(err)
 	}

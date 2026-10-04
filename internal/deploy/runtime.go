@@ -25,7 +25,7 @@ const keepImages = 5
 
 // environment returns the resolved variables of svc: its own variables over
 // the ones shed injects, with references to other services of the project
-// expanded. sha is the commit being deployed.
+// expanded. sha is the commit being deployed. PORT comes from svc.Port.
 func (d *Deployer) environment(ctx context.Context, svc store.Service, project store.Project, sha string) (map[string]string, error) {
 	services, err := d.store.Services(ctx, svc.ProjectID)
 	if err != nil {
@@ -44,6 +44,7 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		commit := ""
 		if s.ID == svc.ID {
 			commit = sha
+			s.Port = svc.Port
 		}
 		merged := injected(project, s, domains, commit)
 		maps.Copy(merged, own)
@@ -212,12 +213,12 @@ func (d *Deployer) routesFor(ctx context.Context, candidate *store.Deployment) (
 				if err != nil {
 					return nil, err
 				}
-				if svc.Port > 0 {
+				if candidate.Port > 0 {
 					ip := c.IPs[networkName(svc.ProjectID)]
 					if ip == "" {
 						return nil, errors.New("candidate container has no address")
 					}
-					up = upstreamAddr(ip, svc.Port)
+					up = upstreamAddr(ip, candidate.Port)
 				}
 			} else {
 				up = d.upstream(ctx, dom.ServiceID)
@@ -232,14 +233,16 @@ func (d *Deployer) routesFor(ctx context.Context, candidate *store.Deployment) (
 }
 
 // upstream returns the address of a service's active container, or "" if it
-// has none or the service is stopped.
+// has none or the service is stopped. The port is the one the active
+// deployment was started with: an edited port applies from the next
+// deployment.
 func (d *Deployer) upstream(ctx context.Context, serviceID string) string {
 	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil || svc.Port <= 0 || svc.Stopped {
+	if err != nil || svc.Stopped {
 		return ""
 	}
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
-	if err != nil || dep.ContainerID == "" {
+	if err != nil || dep.ContainerID == "" || dep.Port <= 0 {
 		return ""
 	}
 	c, err := d.docker.Inspect(ctx, dep.ContainerID)
@@ -251,7 +254,7 @@ func (d *Deployer) upstream(ctx context.Context, serviceID string) string {
 	if ip == "" {
 		return ""
 	}
-	return upstreamAddr(ip, svc.Port)
+	return upstreamAddr(ip, dep.Port)
 }
 
 // removeOthers stops and removes every container of a service except keep,
@@ -459,6 +462,8 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return c.ID, nil
 	}
 
+	// Recreate the container as the deployment ran it, on its recorded port.
+	svc.Port = dep.Port
 	project, err := d.store.Project(ctx, svc.ProjectID)
 	if err != nil {
 		return "", err

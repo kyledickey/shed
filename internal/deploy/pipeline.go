@@ -219,6 +219,7 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	}
 
 	j.step("Starting container")
+	j.dep.Port = j.svc.Port
 	spec := containerSpec(j.svc, j.dep, env, vols)
 	j.describe(spec)
 	id, err := j.runContainer(ctx, spec)
