@@ -42,15 +42,15 @@ func (s *Store) PutBackupPolicy(ctx context.Context, p BackupPolicy) error {
 }
 
 const backupCols = `id, service_id, trigger, method, status, file, size, encrypted, local,
-	remote_key, remote_error, error, created_at, started_at, finished_at`
+	remote_key, destination_id, remote_error, error, created_at, started_at, finished_at`
 
 func scanBackup(r scanner) (Backup, error) {
 	var b Backup
-	var serviceID sql.NullString
+	var serviceID, destinationID sql.NullString
 	err := r.Scan(&b.ID, &serviceID, &b.Trigger, &b.Method, &b.Status, &b.File, &b.Size,
-		&b.Encrypted, &b.Local, &b.RemoteKey, &b.RemoteError, &b.Error,
+		&b.Encrypted, &b.Local, &b.RemoteKey, &destinationID, &b.RemoteError, &b.Error,
 		(*timestamp)(&b.CreatedAt), nullTimestamp{&b.StartedAt}, nullTimestamp{&b.FinishedAt})
-	b.ServiceID = serviceID.String
+	b.ServiceID, b.DestinationID = serviceID.String, destinationID.String
 	return b, err
 }
 
@@ -73,9 +73,9 @@ func (s *Store) CreateBackup(ctx context.Context, b Backup) (Backup, error) {
 		b.CreatedAt = now()
 	}
 	err := s.exec(ctx, `INSERT INTO backups (`+backupCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		b.ID, optionalString(b.ServiceID), b.Trigger, b.Method, b.Status, b.File, b.Size,
-		b.Encrypted, b.Local, b.RemoteKey, b.RemoteError, b.Error, formatTime(b.CreatedAt),
+		b.Encrypted, b.Local, b.RemoteKey, optionalString(b.DestinationID), b.RemoteError, b.Error, formatTime(b.CreatedAt),
 		optionalTime(b.StartedAt), optionalTime(b.FinishedAt))
 	if err != nil {
 		return Backup{}, fmt.Errorf("store: create backup for service %q: %w", b.ServiceID, err)
@@ -84,15 +84,15 @@ func (s *Store) CreateBackup(ctx context.Context, b Backup) (Backup, error) {
 }
 
 // UpdateBackup overwrites the mutable fields of the backup b.ID: its method,
-// status, archive details, errors, and start and finish times. It returns
-// ErrNotFound for an unknown backup.
+// status, archive details, remote object, errors, and start and finish
+// times. It returns ErrNotFound for an unknown backup.
 func (s *Store) UpdateBackup(ctx context.Context, b Backup) error {
 	err := s.execOne(ctx, `UPDATE backups SET method = ?, status = ?, file = ?, size = ?,
-		encrypted = ?, local = ?, remote_key = ?, remote_error = ?, error = ?, started_at = ?,
-		finished_at = ?
+		encrypted = ?, local = ?, remote_key = ?, destination_id = ?, remote_error = ?, error = ?,
+		started_at = ?, finished_at = ?
 		WHERE id = ?`,
-		b.Method, b.Status, b.File, b.Size, b.Encrypted, b.Local, b.RemoteKey, b.RemoteError, b.Error,
-		optionalTime(b.StartedAt), optionalTime(b.FinishedAt), b.ID)
+		b.Method, b.Status, b.File, b.Size, b.Encrypted, b.Local, b.RemoteKey, optionalString(b.DestinationID),
+		b.RemoteError, b.Error, optionalTime(b.StartedAt), optionalTime(b.FinishedAt), b.ID)
 	if err != nil {
 		return fmt.Errorf("store: update backup %s: %w", b.ID, err)
 	}
@@ -145,6 +145,45 @@ func (s *Store) DeleteFailedBackupsBefore(ctx context.Context, t time.Time) (int
 		return 0, fmt.Errorf("store: delete failed backups: %w", err)
 	}
 	return n, nil
+}
+
+const backupDestinationCols = `id, endpoint, region, bucket, prefix, path_style,
+	access_key_id, secret_access_key, created_at`
+
+func scanBackupDestination(r scanner) (BackupDestination, error) {
+	var d BackupDestination
+	err := r.Scan(&d.ID, &d.Endpoint, &d.Region, &d.Bucket, &d.Prefix, &d.PathStyle,
+		&d.AccessKeyID, &d.SecretAccessKey, (*timestamp)(&d.CreatedAt))
+	return d, err
+}
+
+// PutBackupDestination stores the destination at d's location (endpoint,
+// region, bucket, prefix, and path style) and returns it. If one is already
+// stored there, its credentials are replaced and its ID kept; otherwise a new
+// one is created. d.ID and d.CreatedAt are ignored.
+func (s *Store) PutBackupDestination(ctx context.Context, d BackupDestination) (BackupDestination, error) {
+	out, err := queryOne(ctx, s, scanBackupDestination, `INSERT INTO backup_destinations
+		(`+backupDestinationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (endpoint, region, bucket, prefix, path_style) DO UPDATE SET
+			access_key_id = excluded.access_key_id, secret_access_key = excluded.secret_access_key
+		RETURNING `+backupDestinationCols,
+		NewID(), d.Endpoint, d.Region, d.Bucket, d.Prefix, d.PathStyle, d.AccessKeyID, d.SecretAccessKey,
+		formatTime(now()))
+	if err != nil {
+		return BackupDestination{}, fmt.Errorf("store: put backup destination %s/%s: %w", d.Endpoint, d.Bucket, err)
+	}
+	return out, nil
+}
+
+// BackupDestination returns the backup destination with the given ID, or
+// ErrNotFound.
+func (s *Store) BackupDestination(ctx context.Context, id string) (BackupDestination, error) {
+	d, err := queryOne(ctx, s, scanBackupDestination,
+		`SELECT `+backupDestinationCols+` FROM backup_destinations WHERE id = ?`, id)
+	if err != nil {
+		return BackupDestination{}, fmt.Errorf("store: backup destination %s: %w", id, err)
+	}
+	return d, nil
 }
 
 // FailInterruptedBackups marks every queued or running backup as failed with

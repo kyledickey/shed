@@ -242,8 +242,9 @@ export function S3Card({ settings }: { settings: BackupSettings }) {
           )
         }
       >
-        New backups stay on this server only. Objects already in the bucket are not deleted, and
-        shed stops managing them. Policies that keep no local backups must be changed first.
+        New backups stay on this server only. Backups already in the bucket stay there and can still
+        be downloaded, restored, and deleted. Policies that keep no local backups must be changed
+        first.
       </ConfirmDialog>
     </SettingsCard>
   );

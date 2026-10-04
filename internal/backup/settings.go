@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -15,7 +14,7 @@ import (
 
 // Settings keys.
 const (
-	keyS3           = "backup.s3"           // JSON s3Stored; "" = none
+	keyDestination  = "backup.destination"  // ID of the current destination; "" = none
 	keyEncrypt      = "backup.encrypt"      // "true" or "false"
 	keyAgeIdentity  = "backup.age_identity" // AGE-SECRET-KEY-1...
 	keySystemPolicy = "backup.system"       // JSON systemPolicy
@@ -73,64 +72,75 @@ type SettingsInput struct {
 	Encrypt bool
 }
 
-// s3Stored is the JSON form of the destination in settings.
-type s3Stored struct {
-	Endpoint        string `json:"endpoint"`
-	Region          string `json:"region"`
-	Bucket          string `json:"bucket"`
-	Prefix          string `json:"prefix"`
-	AccessKeyID     string `json:"accessKeyId"`
-	SecretAccessKey string `json:"secretAccessKey"`
-	PathStyle       bool   `json:"pathStyle"`
-}
-
-func (s s3Stored) config() S3Config {
+// s3Config returns what NewRemote needs to reach d.
+func s3Config(d store.BackupDestination) S3Config {
 	return S3Config{
-		Endpoint:        s.Endpoint,
-		Region:          s.Region,
-		Bucket:          s.Bucket,
-		AccessKeyID:     s.AccessKeyID,
-		SecretAccessKey: s.SecretAccessKey,
-		PathStyle:       s.PathStyle,
+		Endpoint:        d.Endpoint,
+		Region:          d.Region,
+		Bucket:          d.Bucket,
+		AccessKeyID:     d.AccessKeyID,
+		SecretAccessKey: d.SecretAccessKey,
+		PathStyle:       d.PathStyle,
 	}
 }
 
-// key returns the object key of an archive file of a target.
-func (s s3Stored) key(serviceID, file string) string {
+// objectKey returns the key in d of an archive file of a target.
+func objectKey(d store.BackupDestination, serviceID, file string) string {
 	if serviceID == "" {
-		return path.Join(s.Prefix, "system", file)
+		return path.Join(d.Prefix, "system", file)
 	}
-	return path.Join(s.Prefix, "services", serviceID, file)
+	return path.Join(d.Prefix, "services", serviceID, file)
 }
 
-// loadS3 returns the stored destination, or nil if there is none.
-func (m *Manager) loadS3(ctx context.Context) (*s3Stored, error) {
-	v, err := m.store.Setting(ctx, keyS3)
-	if errors.Is(err, store.ErrNotFound) || err == nil && strings.TrimSpace(v) == "" {
+// destination returns the current destination, or nil if there is none.
+func (m *Manager) destination(ctx context.Context) (*store.BackupDestination, error) {
+	id, err := m.store.Setting(ctx, keyDestination)
+	if errors.Is(err, store.ErrNotFound) || err == nil && id == "" {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("backup: %w", err)
 	}
-	var s s3Stored
-	if err := json.Unmarshal([]byte(v), &s); err != nil {
-		return nil, fmt.Errorf("backup: decode %s: %w", keyS3, err)
+	d, err := m.store.BackupDestination(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("backup: %w", err)
 	}
-	return &s, nil
+	return &d, nil
 }
 
-// remote returns a client of the configured destination, or nil if there is
+// remote returns a client of the current destination, or nil if there is
 // none.
-func (m *Manager) remote(ctx context.Context) (Remote, *s3Stored, error) {
-	s, err := m.loadS3(ctx)
-	if err != nil || s == nil {
+func (m *Manager) remote(ctx context.Context) (Remote, *store.BackupDestination, error) {
+	d, err := m.destination(ctx)
+	if err != nil || d == nil {
 		return nil, nil, err
 	}
-	r, err := m.newRemote(s.config())
+	r, err := m.newRemote(s3Config(*d))
 	if err != nil {
 		return nil, nil, fmt.Errorf("backup: s3: %w", err)
 	}
-	return r, s, nil
+	return r, d, nil
+}
+
+// errNoDestination is a remote object whose destination is unknown.
+var errNoDestination = invalidError{"the backup's S3 destination is unknown"}
+
+// remoteOf returns a client of the destination that b was uploaded to,
+// whatever the current destination is. It returns errNoDestination if b
+// does not record one.
+func (m *Manager) remoteOf(ctx context.Context, b store.Backup) (Remote, error) {
+	if b.DestinationID == "" {
+		return nil, errNoDestination
+	}
+	d, err := m.store.BackupDestination(ctx, b.DestinationID)
+	if err != nil {
+		return nil, fmt.Errorf("backup: %w", err)
+	}
+	r, err := m.newRemote(s3Config(d))
+	if err != nil {
+		return nil, fmt.Errorf("backup: s3: %w", err)
+	}
+	return r, nil
 }
 
 // identity returns the stored age identity, or store.ErrNotFound.
@@ -185,19 +195,19 @@ func (m *Manager) recipient(ctx context.Context) (age.Recipient, error) {
 // Settings returns the global backup settings.
 func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 	var out Settings
-	s, err := m.loadS3(ctx)
+	d, err := m.destination(ctx)
 	if err != nil {
 		return Settings{}, err
 	}
-	if s != nil {
+	if d != nil {
 		out.S3 = &S3Settings{
-			Endpoint:    s.Endpoint,
-			Region:      s.Region,
-			Bucket:      s.Bucket,
-			Prefix:      s.Prefix,
-			AccessKeyID: s.AccessKeyID,
-			PathStyle:   s.PathStyle,
-			HasSecret:   s.SecretAccessKey != "",
+			Endpoint:    d.Endpoint,
+			Region:      d.Region,
+			Bucket:      d.Bucket,
+			Prefix:      d.Prefix,
+			AccessKeyID: d.AccessKeyID,
+			PathStyle:   d.PathStyle,
+			HasSecret:   d.SecretAccessKey != "",
 		}
 	}
 	v, err := m.store.Setting(ctx, keyEncrypt)
@@ -215,11 +225,11 @@ func (m *Manager) Settings(ctx context.Context) (Settings, error) {
 	return out, nil
 }
 
-// s3FromInput merges in with the stored destination: an empty secret keeps
+// s3FromInput merges in with the current destination: an empty secret keeps
 // the stored one. The result is checked with NewRemote; problems are
 // reported with an error wrapping ErrInvalid.
-func (m *Manager) s3FromInput(ctx context.Context, in S3Input) (s3Stored, Remote, error) {
-	s := s3Stored{
+func (m *Manager) s3FromInput(ctx context.Context, in S3Input) (store.BackupDestination, Remote, error) {
+	s := store.BackupDestination{
 		Endpoint:        strings.TrimSpace(in.Endpoint),
 		Region:          strings.TrimSpace(in.Region),
 		Bucket:          strings.TrimSpace(in.Bucket),
@@ -229,24 +239,26 @@ func (m *Manager) s3FromInput(ctx context.Context, in S3Input) (s3Stored, Remote
 		PathStyle:       in.PathStyle,
 	}
 	if s.SecretAccessKey == "" {
-		old, err := m.loadS3(ctx)
+		old, err := m.destination(ctx)
 		if err != nil {
-			return s3Stored{}, nil, err
+			return store.BackupDestination{}, nil, err
 		}
 		if old != nil {
 			s.SecretAccessKey = old.SecretAccessKey
 		}
 	}
-	r, err := m.newRemote(s.config())
+	r, err := m.newRemote(s3Config(s))
 	if err != nil {
-		return s3Stored{}, nil, invalidf("%v", err)
+		return store.BackupDestination{}, nil, invalidf("%v", err)
 	}
 	return s, r, nil
 }
 
 // SetSettings stores the global backup settings. Turning encryption on for
 // the first time generates the age identity. Turning it off keeps the
-// identity, which older archives still need.
+// identity, which older archives still need. A destination at a new location
+// is stored as a new one, so that backups already uploaded keep reading from
+// and deleting in the destination they were uploaded to.
 func (m *Manager) SetSettings(ctx context.Context, in SettingsInput) (Settings, error) {
 	v := ""
 	if in.S3 != nil {
@@ -254,18 +266,18 @@ func (m *Manager) SetSettings(ctx context.Context, in SettingsInput) (Settings, 
 		if err != nil {
 			return Settings{}, err
 		}
-		b, err := json.Marshal(s)
+		d, err := m.store.PutBackupDestination(ctx, s)
 		if err != nil {
-			return Settings{}, fmt.Errorf("backup: encode s3 settings: %w", err)
+			return Settings{}, fmt.Errorf("backup: %w", err)
 		}
-		v = string(b)
+		v = d.ID
 	}
 	if in.Encrypt {
 		if err := m.ensureIdentity(ctx); err != nil {
 			return Settings{}, err
 		}
 	}
-	if err := m.store.SetSetting(ctx, keyS3, v); err != nil {
+	if err := m.store.SetSetting(ctx, keyDestination, v); err != nil {
 		return Settings{}, fmt.Errorf("backup: %w", err)
 	}
 	if err := m.store.SetSetting(ctx, keyEncrypt, fmt.Sprint(in.Encrypt)); err != nil {

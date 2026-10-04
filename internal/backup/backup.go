@@ -40,6 +40,8 @@ type Store interface {
 	Setting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
 	AddSetting(ctx context.Context, key, value string) (bool, error)
+	PutBackupDestination(ctx context.Context, d store.BackupDestination) (store.BackupDestination, error)
+	BackupDestination(ctx context.Context, id string) (store.BackupDestination, error)
 	BackupPolicy(ctx context.Context, serviceID string) (store.BackupPolicy, error)
 	PutBackupPolicy(ctx context.Context, p store.BackupPolicy) error
 	CreateBackup(ctx context.Context, b store.Backup) (store.Backup, error)
@@ -614,12 +616,12 @@ func (m *Manager) Delete(ctx context.Context, backupID string) error {
 		}
 	}
 	if b.RemoteKey != "" {
-		r, _, err := m.remote(ctx)
+		r, err := m.remoteOf(ctx, b)
 		switch {
+		case errors.Is(err, errNoDestination):
+			m.log.Warn("backup: the S3 destination is unknown; keeping the object of a deleted backup", "backup", b.ID, "key", b.RemoteKey)
 		case err != nil:
 			return err
-		case r == nil:
-			m.log.Warn("backup: S3 is not configured; keeping the object of a deleted backup", "backup", b.ID, "key", b.RemoteKey)
 		default:
 			if err := r.Delete(ctx, b.RemoteKey); err != nil {
 				return fmt.Errorf("backup: delete %s: %w", b.ID, err)
@@ -684,12 +686,9 @@ func (m *Manager) openArchive(ctx context.Context, b store.Backup) (io.ReadClose
 	if b.RemoteKey == "" {
 		return nil, invalidf("the backup's archive no longer exists")
 	}
-	r, _, err := m.remote(ctx)
+	r, err := m.remoteOf(ctx, b)
 	if err != nil {
 		return nil, err
-	}
-	if r == nil {
-		return nil, invalidf("the backup is only in S3, which is not configured")
 	}
 	rc, err := r.Get(ctx, b.RemoteKey)
 	if err != nil {

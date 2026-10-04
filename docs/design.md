@@ -236,6 +236,7 @@ CREATE TABLE backups (
   encrypted INTEGER NOT NULL DEFAULT 0,
   local INTEGER NOT NULL DEFAULT 0,      -- archive present under <data>/backups
   remote_key TEXT NOT NULL DEFAULT '',   -- S3 object key; '' = not uploaded
+  destination_id TEXT REFERENCES backup_destinations(id), -- where remote_key is; NULL = not uploaded
   remote_error TEXT NOT NULL DEFAULT '', -- last upload failure
   error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
@@ -243,6 +244,19 @@ CREATE TABLE backups (
   finished_at TEXT
 );
 CREATE INDEX backups_service ON backups(service_id, created_at DESC);
+
+CREATE TABLE backup_destinations (       -- S3 locations backups were uploaded to; never deleted
+  id TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL,
+  region TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  prefix TEXT NOT NULL,                  -- without surrounding slashes
+  path_style INTEGER NOT NULL,
+  access_key_id TEXT NOT NULL,           -- credentials may be replaced
+  secret_access_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (endpoint, region, bucket, prefix, path_style)
+);
 
 CREATE TABLE restores (
   id TEXT PRIMARY KEY,
@@ -471,9 +485,18 @@ The dashboard reveals the identity so the user can store it off the server.
 Without it, encrypted backups, including those of shed.db, cannot be
 recovered after the server is lost.
 
-**S3.** One global destination is stored in `settings` (`backup.s3`, JSON:
-endpoint URL, region, bucket, prefix, access key ID, secret, path-style; an
-empty value means none). `internal/s3` wraps minio-go and uses multipart
+**S3.** Destinations are rows of `backup_destinations` (endpoint URL,
+region, bucket, prefix, path-style, access key ID, secret). The current one
+is named by `settings` `backup.destination` (its ID; absent or empty means
+none). Saving the settings stores the destination at that location
+(endpoint, region, bucket, prefix, path-style): an existing row there keeps
+its ID and takes the new credentials, and any other location gets a new row.
+A row's location never changes and rows are never deleted. Each uploaded
+backup records its `destination_id`, and downloads, restores, deletes, and
+pruning of its object use that destination, not the current one, so
+changing or removing the destination never points old backups elsewhere.
+Migration 010 turned the former `backup.s3` JSON setting into the first row
+and pointed every uploaded backup at it. `internal/s3` wraps minio-go and uses multipart
 upload for large objects. Object keys are `<prefix>/services/<serviceID>/<file>`
 and `<prefix>/system/<file>`; the prefix is stored without surrounding
 slashes and omitted when empty. The API never returns the secret. Saving or
@@ -626,8 +649,8 @@ ends; a running restore makes the delete fail with 409. After a
 service is deleted, any remaining jobs are canceled ("service deleted") and
 `<data>/backups/<serviceID>` is removed. Its rows go with the
 service. S3 objects are kept as the off-site copy, and the user can remove
-them by hand. Deleting a single backup removes its local file and S3 object;
-while S3 is not configured, the object is kept and logged.
+them by hand. Deleting a single backup removes its local file and its S3
+object from the destination it was uploaded to.
 
 **Downloads.** A download is the archive decrypted but still compressed,
 read from the local file or else from S3, named

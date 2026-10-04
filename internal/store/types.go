@@ -250,6 +250,8 @@ type Backup struct {
 	Local bool
 	// RemoteKey is the S3 object key, or empty if the archive was not uploaded.
 	RemoteKey string
+	// DestinationID is the BackupDestination that RemoteKey is in.
+	DestinationID string
 	// RemoteError is the last upload failure.
 	RemoteError string
 	// Error describes why the backup failed.
@@ -257,6 +259,20 @@ type Backup struct {
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+}
+
+// BackupDestination is an S3 location that backups are uploaded to. Its
+// location fields never change once stored; only its credentials do.
+type BackupDestination struct {
+	ID              string
+	Endpoint        string
+	Region          string
+	Bucket          string
+	Prefix          string
+	PathStyle       bool
+	AccessKeyID     string
+	SecretAccessKey string
+	CreatedAt       time.Time
 }
 
 // RestoreStatus is the lifecycle state of a restore.

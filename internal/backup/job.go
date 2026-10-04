@@ -314,9 +314,9 @@ func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput) {
 		return
 	}
 	if err == nil {
-		key := s.key(b.ServiceID, b.File)
+		key := objectKey(*s, b.ServiceID, b.File)
 		if err = m.put(ctx, r, key, m.localPath(b)); err == nil {
-			b.RemoteKey, b.RemoteError = key, ""
+			b.RemoteKey, b.DestinationID, b.RemoteError = key, s.ID, ""
 			if p.KeepLocal == 0 {
 				if err := os.Remove(m.localPath(b)); err != nil {
 					m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
@@ -394,12 +394,7 @@ func (m *Manager) prune(ctx context.Context, serviceID string, p PolicyInput) er
 		return fmt.Errorf("backup: %w", err)
 	}
 	dropLocal, dropRemote := retention(bs, p)
-	var r Remote
-	if len(dropRemote) > 0 {
-		if r, _, err = m.remote(ctx); err != nil {
-			return err
-		}
-	}
+	remotes := make(map[string]Remote) // by destination ID
 	var errs []error
 	for _, b := range bs {
 		changed := false
@@ -410,11 +405,21 @@ func (m *Manager) prune(ctx context.Context, serviceID string, p PolicyInput) er
 				errs = append(errs, err)
 			}
 		}
-		if dropRemote[b.ID] && r != nil {
-			if err := r.Delete(ctx, b.RemoteKey); err == nil {
-				b.RemoteKey, changed = "", true
-			} else {
-				errs = append(errs, err)
+		if dropRemote[b.ID] && b.DestinationID != "" {
+			r, ok := remotes[b.DestinationID]
+			if !ok {
+				var err error
+				if r, err = m.remoteOf(ctx, b); err != nil {
+					errs = append(errs, err) // Once per destination; r stays nil.
+				}
+				remotes[b.DestinationID] = r
+			}
+			if r != nil {
+				if err := r.Delete(ctx, b.RemoteKey); err == nil {
+					b.RemoteKey, b.DestinationID, changed = "", "", true
+				} else {
+					errs = append(errs, err)
+				}
 			}
 		}
 		var err error
@@ -672,7 +677,7 @@ func (m *Manager) fetch(ctx context.Context, b store.Backup, restoreID string) (
 			return p, func() {}, nil
 		}
 	}
-	rc, err := m.openArchive(ctx, store.Backup{ID: b.ID, ServiceID: b.ServiceID, RemoteKey: b.RemoteKey})
+	rc, err := m.openArchive(ctx, store.Backup{ID: b.ID, ServiceID: b.ServiceID, RemoteKey: b.RemoteKey, DestinationID: b.DestinationID})
 	if err != nil {
 		return "", nil, err
 	}

@@ -55,6 +55,7 @@ type testEnv struct {
 
 	mu      sync.Mutex
 	configs []S3Config
+	buckets map[string]*fakeRemote // remotes by bucket; others use remote
 }
 
 func newEnv(t *testing.T) *testEnv {
@@ -80,6 +81,7 @@ func newEnv(t *testing.T) *testEnv {
 		clock:   &clock{t: time.Date(2026, 10, 4, 2, 59, 30, 0, time.UTC)},
 		dir:     filepath.Join(t.TempDir(), "backups"),
 		project: p.ID,
+		buckets: make(map[string]*fakeRemote),
 	}
 	e.services = &fakeServices{rec: rec, st: st, docker: e.docker}
 	e.m = New(Config{
@@ -92,6 +94,9 @@ func newEnv(t *testing.T) *testEnv {
 			e.mu.Unlock()
 			if c.Bucket == "" || c.SecretAccessKey == "" {
 				return nil, errors.New("s3: bucket and secret are required")
+			}
+			if r, ok := e.buckets[c.Bucket]; ok {
+				return r, nil
 			}
 			return e.remote, nil
 		},
@@ -200,6 +205,19 @@ func (e *testEnv) setS3(prefix string) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
+}
+
+// bucket returns a remote of its own for bucket, for destinations other than
+// the default one.
+func (e *testEnv) bucket(name string) *fakeRemote {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	r, ok := e.buckets[name]
+	if !ok {
+		r = &fakeRemote{objects: make(map[string][]byte)}
+		e.buckets[name] = r
+	}
+	return r
 }
 
 func (e *testEnv) setPolicy(serviceID string, edit func(*PolicyInput)) {
@@ -453,6 +471,107 @@ func TestUpload(t *testing.T) {
 	b = e.backUp(sv.ID)
 	if !b.Local || b.RemoteKey != "" || b.RemoteError != "" {
 		t.Errorf("backup without S3 = %+v, want kept locally", b)
+	}
+}
+
+func TestRemoteBackupsKeepTheirDestination(t *testing.T) {
+	e := newEnv(t)
+	e.setS3("old")
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	e.setPolicy(sv.ID, func(p *PolicyInput) { p.KeepLocal = 0 })
+	e.docker.dump = "first"
+	first := e.backUp(sv.ID)
+	if first.Local || first.DestinationID == "" {
+		t.Fatalf("backup = %+v, want only in S3", first)
+	}
+
+	// Move to another bucket and prefix.
+	moved := e.bucket("other")
+	in := S3Input{Endpoint: "https://s3.example.com", Bucket: "other", Prefix: "new", AccessKeyID: "AK2", SecretAccessKey: "SK2"}
+	if _, err := e.m.SetSettings(e.ctx, SettingsInput{S3: &in}); err != nil {
+		t.Fatal(err)
+	}
+	e.docker.dump = "second"
+	second := e.backUp(sv.ID)
+	if second.DestinationID == first.DestinationID || second.RemoteKey != "new/services/"+sv.ID+"/"+second.File {
+		t.Fatalf("backup after moving = %+v, want the new destination", second)
+	}
+	if len(moved.keys()) != 1 || len(e.remote.keys()) != 1 {
+		t.Fatalf("objects: old %v, new %v", e.remote.keys(), moved.keys())
+	}
+
+	// The first backup is still read from where it was uploaded, also
+	// once S3 is turned off.
+	if got := e.content(first); got != "first" {
+		t.Errorf("first backup after moving = %q", got)
+	}
+	if _, err := e.m.SetSettings(e.ctx, SettingsInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.content(first); got != "first" {
+		t.Errorf("first backup without S3 = %q", got)
+	}
+	if _, err := e.m.Restore(e.ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.drain()
+	if r := mustLatestRestore(t, e, sv.ID); r.Status != store.RestoreSucceeded || e.docker.restored != "first" {
+		t.Fatalf("restore = %+v, restored %q", r, e.docker.restored)
+	}
+
+	// Saving the old location again reuses its destination, with new
+	// credentials.
+	e.setS3("old")
+	d, err := e.m.destination(e.ctx)
+	if err != nil || d.ID != first.DestinationID {
+		t.Fatalf("destination = %+v, %v; want %s again", d, err, first.DestinationID)
+	}
+
+	// Deleting removes each object from its own destination.
+	if err := e.m.Delete(e.ctx, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.Delete(e.ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(moved.keys()) != 0 || len(e.remote.keys()) != 0 {
+		t.Errorf("objects after deleting: old %v, new %v", e.remote.keys(), moved.keys())
+	}
+}
+
+func TestPruneUsesEachBackupsDestination(t *testing.T) {
+	e := newEnv(t)
+	e.setS3("")
+	oldDest, err := e.m.destination(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := e.bucket("other")
+	in := S3Input{Endpoint: "https://s3.example.com", Bucket: "other", AccessKeyID: "AK", SecretAccessKey: "SK"}
+	if _, err := e.m.SetSettings(e.ctx, SettingsInput{S3: &in}); err != nil {
+		t.Fatal(err)
+	}
+	newDest, err := e.m.destination(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	e.remote.objects["k-old"] = []byte("x")
+	moved.objects["k-new"] = []byte("y")
+	for i, spec := range []struct{ key, dest string }{{"k-new", newDest.ID}, {"k-old", oldDest.ID}} {
+		if _, err := e.st.CreateBackup(e.ctx, store.Backup{
+			ServiceID: sv.ID, Trigger: store.BackupSchedule, Method: store.MethodDump, Status: store.BackupSucceeded,
+			File: spec.key, RemoteKey: spec.key, DestinationID: spec.dest,
+			CreatedAt: time.Date(2026, 10, 4-i, 3, 0, 0, 0, time.UTC),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.m.prune(e.ctx, sv.ID, PolicyInput{Upload: true, KeepRemote: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.remote.keys()) != 0 || len(moved.keys()) != 1 {
+		t.Errorf("objects after pruning: old %v, new %v; want the old one deleted", e.remote.keys(), moved.keys())
 	}
 }
 
@@ -1299,7 +1418,7 @@ func TestSettings(t *testing.T) {
 	if err := e.m.TestS3(e.ctx, in); err != nil {
 		t.Fatal(err)
 	}
-	s, err := e.m.loadS3(e.ctx)
+	s, err := e.m.destination(e.ctx)
 	if err != nil || s.SecretAccessKey != "SECRET" || s.Bucket != "b2" {
 		t.Errorf("stored S3 = %+v, %v; want the old secret kept", s, err)
 	}
