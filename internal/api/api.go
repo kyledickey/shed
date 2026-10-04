@@ -1,0 +1,182 @@
+// Package api serves shed's HTTP interface: the JSON API under /api, the
+// server-sent event log streams, the GitHub App setup flow and webhook, and
+// the dashboard single-page app.
+//
+// Handlers are thin: they validate input, call the store or the deployer, and
+// map the result to the JSON types of the design document.
+package api
+
+import (
+	"context"
+	"io"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/kyledickey/shed/internal/auth"
+	"github.com/kyledickey/shed/internal/deploy"
+	"github.com/kyledickey/shed/internal/store"
+)
+
+// Deployer runs deployments and owns the Docker side of services.
+// *deploy.Deployer implements it.
+type Deployer interface {
+	Deploy(ctx context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error)
+	Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error)
+	Cancel(ctx context.Context, deploymentID string) (store.Deployment, error)
+	ServiceStatuses(ctx context.Context, projectID string) (map[string]deploy.ServiceStatus, error)
+	ApplyRoutes(ctx context.Context) error
+	DeleteService(ctx context.Context, serviceID string) error
+	DeleteProject(ctx context.Context, projectID string) error
+	DeleteVolume(ctx context.Context, volumeID string) error
+	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
+	RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error
+}
+
+var _ Deployer = (*deploy.Deployer)(nil)
+
+// Config configures a Server.
+type Config struct {
+	Store    *store.Store
+	Deployer Deployer
+	Auth     *auth.Auth
+	// GitHub holds the GitHub client. New fills it from the stored App
+	// credentials, and the setup flow fills it once the App is created.
+	GitHub *GitHubHolder
+	// BaseURL is the public dashboard URL.
+	BaseURL string
+	// BaseDomain is the parent of generated service domains; empty disables
+	// them.
+	BaseDomain string
+	// Web holds the built dashboard, with index.html at its root.
+	Web fs.FS
+	// HTTPClient is used for GitHub API calls. Nil means a default client.
+	HTTPClient *http.Client
+	Log        *slog.Logger
+}
+
+// Server is the HTTP interface.
+type Server struct {
+	store      *store.Store
+	deployer   Deployer
+	auth       *auth.Auth
+	github     *GitHubHolder
+	baseURL    string
+	baseDomain string
+	web        fs.FS
+	httpClient *http.Client
+	log        *slog.Logger
+
+	setupMu    sync.Mutex // serializes completing the GitHub setup
+	tokenMu    sync.Mutex
+	setupToken string // guarded by tokenMu; empty once GitHub is configured
+}
+
+// New returns a Server. It loads the GitHub App from the store, or, if none is
+// configured, generates the one-time setup token and logs it.
+func New(ctx context.Context, cfg Config) (*Server, error) {
+	s := &Server{
+		store:      cfg.Store,
+		deployer:   cfg.Deployer,
+		auth:       cfg.Auth,
+		github:     cfg.GitHub,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		baseDomain: strings.ToLower(cfg.BaseDomain),
+		web:        cfg.Web,
+		httpClient: cfg.HTTPClient,
+		log:        cfg.Log,
+	}
+	if err := s.loadGitHub(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// Handler returns the root HTTP handler.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	// Public routes.
+	mux.HandleFunc("GET /api/auth/login", s.auth.Login)
+	mux.HandleFunc("GET /api/auth/callback", s.auth.Callback)
+	mux.HandleFunc("POST /api/auth/logout", s.auth.Logout)
+	mux.Handle("GET /api/setup", s.handle(s.getSetup))
+	mux.Handle("GET /api/setup/github", s.handle(s.setupGitHub))
+	mux.Handle("GET /api/setup/github/callback", s.handle(s.setupCallback))
+	mux.Handle("POST /api/github/webhook", s.handle(s.webhook))
+
+	// Routes that need a session.
+	authed := func(pattern string, h handlerFunc) {
+		mux.Handle(pattern, s.auth.Require(requireJSON(s.handle(h))))
+	}
+	authed("GET /api/me", s.me)
+
+	authed("GET /api/projects", s.listProjects)
+	authed("POST /api/projects", s.createProject)
+	authed("GET /api/projects/{id}", s.getProject)
+	authed("PATCH /api/projects/{id}", s.renameProject)
+	authed("DELETE /api/projects/{id}", s.deleteProject)
+
+	authed("POST /api/projects/{id}/services", s.createService)
+	authed("GET /api/services/{id}", s.getService)
+	authed("PATCH /api/services/{id}", s.patchService)
+	authed("DELETE /api/services/{id}", s.deleteService)
+
+	authed("GET /api/services/{id}/variables", s.getVariables)
+	authed("PUT /api/services/{id}/variables", s.putVariables)
+	authed("POST /api/services/{id}/domains", s.createDomain)
+	authed("DELETE /api/domains/{id}", s.deleteDomain)
+	authed("POST /api/services/{id}/volumes", s.createVolume)
+	authed("DELETE /api/volumes/{id}", s.deleteVolume)
+
+	authed("GET /api/services/{id}/deployments", s.listDeployments)
+	authed("POST /api/services/{id}/deployments", s.createDeployment)
+	authed("GET /api/deployments/{id}", s.getDeployment)
+	authed("POST /api/deployments/{id}/redeploy", s.redeploy)
+	authed("POST /api/deployments/{id}/cancel", s.cancelDeployment)
+	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
+	authed("GET /api/services/{id}/logs", s.serviceLogs)
+
+	authed("GET /api/github/repos", s.repos)
+	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)
+
+	mux.Handle("/api/", s.handle(func(http.ResponseWriter, *http.Request) error {
+		return errorf(http.StatusNotFound, "not found")
+	}))
+	mux.Handle("/", spa(s.web))
+
+	return s.logRequests(mux)
+}
+
+// logRequests logs every request at debug level.
+func (s *Server) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.log.Debug("http request", "method", r.Method, "path", r.URL.Path,
+			"status", rec.status, "duration", time.Since(start))
+	})
+}
+
+// statusRecorder captures the response status for logging.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) error {
+	u, _ := auth.UserFrom(r.Context())
+	return writeJSON(w, http.StatusOK, userJSON{Login: u.Login, Name: u.Name, AvatarURL: u.AvatarURL})
+}
