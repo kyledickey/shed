@@ -7,7 +7,8 @@ import (
 )
 
 // InsertMetricSamples stores samples in one transaction, replacing any
-// sample of the same service at the same second.
+// sample of the same service at the same second. Samples of services that do
+// not exist, such as a container outliving its deleted service, are skipped.
 func (s *Store) InsertMetricSamples(ctx context.Context, samples []MetricSample) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -17,7 +18,8 @@ func (s *Store) InsertMetricSamples(ctx context.Context, samples []MetricSample)
 	for _, m := range samples {
 		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO metric_samples
 			(service_id, ts, cpu, memory, net_rx, net_tx, disk_read, disk_write)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+			WHERE EXISTS (SELECT 1 FROM services WHERE id = ?1)`,
 			m.ServiceID, m.Time.Unix(), m.CPU, m.Memory, m.NetRx, m.NetTx, m.DiskRead, m.DiskWrite)
 		if err != nil {
 			return fmt.Errorf("store: insert metric sample of service %s: %w", m.ServiceID, err)

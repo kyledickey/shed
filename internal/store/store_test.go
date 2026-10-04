@@ -412,6 +412,16 @@ func TestMetrics(t *testing.T) {
 	if err := s.InsertMetricSamples(ctx, samples); err != nil {
 		t.Fatal(err)
 	}
+	// A sample of an unknown service is skipped without failing the others.
+	if err := s.InsertMetricSamples(ctx, []MetricSample{
+		{ServiceID: "gone", Time: at(5), CPU: 1},
+		{ServiceID: b.ID, Time: at(6), CPU: 77},
+	}); err != nil {
+		t.Fatalf("insert with unknown service: %v", err)
+	}
+	if got, _ := s.MetricBuckets(ctx, b.ID, from, 10*time.Second, 1); len(got) != 1 || got[0].CPU != 77 {
+		t.Errorf("service b buckets = %+v, want one at CPU 77", got)
+	}
 	// Replacing a sample at the same second must not conflict.
 	if err := s.InsertMetricSamples(ctx, []MetricSample{{ServiceID: a.ID, Time: at(9), CPU: 30, Memory: 300, NetRx: 3, DiskWrite: 8}}); err != nil {
 		t.Fatal(err)
