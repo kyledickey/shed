@@ -1,0 +1,205 @@
+//go:build integration
+
+package docker
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"testing"
+	"time"
+)
+
+const testImage = "alpine:3"
+
+// countWriter counts the bytes written to it.
+type countWriter struct{ n int64 }
+
+func (w *countWriter) Write(p []byte) (int, error) {
+	w.n += int64(len(p))
+	return len(p), nil
+}
+
+func newTestClient(t *testing.T) *Client {
+	t.Helper()
+	c, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	ctx := context.Background()
+	if err := c.Ping(ctx); err != nil {
+		t.Skipf("no Docker daemon: %v", err)
+	}
+	if err := c.PullImage(ctx, testImage, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func suffix(t *testing.T) string {
+	t.Helper()
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// create creates a container and registers its removal.
+func create(t *testing.T, c *Client, spec RunSpec) string {
+	t.Helper()
+	id, err := c.Create(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Remove(context.Background(), id) })
+	return id
+}
+
+func TestCopyRoundTrip(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	sfx := suffix(t)
+
+	vol := "shed-test-vol-" + sfx
+	if err := c.EnsureVolume(ctx, vol); err != nil {
+		t.Fatal(err)
+	}
+	// Registered before the container cleanup so that it runs after it.
+	t.Cleanup(func() {
+		if err := c.RemoveVolume(ctx, vol); err != nil {
+			t.Errorf("remove volume: %v", err)
+		}
+	})
+
+	id := create(t, c, RunSpec{
+		Name:   "shed-test-helper-" + sfx,
+		Image:  testImage,
+		Mounts: []Mount{{Volume: vol, Target: "/data"}},
+	})
+
+	// A volume in use by a container cannot be removed.
+	if err := c.RemoveVolume(ctx, vol); !IsConflict(err) {
+		t.Errorf("RemoveVolume of a used volume = %v, want a conflict", err)
+	}
+
+	const content = "secret\n"
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "file.txt", Mode: 0o600, Uid: 999, Gid: 998, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CopyTo(ctx, id, "/data", &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := c.CopyFrom(ctx, id, "/data/.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	tr := tar.NewReader(rc)
+	found := false
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimPrefix(h.Name, "./") != "file.txt" {
+			continue
+		}
+		found = true
+		got, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != content {
+			t.Errorf("content = %q, want %q", got, content)
+		}
+		if h.Uid != 999 || h.Gid != 998 || h.FileInfo().Mode().Perm() != 0o600 {
+			t.Errorf("uid/gid/mode = %d/%d/%o, want 999/998/600", h.Uid, h.Gid, h.FileInfo().Mode().Perm())
+		}
+	}
+	if !found {
+		t.Error("file.txt not in archive")
+	}
+}
+
+func TestExec(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+
+	id, err := c.Run(ctx, RunSpec{Name: "shed-test-exec-" + suffix(t), Image: testImage, Cmd: []string{"sleep", "300"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Remove(context.Background(), id) })
+
+	t.Run("large stdin", func(t *testing.T) {
+		const size = 50 << 20
+		var out, errOut countWriter
+		err := c.Exec(ctx, id, []string{"cat"}, io.LimitReader(rand.Reader, size), &out, &errOut)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.n != size || errOut.n != 0 {
+			t.Errorf("stdout/stderr bytes = %d/%d, want %d/0", out.n, errOut.n, size)
+		}
+	})
+
+	t.Run("exit status and stderr", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		err := c.Exec(ctx, id, []string{"sh", "-c", "echo out; echo err >&2; exit 3"}, nil, &out, &errOut)
+		var ee *ExitError
+		if !errors.As(err, &ee) || ee.Code != 3 {
+			t.Fatalf("err = %v, want ExitError{3}", err)
+		}
+		if out.String() != "out\n" || errOut.String() != "err\n" {
+			t.Errorf("stdout/stderr = %q/%q, want %q/%q", out.String(), errOut.String(), "out\n", "err\n")
+		}
+	})
+
+	t.Run("early exit without reading stdin", func(t *testing.T) {
+		err := c.Exec(ctx, id, []string{"true"}, io.LimitReader(rand.Reader, 10<<20), io.Discard, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("stdin read error", func(t *testing.T) {
+		boom := errors.New("boom")
+		r := io.MultiReader(strings.NewReader("partial"), failingReader{boom})
+		err := c.Exec(ctx, id, []string{"cat"}, r, io.Discard, io.Discard)
+		if !errors.Is(err, boom) {
+			t.Errorf("err = %v, want %v", err, boom)
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		cctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		err := c.Exec(cctx, id, []string{"sleep", "60"}, nil, io.Discard, io.Discard)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("err = %v, want deadline exceeded", err)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("Exec took %v after cancel", d)
+		}
+	})
+}

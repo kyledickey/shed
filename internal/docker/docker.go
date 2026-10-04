@@ -203,6 +203,16 @@ func tagRepo(ref string) string {
 // Mount attaches a named volume to a container path.
 type Mount struct {
 	Volume, Target string
+	ReadOnly       bool
+}
+
+// volumeMounts converts ms to Docker volume mounts.
+func volumeMounts(ms []Mount) []mount.Mount {
+	mounts := make([]mount.Mount, 0, len(ms))
+	for _, m := range ms {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeVolume, Source: m.Volume, Target: m.Target, ReadOnly: m.ReadOnly})
+	}
+	return mounts
 }
 
 // PortBinding publishes a container TCP port on all host interfaces.
@@ -210,7 +220,7 @@ type PortBinding struct {
 	HostPort, ContainerPort int
 }
 
-// RunSpec describes a container to create and start.
+// RunSpec describes a container to create, and usually to start.
 type RunSpec struct {
 	Name    string
 	Image   string
@@ -226,22 +236,34 @@ type RunSpec struct {
 // Run creates and starts a container and returns its ID. The container is
 // restarted unless explicitly stopped.
 func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
+	id, err := c.Create(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
+		// Do not leave a created-but-never-started container behind.
+		_ = c.Remove(context.WithoutCancel(ctx), id)
+		return "", fmt.Errorf("docker: start container %s: %w", spec.Name, err)
+	}
+	return id, nil
+}
+
+// Create creates a container from spec without starting it and returns its ID.
+// An empty spec.Network leaves the container with no networking configuration,
+// so it uses the daemon's default network if it is ever started.
+func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 	exposed := make(network.PortSet)
 	bindings := make(network.PortMap)
 	for _, p := range spec.Publish {
 		port, ok := network.PortFrom(uint16(p.ContainerPort), network.TCP)
 		if !ok {
-			return "", fmt.Errorf("docker: run %s: invalid container port %d", spec.Name, p.ContainerPort)
+			return "", fmt.Errorf("docker: create container %s: invalid container port %d", spec.Name, p.ContainerPort)
 		}
 		exposed[port] = struct{}{}
 		bindings[port] = append(bindings[port], network.PortBinding{
 			HostIP:   netip.IPv4Unspecified(),
 			HostPort: strconv.Itoa(p.HostPort),
 		})
-	}
-	mounts := make([]mount.Mount, 0, len(spec.Mounts))
-	for _, m := range spec.Mounts {
-		mounts = append(mounts, mount.Mount{Type: mount.TypeVolume, Source: m.Volume, Target: m.Target})
 	}
 	opts := client.ContainerCreateOptions{
 		Name: spec.Name,
@@ -255,7 +277,7 @@ func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
 		HostConfig: &container.HostConfig{
 			NetworkMode:   container.NetworkMode(spec.Network),
 			PortBindings:  bindings,
-			Mounts:        mounts,
+			Mounts:        volumeMounts(spec.Mounts),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     workloadResources(),
 			LogConfig:     container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
@@ -272,11 +294,6 @@ func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
 	created, err := c.api.ContainerCreate(ctx, opts)
 	if err != nil {
 		return "", fmt.Errorf("docker: create container %s: %w", spec.Name, err)
-	}
-	if _, err := c.api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		// Do not leave a created-but-never-started container behind.
-		_ = c.Remove(context.WithoutCancel(ctx), created.ID)
-		return "", fmt.Errorf("docker: start container %s: %w", spec.Name, err)
 	}
 	return created.ID, nil
 }

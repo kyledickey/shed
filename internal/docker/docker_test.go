@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 )
 
 func TestTagRepo(t *testing.T) {
@@ -74,5 +75,22 @@ func TestStatsFrom(t *testing.T) {
 				t.Errorf("statsFrom = %+v, want %+v", got, want)
 			}
 		})
+	}
+}
+
+func TestVolumeMounts(t *testing.T) {
+	got := volumeMounts([]Mount{
+		{Volume: "data", Target: "/var/lib/data"},
+		{Volume: "conf", Target: "/etc/conf", ReadOnly: true},
+	})
+	want := []mount.Mount{
+		{Type: mount.TypeVolume, Source: "data", Target: "/var/lib/data"},
+		{Type: mount.TypeVolume, Source: "conf", Target: "/etc/conf", ReadOnly: true},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("volumeMounts = %+v, want %+v", got, want)
+	}
+	if got := volumeMounts(nil); got == nil || len(got) != 0 {
+		t.Errorf("volumeMounts(nil) = %#v, want empty non-nil slice", got)
 	}
 }
