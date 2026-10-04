@@ -4,13 +4,129 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestCreateArgs(t *testing.T) {
+	base := []string{"buildx", "create", "--name", "shed", "--driver", "docker-container", "--bootstrap"}
+	tests := []struct {
+		name   string
+		memory int64
+		cpus   float64
+		want   []string
+	}{
+		{"unlimited", 0, 0, base},
+		{"memory", 2 << 30, 0, append(slices.Clone(base),
+			"--driver-opt", "memory=2147483648", "--driver-opt", "memory-swap=2147483648")},
+		{"cpus", 0, 1.5, append(slices.Clone(base),
+			"--driver-opt", "cpu-period=100000", "--driver-opt", "cpu-quota=150000")},
+		{"tiny cpus", 0, 0.001, append(slices.Clone(base),
+			"--driver-opt", "cpu-period=100000", "--driver-opt", "cpu-quota=1000")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := createArgs("shed", tt.memory, tt.cpus); !slices.Equal(got, tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckDisk(t *testing.T) {
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		b       *Builder
+		wantErr bool
+	}{
+		{"disabled", &Builder{WorkDir: dir}, false},
+		{"enough", &Builder{WorkDir: dir, MinFree: 1}, false},
+		{"low work dir", &Builder{WorkDir: dir, MinFree: math.MaxUint64}, true},
+		{"low docker root", &Builder{WorkDir: filepath.Join(dir, "missing"), dockerRoot: dir, MinFree: math.MaxUint64}, true},
+		{"missing paths skipped", &Builder{WorkDir: filepath.Join(dir, "missing"), MinFree: math.MaxUint64}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.b.checkDisk()
+			if got := errors.Is(err, ErrLowDisk); got != tt.wantErr {
+				t.Errorf("checkDisk() = %v, want ErrLowDisk: %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// fakeDocker puts a docker script on PATH that appends its arguments to the
+// returned log file and prints root for docker info.
+func fakeDocker(t *testing.T, root string) string {
+	t.Helper()
+	bin := t.TempDir()
+	calls := filepath.Join(t.TempDir(), "calls")
+	t.Setenv("CALLS", calls)
+	t.Setenv("ROOT", root)
+	scripts := map[string]string{
+		"git":    "#!/bin/sh\ntouch Dockerfile\n",
+		"docker": "#!/bin/sh\necho \"$*\" >> \"$CALLS\"\nif [ \"$1\" = info ]; then echo \"$ROOT\"; fi\n",
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return calls
+}
+
+func TestBuildUsesLimitedBuilder(t *testing.T) {
+	calls := fakeDocker(t, t.TempDir())
+	b := &Builder{WorkDir: t.TempDir(), Instance: "shed", Memory: 1 << 30, CPUs: 1, MinFree: 1}
+	req := Request{RepoURL: "https://example.com/r.git", Commit: "abc", Image: "x"}
+	for _, id := range []string{"a", "b"} {
+		if err := b.Build(context.Background(), id, req, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want := []string{"buildx rm --keep-state shed", "buildx create --name shed", "info", "buildx build --builder shed", "buildx build --builder shed"}
+	if len(lines) != len(want) {
+		t.Fatalf("docker calls = %q", lines)
+	}
+	for i, prefix := range want {
+		if !strings.HasPrefix(lines[i], prefix) {
+			t.Errorf("call %d = %q, want prefix %q", i, lines[i], prefix)
+		}
+	}
+	if !strings.Contains(lines[1], "memory=1073741824") || !strings.Contains(lines[1], "cpu-quota=100000") {
+		t.Errorf("builder created without limits: %q", lines[1])
+	}
+}
+
+func TestBuildRejectsLowDisk(t *testing.T) {
+	calls := fakeDocker(t, t.TempDir())
+	b := &Builder{WorkDir: t.TempDir(), MinFree: math.MaxUint64}
+	req := Request{RepoURL: "https://example.com/r.git", Commit: "abc", Image: "x"}
+	if err := b.Build(context.Background(), "a", req, io.Discard); !errors.Is(err, ErrLowDisk) {
+		t.Fatalf("Build() = %v, want ErrLowDisk", err)
+	}
+	data, _ := os.ReadFile(calls)
+	if strings.Contains(string(data), "build") {
+		t.Errorf("built despite low disk: %q", data)
+	}
+	if entries, _ := os.ReadDir(b.WorkDir); len(entries) != 0 {
+		t.Errorf("workspace created: %v", entries)
+	}
+}
 
 func TestBuildSlotSerializesAndCancels(t *testing.T) {
 	var b Builder

@@ -96,6 +96,24 @@ func (d *Deployer) FollowLog(ctx context.Context, deploymentID string, line func
 	}
 }
 
+// pruneHistory deletes a service's deployments beyond the newest d.keep,
+// with their build logs.
+func (d *Deployer) pruneHistory(serviceID string) {
+	if d.keep <= 0 {
+		return
+	}
+	ids, err := d.store.PruneDeployments(context.Background(), serviceID, d.keep)
+	if err != nil {
+		d.log.Error("prune deployment history", "service", serviceID, "err", err)
+		return
+	}
+	for _, id := range ids {
+		if err := os.Remove(d.logPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			d.log.Warn("remove build log", "deployment", id, "err", err)
+		}
+	}
+}
+
 // RuntimeLogs writes the last tail lines of the output of a service's active
 // container to w, then follows it until ctx ends or the container stops. It
 // returns ErrNoContainer if the service has no active container.

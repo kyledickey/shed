@@ -20,5 +20,18 @@ base_domain = "apps.example.com"
 # Add your GitHub login before signing in for the first time.
 allowed_users = []
 
+[build]
+# Limits for the dedicated BuildKit builder container; 0 means unlimited.
+memory_mb = 2048
+cpus = 2
+# Refuse to start builds when the data directory or Docker's root directory
+# has less free space than this.
+min_free_mb = 2048
+
+[deployments]
+# Cap on each deployment's build log, and deployments kept per service.
+log_max_mb = 10
+keep = 50
+
 [log]
 level = "info"

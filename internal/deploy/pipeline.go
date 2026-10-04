@@ -41,7 +41,7 @@ func (d *Deployer) run(ctx context.Context, dep store.Deployment) {
 	}
 	defer f.Close()
 
-	j := &job{Deployer: d, dep: dep, out: &syncWriter{w: f}}
+	j := &job{Deployer: d, dep: dep, out: d.logWriter(f)}
 	if err := j.execute(ctx); err != nil {
 		j.fail(ctx, err)
 	}

@@ -122,9 +122,16 @@ func TestArgs(t *testing.T) {
 	req := Request{Image: "shed/a:b", Env: map[string]string{"B": "2", "A": "1"}}
 
 	t.Run("dockerfile", func(t *testing.T) {
-		got := dockerfileArgs(req, "/ctx/Dockerfile", "/ctx", "/secrets")
+		got := dockerfileArgs(req, "", "/ctx/Dockerfile", "/ctx", "/secrets")
 		want := []string{"buildx", "build", "--load", "-t", "shed/a:b", "-f", "/ctx/Dockerfile",
 			"--secret", "id=A,src=/secrets/A", "--secret", "id=B,src=/secrets/B", "/ctx"}
+		if !slices.Equal(got, want) {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("dockerfile on builder instance", func(t *testing.T) {
+		got := dockerfileArgs(Request{Image: "i"}, "shed", "/ctx/Dockerfile", "/ctx", "/secrets")
+		want := []string{"buildx", "build", "--builder", "shed", "--load", "-t", "i", "-f", "/ctx/Dockerfile", "/ctx"}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -139,8 +146,11 @@ func TestArgs(t *testing.T) {
 	})
 
 	t.Run("railpack build", func(t *testing.T) {
-		args := railpackBuildArgs(req, "/ctx", "/ctx/plan.json", "/secrets")
+		args := railpackBuildArgs(req, "shed", "/ctx", "/ctx/plan.json", "/secrets")
 		joined := strings.Join(args, " ")
+		if !strings.HasPrefix(joined, "buildx build --builder shed ") {
+			t.Fatalf("railpack build not on the builder instance: %q", args)
+		}
 		if strings.Contains(joined, "A=1") || strings.Contains(joined, "B=2") || !strings.Contains(joined, "id=A,src=/secrets/A") {
 			t.Fatal(args)
 		}

@@ -155,3 +155,21 @@ func (s *Store) DeploymentsByStatus(ctx context.Context, statuses ...DeploymentS
 	}
 	return ds, nil
 }
+
+// PruneDeployments deletes a service's finished deployments beyond its newest
+// keep deployments and returns the IDs it deleted. Active, crashed, and
+// in-progress deployments are never deleted.
+func (s *Store) PruneDeployments(ctx context.Context, serviceID string, keep int) ([]string, error) {
+	ids, err := queryAll(ctx, s, func(r scanner) (string, error) {
+		var id string
+		return id, r.Scan(&id)
+	}, `DELETE FROM deployments WHERE id IN (
+			SELECT id FROM deployments WHERE service_id = ?
+			ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)
+		AND status IN (?, ?, ?, ?) RETURNING id`,
+		serviceID, max(keep, 0), StatusFailed, StatusRemoved, StatusCanceled, StatusSkipped)
+	if err != nil {
+		return nil, fmt.Errorf("store: prune deployments of service %s: %w", serviceID, err)
+	}
+	return ids, nil
+}

@@ -70,9 +70,18 @@ func TestLoadEnvOverridesFile(t *testing.T) {
 	t.Setenv("SHED_PROXY_HTTP_PORT", "8080")
 	t.Setenv("SHED_PROXY_ENABLED", "false")
 	t.Setenv("SHED_AUTH_ALLOWED_USERS", "alice, bob")
+	t.Setenv("SHED_BUILD_CPUS", "1.5")
+	t.Setenv("SHED_BUILD_MIN_FREE_MB", "0")
+	t.Setenv("SHED_DEPLOYMENTS_LOG_MAX_MB", "5")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if want := (Build{MemoryMB: 2048, CPUs: 1.5}); cfg.Build != want {
+		t.Errorf("Build = %+v, want %+v", cfg.Build, want)
+	}
+	if want := (Deployments{LogMaxMB: 5, Keep: 50}); cfg.Deployments != want {
+		t.Errorf("Deployments = %+v, want %+v", cfg.Deployments, want)
 	}
 	if cfg.Server.URL != "https://env.example.com" {
 		t.Errorf("Server.URL = %q", cfg.Server.URL)
@@ -90,6 +99,9 @@ func TestLoadInvalid(t *testing.T) {
 		{"bad url", "[server]\nurl = \"shed.example.com\"\n", "server.url"},
 		{"bad port", "[proxy]\nhttp_port = 70000\n", "proxy.http_port"},
 		{"bad level", "[log]\nlevel = \"loud\"\n", "log.level"},
+		{"negative build memory", "[build]\nmemory_mb = -1\n", "build limits"},
+		{"negative build cpus", "[build]\ncpus = -0.5\n", "build limits"},
+		{"negative keep", "[deployments]\nkeep = -1\n", "deployments limits"},
 		{"bad toml", "[server\n", "load"},
 	}
 	for _, tt := range tests {

@@ -116,19 +116,27 @@ func run() error {
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
-		Store:   st,
-		Docker:  dc,
-		Builder: &build.Builder{WorkDir: buildDir},
-		Proxy:   routes,
+		Store:  st,
+		Docker: dc,
+		Builder: &build.Builder{
+			WorkDir:  buildDir,
+			Instance: "shed",
+			Memory:   int64(cfg.Build.MemoryMB) << 20,
+			CPUs:     cfg.Build.CPUs,
+			MinFree:  uint64(cfg.Build.MinFreeMB) << 20,
+		},
+		Proxy: routes,
 		GitHub: func() (deploy.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true
 			}
 			return nil, false
 		},
-		LogDir:    logDir,
-		Dashboard: dashboardRoute(cfg.Server),
-		Log:       log,
+		LogDir:          logDir,
+		LogLimit:        int64(cfg.Deployments.LogMaxMB) << 20,
+		KeepDeployments: cfg.Deployments.Keep,
+		Dashboard:       dashboardRoute(cfg.Server),
+		Log:             log,
 	})
 	defer deployer.Stop()
 

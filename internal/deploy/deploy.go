@@ -82,6 +82,13 @@ type Config struct {
 	GitHub func() (GitHub, bool)
 	// LogDir holds the build logs, one <deploymentID>.log per deployment.
 	LogDir string
+	// LogLimit caps each build log, in bytes. Output beyond it is replaced
+	// by a truncation notice. Zero means unlimited.
+	LogLimit int64
+	// KeepDeployments is how many deployments of each service are kept after
+	// a deployment ends. Older finished ones are deleted along with their
+	// build logs. Zero keeps them all.
+	KeepDeployments int
 	// Dashboard, if its Host is set, is included in every route set.
 	Dashboard proxy.Route
 	Log       *slog.Logger
@@ -132,6 +139,8 @@ type Deployer struct {
 	proxy     Proxy
 	github    func() (GitHub, bool)
 	logDir    string
+	logLimit  int64
+	keep      int // deployments kept per service; 0 keeps all
 	dashboard proxy.Route
 	log       *slog.Logger
 
@@ -183,6 +192,8 @@ func New(cfg Config) *Deployer {
 		proxy:            cfg.Proxy,
 		github:           cfg.GitHub,
 		logDir:           cfg.LogDir,
+		logLimit:         cfg.LogLimit,
+		keep:             cfg.KeepDeployments,
 		dashboard:        cfg.Dashboard,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
@@ -301,6 +312,7 @@ func (d *Deployer) work(serviceID string, w *worker) {
 
 		d.run(ctx, *dep)
 		cancel(nil)
+		d.pruneHistory(serviceID)
 
 		d.mu.Lock()
 		close(w.ran)

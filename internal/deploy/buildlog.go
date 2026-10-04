@@ -24,6 +24,45 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
+// logWriter returns the build log writer for the log file f: safe for
+// concurrent use, and capped at the configured limit.
+func (d *Deployer) logWriter(f io.Writer) io.Writer {
+	if d.logLimit > 0 {
+		f = &cappedWriter{w: f, left: d.logLimit}
+	}
+	return &syncWriter{w: f}
+}
+
+// cappedWriter writes up to left bytes to w, then a truncation notice, and
+// discards everything after it without reporting an error.
+type cappedWriter struct {
+	w    io.Writer
+	left int64
+	cut  bool
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if c.cut {
+		return len(p), nil
+	}
+	if int64(len(p)) <= c.left {
+		n, err := c.w.Write(p)
+		c.left -= int64(n)
+		return n, err
+	}
+	c.cut = true
+	if _, err := c.w.Write(p[:c.left]); err != nil {
+		return 0, err
+	}
+	if _, err := io.WriteString(c.w, "\n"+truncatedNotice+"\n"); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// truncatedNotice ends a build log that reached its size limit.
+const truncatedNotice = "==> Log truncated: size limit reached, further output is discarded"
+
 // maxLine bounds how much of an unterminated line lineWriter buffers.
 const maxLine = 64 << 10
 

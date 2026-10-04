@@ -52,9 +52,26 @@ type Request struct {
 type Builder struct {
 	// WorkDir is the parent directory of the per-build workspaces.
 	WorkDir string
+	// Instance names a dedicated buildx builder with the docker-container
+	// driver. Before the first build it is recreated with the limits below,
+	// keeping its build cache. Empty uses Docker's default builder, which
+	// workload limits do not constrain.
+	Instance string
+	// Memory caps the dedicated builder's memory in bytes, without swap.
+	// Zero means unlimited.
+	Memory int64
+	// CPUs caps the dedicated builder's CPU time, in cores. Zero means
+	// unlimited.
+	CPUs float64
+	// MinFree is the free space, in bytes, that the filesystems of WorkDir
+	// and Docker's root directory need for a build to start. Zero disables
+	// the check.
+	MinFree uint64
 
-	once sync.Once
-	slot chan struct{}
+	once       sync.Once
+	slot       chan struct{}
+	ready      bool   // set up; guarded by slot
+	dockerRoot string // Docker's root directory, if known; guarded by slot
 }
 
 // Build clones req.Commit and builds req.Image, streaming progress and command
@@ -74,6 +91,12 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	workspace, err := filepath.Abs(filepath.Join(b.WorkDir, id))
 	if err != nil {
 		return fmt.Errorf("build: resolve workspace: %w", err)
+	}
+	if err := b.setup(ctx); err != nil {
+		return err
+	}
+	if err := b.checkDisk(); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(workspace); err != nil {
 		return fmt.Errorf("build: reset workspace: %w", err)
@@ -107,7 +130,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 
 	if dockerfile != "" {
 		fmt.Fprintln(w, "==> Building with Dockerfile")
-		err = run(ctx, contextDir, nil, w, "docker", dockerfileArgs(req, dockerfile, contextDir, secretDir)...)
+		err = run(ctx, contextDir, nil, w, "docker", dockerfileArgs(req, b.Instance, dockerfile, contextDir, secretDir)...)
 		if err != nil {
 			return fmt.Errorf("build: docker build: %w", err)
 		}
@@ -121,7 +144,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	if err != nil {
 		return fmt.Errorf("build: railpack prepare: %w", err)
 	}
-	args := railpackBuildArgs(req, contextDir, plan, secretDir)
+	args := railpackBuildArgs(req, b.Instance, contextDir, plan, secretDir)
 	if err := run(ctx, contextDir, nil, w, "docker", args...); err != nil {
 		return fmt.Errorf("build: docker build: %w", err)
 	}
@@ -222,9 +245,14 @@ func findDockerfile(repo, contextDir, configured string) (string, error) {
 	return p, err
 }
 
-// dockerfileArgs returns the docker arguments for a Dockerfile build.
-func dockerfileArgs(req Request, dockerfile, contextDir, secretDir string) []string {
-	args := []string{"buildx", "build", "--load", "-t", req.Image, "-f", dockerfile}
+// dockerfileArgs returns the docker arguments for a Dockerfile build on the
+// buildx builder instance, or on the default builder if instance is empty.
+func dockerfileArgs(req Request, instance, dockerfile, contextDir, secretDir string) []string {
+	args := []string{"buildx", "build"}
+	if instance != "" {
+		args = append(args, "--builder", instance)
+	}
+	args = append(args, "--load", "-t", req.Image, "-f", dockerfile)
 	for _, k := range sortedKeys(req.Env) {
 		args = append(args, "--secret", "id="+k+",src="+filepath.Join(secretDir, k))
 	}
@@ -243,8 +271,8 @@ func railpackPrepareArgs(req Request, contextDir, plan, info string) []string {
 }
 
 // railpackBuildArgs passes secret files without altering the Docker client's environment.
-func railpackBuildArgs(req Request, contextDir, plan, secretDir string) []string {
-	args := dockerfileArgs(req, plan, contextDir, secretDir)
+func railpackBuildArgs(req Request, instance, contextDir, plan, secretDir string) []string {
+	args := dockerfileArgs(req, instance, plan, contextDir, secretDir)
 	return append(args[:len(args)-1], "--build-arg", "BUILDKIT_SYNTAX="+railpackFrontend, contextDir)
 }
 

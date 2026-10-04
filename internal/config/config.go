@@ -29,11 +29,36 @@ const envPrefix = "SHED_"
 
 // Config is the complete shed configuration.
 type Config struct {
-	Server Server `koanf:"server"`
-	Data   Data   `koanf:"data"`
-	Proxy  Proxy  `koanf:"proxy"`
-	Auth   Auth   `koanf:"auth"`
-	Log    Log    `koanf:"log"`
+	Server      Server      `koanf:"server"`
+	Data        Data        `koanf:"data"`
+	Proxy       Proxy       `koanf:"proxy"`
+	Auth        Auth        `koanf:"auth"`
+	Build       Build       `koanf:"build"`
+	Deployments Deployments `koanf:"deployments"`
+	Log         Log         `koanf:"log"`
+}
+
+// Build limits the resources image builds may use.
+type Build struct {
+	// MemoryMB caps the memory of the BuildKit builder container, without
+	// swap. Zero means unlimited.
+	MemoryMB int `koanf:"memory_mb"`
+	// CPUs caps the CPU time of the BuildKit builder container, in cores.
+	// Zero means unlimited.
+	CPUs float64 `koanf:"cpus"`
+	// MinFreeMB is the free disk space the data directory's and Docker's
+	// filesystems need for a build to start. Zero disables the check.
+	MinFreeMB int `koanf:"min_free_mb"`
+}
+
+// Deployments bounds the deployment history kept on disk.
+type Deployments struct {
+	// LogMaxMB caps each deployment's build log; output beyond it is
+	// dropped. Zero means unlimited.
+	LogMaxMB int `koanf:"log_max_mb"`
+	// Keep is how many deployments of each service are kept. Older finished
+	// deployments and their logs are deleted. Zero keeps all of them.
+	Keep int `koanf:"keep"`
 }
 
 // Server configures the dashboard and API listener.
@@ -80,10 +105,12 @@ type Log struct {
 // defaults returns the built-in configuration.
 func defaults() Config {
 	return Config{
-		Server: Server{Listen: "127.0.0.1:3000", URL: "http://localhost:3000"},
-		Data:   Data{Dir: "/var/lib/shed"},
-		Proxy:  Proxy{Enabled: true, HTTPPort: 80, HTTPSPort: 443},
-		Log:    Log{Level: "info", MaxSizeMB: 20, MaxBackups: 5, MaxAgeDays: 30},
+		Server:      Server{Listen: "127.0.0.1:3000", URL: "http://localhost:3000"},
+		Data:        Data{Dir: "/var/lib/shed"},
+		Proxy:       Proxy{Enabled: true, HTTPPort: 80, HTTPSPort: 443},
+		Build:       Build{MemoryMB: 2048, CPUs: 2, MinFreeMB: 2048},
+		Deployments: Deployments{LogMaxMB: 10, Keep: 50},
+		Log:         Log{Level: "info", MaxSizeMB: 20, MaxBackups: 5, MaxAgeDays: 30},
 	}
 }
 
@@ -164,6 +191,12 @@ func (c Config) validate() error {
 	}
 	if c.Log.MaxSizeMB < 0 || c.Log.MaxBackups < 0 || c.Log.MaxAgeDays < 0 {
 		return errors.New("config: log retention settings must not be negative")
+	}
+	if c.Build.MemoryMB < 0 || c.Build.CPUs < 0 || c.Build.MinFreeMB < 0 {
+		return errors.New("config: build limits must not be negative")
+	}
+	if c.Deployments.LogMaxMB < 0 || c.Deployments.Keep < 0 {
+		return errors.New("config: deployments limits must not be negative")
 	}
 	return nil
 }

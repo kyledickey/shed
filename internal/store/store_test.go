@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -333,6 +334,49 @@ func TestVolumesAndDomains(t *testing.T) {
 	}
 	if ds, _ := s.AllDomains(ctx); len(ds) != 0 {
 		t.Errorf("domains survived service delete: %+v", ds)
+	}
+}
+
+func TestPruneDeployments(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	sv := mustService(t, s, Service{ProjectID: p.ID, Name: "a", Kind: "app"})
+	other := mustService(t, s, Service{ProjectID: p.ID, Name: "b", Kind: "app"})
+
+	// Oldest first: active, building, then failed ones, then two newest.
+	statuses := []DeploymentStatus{StatusActive, StatusBuilding, StatusCrashed, StatusFailed, StatusRemoved,
+		StatusCanceled, StatusSkipped, StatusFailed, StatusRemoved}
+	var ids []string
+	for _, st := range statuses {
+		d, err := s.CreateDeployment(ctx, Deployment{ServiceID: sv.ID, Status: st, Trigger: TriggerPush})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, d.ID)
+	}
+	if _, err := s.CreateDeployment(ctx, Deployment{ServiceID: other.ID, Status: StatusFailed, Trigger: TriggerPush}); err != nil {
+		t.Fatal(err)
+	}
+
+	pruned, err := s.PruneDeployments(ctx, sv.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(pruned)
+	want := slices.Sorted(slices.Values(ids[3:7]))
+	if !slices.Equal(pruned, want) {
+		t.Errorf("pruned %v, want %v", pruned, want)
+	}
+	ds, _ := s.Deployments(ctx, sv.ID, 0)
+	if len(ds) != 5 {
+		t.Errorf("%d deployments left, want 5", len(ds))
+	}
+	if ds, _ := s.Deployments(ctx, other.ID, 0); len(ds) != 1 {
+		t.Errorf("other service's deployments pruned")
+	}
+	if pruned, err := s.PruneDeployments(ctx, sv.ID, 2); err != nil || len(pruned) != 0 {
+		t.Errorf("second prune = %v, %v", pruned, err)
 	}
 }
 

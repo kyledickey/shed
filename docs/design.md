@@ -56,6 +56,15 @@ base_domain = ""                   # e.g. "apps.example.com" → generated domai
 [auth]
 allowed_users = []                 # Explicit GitHub logins; configure before first sign-in
 
+[build]
+memory_mb = 2048                   # BuildKit builder container memory (no swap); 0 = unlimited
+cpus = 2                           # BuildKit builder container CPU quota in cores; 0 = unlimited
+min_free_mb = 2048                 # refuse builds below this free space on data dir / Docker root; 0 = off
+
+[deployments]
+log_max_mb = 10                    # per-deployment build log cap; 0 = unlimited
+keep = 50                          # deployments kept per service; 0 = keep all
+
 [log]
 level = "info"
 max_size_mb = 20
@@ -298,8 +307,13 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 - Volumes: Docker named volume `shed-vol-<volumeID>`, mounted at `mount_path`.
   Database services get one automatically.
 - Images: `shed/<serviceID>:<deploymentID>`. Keep the 5 most recent per service.
-- Build logs: `<data>/logs/<deploymentID>.log`. Runtime logs: Docker logs of
-  the active container.
+- Build logs: `<data>/logs/<deploymentID>.log`, capped at
+  `deployments.log_max_mb`; output beyond the cap is replaced by a final
+  `==> Log truncated` line. Runtime logs: Docker logs of the active container.
+- Deployment history: after each deployment ends, a service's finished
+  deployments (`failed`, `removed`, `canceled`, `skipped`) beyond its newest
+  `deployments.keep` are deleted with their build logs. Active, crashed, and
+  in-progress deployments are never deleted.
 - Builds run in `<data>/builds/<deploymentID>` and are deleted afterwards.
   Workspace paths are made absolute before running build commands, so relative
   data directories work with Dockerfile and Railpack builds.
@@ -1054,6 +1068,16 @@ The shared build runner allows one active build across all services. A 30-minute
 build deadline includes queueing, cloning, Railpack preparation, and image
 construction. Cancellation terminates the subprocess group, including child
 processes, before releasing the build slot.
+
+Builds, Dockerfile and Railpack alike, run on a dedicated buildx builder named
+`shed` (`docker buildx build --builder shed`) using the docker-container driver,
+because workload limits do not constrain Docker's default BuildKit. Before its
+first build, shed removes the builder with `--keep-state` (keeping the build
+cache) and recreates it with `memory`/`memory-swap` set to `build.memory_mb` and
+a CFS quota of `build.cpus` cores, so configuration changes apply after a
+restart. A build fails before cloning when the filesystem of the build
+directory or Docker's root directory (`docker info`) has less than
+`build.min_free_mb` available.
 
 ### Webhook resource budget
 
