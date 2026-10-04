@@ -257,7 +257,8 @@ the same service.
    rebuild proxy routes, then stop/remove the previous container and mark its
    deployment `removed`.
 6. On failure at any step: mark `failed`, record `error`, remove the new
-   container, and restart the previous container if step 3 stopped it.
+   container, and restart the previous container if step 3 stopped it and
+   removal of the replacement is confirmed.
 
 The build log has a `==> ` heading per step with detail lines under it: the
 container's name, image, network and private address, volumes, published
@@ -508,3 +509,12 @@ service variables, including matches split across writes. Injected metadata
 (ports and service names) is not treated as secret unless explicitly configured
 as a service variable. Runtime redaction uses the current variable configuration;
 changing variables cannot retroactively remove secrets from older saved logs.
+
+### Replacement storage safety
+
+A deployment that needs exclusive volumes or a published host port must confirm
+that the previous container is stopped before starting its replacement. Docker
+inspection and stop failures abort deployment and preserve the active container.
+
+If removing a failed replacement cannot be confirmed, recovery leaves the
+predecessor stopped rather than risking concurrent use of its persistent volume.

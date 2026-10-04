@@ -243,16 +243,21 @@ func (j *job) stopPrevious(ctx context.Context) error {
 		return err
 	}
 	c, err := j.docker.Inspect(ctx, prev.ContainerID)
-	if err != nil || !c.Running {
-		return nil // Gone or already stopped, as for a stopped service.
+	if docker.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect previous container: %w", err)
+	}
+	if !c.Running {
+		return nil
 	}
 	j.step("Stopping previous deployment %s", prev.ID)
 	j.printf("Volumes and published ports cannot be shared, so the previous container stops first")
 	if err := j.docker.Stop(ctx, prev.ContainerID, j.stopTimeout); err != nil {
-		j.printf("Stopping container %s: %v", c.Name, err)
-	} else {
-		j.printf("Stopped container %s", c.Name)
+		return fmt.Errorf("stop previous container %s: %w", c.Name, err)
 	}
+	j.printf("Stopped container %s", c.Name)
 	j.stoppedPrev = prev.ContainerID
 	return nil
 }
@@ -454,12 +459,18 @@ func (j *job) fail(ctx context.Context, err error) {
 	j.log.Info("deployment ended", "deployment", j.dep.ID, "status", status, "reason", msg)
 
 	cleanup := context.WithoutCancel(ctx)
+	candidateRemoved := true
 	if j.container != "" {
-		if err := j.docker.Remove(cleanup, j.container); err != nil {
+		if err := j.docker.Remove(cleanup, j.container); err != nil && !docker.IsNotFound(err) {
+			candidateRemoved = false
 			j.log.Error("remove failed container", "container", j.container, "err", err)
 		}
 	}
-	if j.stoppedPrev != "" {
+	if j.stoppedPrev != "" && !candidateRemoved {
+		j.printf("Previous container remains stopped because removal of the replacement could not be confirmed")
+		j.log.Error("cannot safely restart previous container", "container", j.stoppedPrev)
+	}
+	if j.stoppedPrev != "" && candidateRemoved {
 		if err := j.docker.Start(cleanup, j.stoppedPrev); err != nil {
 			j.log.Error("restart previous container", "container", j.stoppedPrev, "err", err)
 		}
