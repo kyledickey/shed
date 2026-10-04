@@ -130,6 +130,23 @@ export type Metrics = {
   diskWrite: (number | null)[];
 };
 
+/** Resource usage of the whole host, evenly spaced from start. */
+export type HostMetrics = {
+  range: MetricsRange;
+  start: string;
+  step: number;
+  cpus: number;
+  memoryTotal: number;
+  diskTotal: number;
+  cpu: (number | null)[];
+  memory: (number | null)[];
+  diskUsed: (number | null)[];
+  netRx: (number | null)[];
+  netTx: (number | null)[];
+  diskRead: (number | null)[];
+  diskWrite: (number | null)[];
+};
+
 const pendingStatuses: ReadonlySet<DeploymentStatus> = new Set([
   "queued",
   "waiting",

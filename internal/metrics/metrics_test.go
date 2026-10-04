@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -59,6 +60,9 @@ type fakeStore struct {
 		n         int
 	}
 	prunedBefore []time.Time
+	hostInserted []store.HostSample
+	hostBuckets  []store.HostBucket
+	hostFrom     time.Time
 }
 
 func (f *fakeStore) InsertMetricSamples(_ context.Context, s []store.MetricSample) error {
@@ -71,10 +75,27 @@ func (f *fakeStore) MetricBuckets(_ context.Context, serviceID string, from time
 	return f.buckets, nil
 }
 
+func (f *fakeStore) InsertHostSample(_ context.Context, s store.HostSample) error {
+	f.hostInserted = append(f.hostInserted, s)
+	return nil
+}
+
+func (f *fakeStore) HostBuckets(_ context.Context, from time.Time, _ time.Duration, _ int) ([]store.HostBucket, error) {
+	f.hostFrom = from
+	return f.hostBuckets, nil
+}
+
 func (f *fakeStore) DeleteMetricSamplesBefore(_ context.Context, t time.Time) error {
 	f.prunedBefore = append(f.prunedBefore, t)
 	return nil
 }
+
+type fakeHost struct {
+	stats host.Stats
+	err   error
+}
+
+func (f *fakeHost) Read(context.Context) (host.Stats, error) { return f.stats, f.err }
 
 var t0 = time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 
@@ -328,5 +349,99 @@ func TestQueryErrorsAndNoContainer(t *testing.T) {
 	if err != nil || s.CPULimit != 0 || s.MemoryLimit != 0 || len(s.CPU) != Buckets || s.CPU[Buckets-1] != nil {
 		t.Errorf("Query() with no data = limits %v %v, %d points, %v; want zeros and %d nil points",
 			s.CPULimit, s.MemoryLimit, len(s.CPU), err, Buckets)
+	}
+}
+
+func TestHostRates(t *testing.T) {
+	prev := host.Stats{
+		CPUs: 4, CPUTotal: 1000, CPUIdle: 800, MemoryTotal: 1000, MemoryAvailable: 400,
+		NetRx: 100, NetTx: 100, DiskRead: 0, DiskWrite: 0, DiskUsed: 5,
+	}
+	tests := []struct {
+		name   string
+		cur    host.Stats
+		want   usage
+		wantOK bool
+	}{
+		{
+			// 100 of 400 ticks busy on 4 CPUs: one core's worth.
+			name: "rates",
+			cur: host.Stats{
+				CPUs: 4, CPUTotal: 1400, CPUIdle: 1100, MemoryTotal: 1000, MemoryAvailable: 300,
+				NetRx: 200, NetTx: 150, DiskRead: 1000, DiskWrite: 500,
+			},
+			want:   usage{cpu: 100, memory: 700, netRx: 10, netTx: 5, diskRead: 100, diskWrite: 50},
+			wantOK: true,
+		},
+		{
+			name: "idle going backwards is clamped",
+			cur: host.Stats{
+				CPUs: 4, CPUTotal: 1100, CPUIdle: 750, MemoryTotal: 1000,
+				NetRx: 100, NetTx: 100,
+			},
+			want:   usage{cpu: 400, memory: 1000},
+			wantOK: true,
+		},
+		{name: "no cpu time passed", cur: prev},
+		{name: "counter reset", cur: host.Stats{CPUTotal: 2000, NetRx: 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := hostRates(prev, tt.cur, 10*time.Second)
+			if ok != tt.wantOK || !approx(got, tt.want) {
+				t.Errorf("hostRates() = %+v, %v; want %+v, %v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestCollectHost(t *testing.T) {
+	h := &fakeHost{stats: host.Stats{CPUs: 2, CPUTotal: 100, CPUIdle: 100, MemoryTotal: 100, DiskUsed: 7}}
+	st := &fakeStore{}
+	c := New(Config{Docker: &fakeDocker{}, Host: h, Store: st, Log: slog.New(slog.DiscardHandler)})
+
+	c.collect(context.Background(), t0)
+	if len(st.hostInserted) != 0 {
+		t.Fatalf("first collect inserted %v, want nothing", st.hostInserted)
+	}
+	h.err = errors.New("boom")
+	c.collect(context.Background(), t0.Add(10*time.Second))
+	h.err = nil
+	h.stats = host.Stats{CPUs: 2, CPUTotal: 300, CPUIdle: 200, MemoryTotal: 100, MemoryAvailable: 40, NetRx: 2000, DiskUsed: 9}
+	c.collect(context.Background(), t0.Add(20*time.Second))
+
+	want := []store.HostSample{{Time: t0.Add(20 * time.Second), CPU: 100, Memory: 60, DiskUsed: 9, NetRx: 100}}
+	if !reflect.DeepEqual(st.hostInserted, want) {
+		t.Errorf("inserted %+v, want %+v", st.hostInserted, want)
+	}
+}
+
+func TestQueryHost(t *testing.T) {
+	now := t0.Add(5 * time.Second)
+	current := t0.Add(20*time.Second - time.Hour)
+	st := &fakeStore{hostBuckets: []store.HostBucket{
+		{Index: 0, CPU: 99},
+		{Index: 1, CPU: 1, DiskUsed: 3},
+		{Index: Buckets, CPU: 7},
+	}}
+	h := &fakeHost{stats: host.Stats{CPUs: 4, MemoryTotal: 1 << 30, DiskTotal: 1 << 40}}
+	c := New(Config{Docker: &fakeDocker{}, Host: h, Store: st, Now: func() time.Time { return now }, Log: slog.New(slog.DiscardHandler)})
+
+	s, err := c.QueryHost(context.Background(), Range1h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.hostFrom.Equal(current.Add(-20 * time.Second)) {
+		t.Errorf("HostBuckets from %v", st.hostFrom)
+	}
+	if !s.Start.Equal(current) || s.CPUs != 4 || s.MemoryTotal != 1<<30 || s.DiskTotal != 1<<40 {
+		t.Errorf("QueryHost() = start %v, %d cpus, %d memory, %d disk", s.Start, s.CPUs, s.MemoryTotal, s.DiskTotal)
+	}
+	if len(s.DiskUsed) != Buckets || s.CPU[0] == nil || *s.CPU[0] != 1 || *s.DiskUsed[0] != 3 ||
+		s.CPU[Buckets-1] == nil || *s.CPU[Buckets-1] != 7 || s.CPU[1] != nil {
+		t.Errorf("QueryHost() series: cpu[0] %v, cpu[1] %v, cpu[last] %v", s.CPU[0], s.CPU[1], s.CPU[Buckets-1])
+	}
+	if _, err := c.QueryHost(context.Background(), "2h"); !errors.Is(err, ErrInvalidRange) {
+		t.Errorf("QueryHost(2h) error = %v, want ErrInvalidRange", err)
 	}
 }

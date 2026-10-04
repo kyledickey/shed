@@ -1,13 +1,15 @@
-// Package metrics records the resource usage of service containers and serves
-// it as time series.
+// Package metrics records the resource usage of service containers and of the
+// host, and serves it as time series.
 //
 // A [Collector] samples every running service container through Docker at a
 // fixed interval, turns the cumulative counters into rates, sums them per
-// service, and stores one sample per service per tick. [Collector.Query]
-// averages the stored samples into a fixed number of buckets over a range.
+// service, and stores one sample per service per tick. It samples the host
+// alongside, into one host sample per tick. [Collector.Query] and
+// [Collector.QueryHost] average the stored samples into a fixed number of
+// buckets over a range.
 //
-// Docker and the store are reached through small interfaces so they can be
-// replaced, for example by fakes in tests.
+// Docker, the host, and the store are reached through small interfaces so
+// they can be replaced, for example by fakes in tests.
 package metrics
 
 import (
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -34,17 +37,26 @@ type Docker interface {
 	Stats(ctx context.Context, id string) (docker.Stats, error)
 }
 
+// Host reads the host's resource usage. host.Reader implements it.
+type Host interface {
+	Read(ctx context.Context) (host.Stats, error)
+}
+
 // Store persists metric samples. *store.Store implements it.
 type Store interface {
 	InsertMetricSamples(ctx context.Context, samples []store.MetricSample) error
 	MetricBuckets(ctx context.Context, serviceID string, from time.Time, step time.Duration, n int) ([]store.MetricBucket, error)
+	InsertHostSample(ctx context.Context, sample store.HostSample) error
+	HostBuckets(ctx context.Context, from time.Time, step time.Duration, n int) ([]store.HostBucket, error)
 	DeleteMetricSamplesBefore(ctx context.Context, t time.Time) error
 }
 
 // Config configures a Collector.
 type Config struct {
 	Docker Docker
-	Store  Store
+	// Host is sampled alongside the containers; nil means it is not.
+	Host  Host
+	Store Store
 	// Interval is the time between samples; zero means 10 seconds.
 	Interval time.Duration
 	// Retention is how long samples are kept; zero means 7 days.
@@ -61,6 +73,7 @@ const pruneEvery = time.Hour
 // stored samples.
 type Collector struct {
 	docker    Docker
+	host      Host
 	store     Store
 	interval  time.Duration
 	retention time.Duration
@@ -68,14 +81,17 @@ type Collector struct {
 	log       *slog.Logger
 
 	// Owned by the Run goroutine.
-	prev      map[string]docker.Stats // last sample by container ID
-	lastPrune time.Time
+	prev       map[string]docker.Stats // last sample by container ID
+	hostPrev   *host.Stats
+	hostPrevAt time.Time
+	lastPrune  time.Time
 }
 
 // New returns a Collector.
 func New(cfg Config) *Collector {
 	c := &Collector{
 		docker:    cfg.Docker,
+		host:      cfg.Host,
 		store:     cfg.Store,
 		interval:  cfg.Interval,
 		retention: cfg.Retention,
@@ -120,6 +136,7 @@ func (c *Collector) collect(ctx context.Context, now time.Time) {
 		}
 		c.lastPrune = now
 	}
+	c.collectHost(ctx, now)
 
 	containers, err := c.docker.List(ctx, map[string]string{serviceLabel: ""})
 	if err != nil {
@@ -170,6 +187,35 @@ func (c *Collector) collect(ctx context.Context, now time.Time) {
 	}
 }
 
+// collectHost takes one sample of the host and stores its rates since the
+// previous sample.
+func (c *Collector) collectHost(ctx context.Context, now time.Time) {
+	if c.host == nil {
+		return
+	}
+	cur, err := c.host.Read(ctx)
+	if err != nil {
+		c.log.Warn("read host stats", "err", err)
+		return
+	}
+	prev, prevAt := c.hostPrev, c.hostPrevAt
+	c.hostPrev, c.hostPrevAt = &cur, now
+	if prev == nil {
+		return
+	}
+	u, ok := hostRates(*prev, cur, now.Sub(prevAt))
+	if !ok {
+		return
+	}
+	err = c.store.InsertHostSample(ctx, store.HostSample{
+		Time: now, CPU: u.cpu, Memory: int64(u.memory), DiskUsed: int64(cur.DiskUsed),
+		NetRx: u.netRx, NetTx: u.netTx, DiskRead: u.diskRead, DiskWrite: u.diskWrite,
+	})
+	if err != nil {
+		c.log.Warn("store host sample", "err", err)
+	}
+}
+
 // usage is resource usage over an interval: CPU in percent of one core,
 // memory in bytes, and the rest in bytes per second.
 type usage struct {
@@ -211,6 +257,29 @@ func rates(prev, cur docker.Stats) (usage, bool) {
 		u.cpu = dcpu / float64(dt.Nanoseconds()) * 100
 	}
 	return u, true
+}
+
+// hostRates returns the host's usage between two readings dt apart. It
+// reports false if no time passed or a counter went backwards.
+func hostRates(prev, cur host.Stats, dt time.Duration) (usage, bool) {
+	if dt <= 0 || cur.CPUTotal <= prev.CPUTotal ||
+		cur.NetRx < prev.NetRx || cur.NetTx < prev.NetTx ||
+		cur.DiskRead < prev.DiskRead || cur.DiskWrite < prev.DiskWrite {
+		return usage{}, false
+	}
+	secs := dt.Seconds()
+	total := float64(cur.CPUTotal - prev.CPUTotal)
+	// Idle includes iowait, which the kernel may report going backwards, so
+	// clamp busy time to the elapsed total.
+	busy := min(max(total-(float64(cur.CPUIdle)-float64(prev.CPUIdle)), 0), total)
+	return usage{
+		cpu:       busy / total * float64(cur.CPUs) * 100,
+		memory:    float64(cur.MemoryTotal - min(cur.MemoryAvailable, cur.MemoryTotal)),
+		netRx:     float64(cur.NetRx-prev.NetRx) / secs,
+		netTx:     float64(cur.NetTx-prev.NetTx) / secs,
+		diskRead:  float64(cur.DiskRead-prev.DiskRead) / secs,
+		diskWrite: float64(cur.DiskWrite-prev.DiskWrite) / secs,
+	}, true
 }
 
 // Range is a time range of a metrics query.
@@ -288,9 +357,23 @@ func (c *Collector) Query(ctx context.Context, serviceID string, r Range) (Serie
 	if err != nil {
 		return Series{}, err
 	}
-	start, buckets = settle(start, step, buckets)
-	s := fill(buckets, Buckets)
-	s.Range, s.Start, s.Step = r, start, step
+	last := -1
+	if n := len(buckets); n > 0 {
+		last = buckets[n-1].Index
+	}
+	start, shift := settle(start, step, last)
+	s := Series{
+		Range: r, Start: start, Step: step,
+		CPU: series(), Memory: series(), NetRx: series(), NetTx: series(),
+		DiskRead: series(), DiskWrite: series(),
+	}
+	for _, b := range buckets {
+		if i := b.Index - shift; i >= 0 && i < Buckets {
+			s.CPU[i], s.Memory[i] = ptr(b.CPU), ptr(b.Memory)
+			s.NetRx[i], s.NetTx[i] = ptr(b.NetRx), ptr(b.NetTx)
+			s.DiskRead[i], s.DiskWrite[i] = ptr(b.DiskRead), ptr(b.DiskWrite)
+		}
+	}
 	s.CPULimit, s.MemoryLimit, err = c.limits(ctx, serviceID)
 	if err != nil {
 		return Series{}, err
@@ -309,41 +392,18 @@ func window(now time.Time, d time.Duration) (start time.Time, step time.Duration
 }
 
 // settle picks the window for buckets fetched from one step before start,
-// Buckets+1 of them. If the last, in-progress bucket has samples, the window
-// starts at start; otherwise it ends at the last complete bucket. It returns
-// the window's start and its buckets, indexed from it.
-func settle(start time.Time, step time.Duration, buckets []store.MetricBucket) (time.Time, []store.MetricBucket) {
-	if n := len(buckets); n == 0 || buckets[n-1].Index != Buckets {
-		return start.Add(-step), buckets
+// Buckets+1 of them, given the index of the last fetched bucket (-1 if none).
+// If that is the in-progress bucket, the window starts at start; otherwise it
+// ends at the last complete bucket. It returns the window's start and how far
+// the fetched indexes are ahead of it.
+func settle(start time.Time, step time.Duration, last int) (time.Time, int) {
+	if last == Buckets {
+		return start, 1
 	}
-	out := make([]store.MetricBucket, 0, len(buckets))
-	for _, b := range buckets {
-		if b.Index > 0 {
-			b.Index--
-			out = append(out, b)
-		}
-	}
-	return start, out
+	return start.Add(-step), 0
 }
 
-// fill spreads buckets over n series entries, leaving the rest nil.
-func fill(buckets []store.MetricBucket, n int) Series {
-	s := Series{
-		CPU: make([]*float64, n), Memory: make([]*float64, n),
-		NetRx: make([]*float64, n), NetTx: make([]*float64, n),
-		DiskRead: make([]*float64, n), DiskWrite: make([]*float64, n),
-	}
-	for _, b := range buckets {
-		if b.Index < 0 || b.Index >= n {
-			continue
-		}
-		i := b.Index
-		s.CPU[i], s.Memory[i] = ptr(b.CPU), ptr(b.Memory)
-		s.NetRx[i], s.NetTx[i] = ptr(b.NetRx), ptr(b.NetTx)
-		s.DiskRead[i], s.DiskWrite[i] = ptr(b.DiskRead), ptr(b.DiskWrite)
-	}
-	return s
-}
+func series() []*float64 { return make([]*float64, Buckets) }
 
 func ptr(v float64) *float64 { return &v }
 
@@ -368,4 +428,61 @@ func (c *Collector) limits(ctx context.Context, serviceID string) (float64, int6
 		return info.CPULimit, info.MemoryLimit, nil
 	}
 	return 0, 0, nil
+}
+
+// HostSeries is the host's resource usage over a range, bucketed like
+// [Series].
+type HostSeries struct {
+	Range Range
+	Start time.Time
+	Step  time.Duration
+	// CPUs is the number of online CPUs.
+	CPUs int
+	// MemoryTotal and DiskTotal are the host's memory and the size of the
+	// filesystem it reports, in bytes.
+	MemoryTotal, DiskTotal int64
+	// CPU is in percent of one core, Memory and DiskUsed in bytes, and the
+	// others in bytes per second.
+	CPU, Memory, DiskUsed []*float64
+	NetRx, NetTx          []*float64
+	DiskRead, DiskWrite   []*float64
+}
+
+// QueryHost returns the host's resource usage over r, with its current
+// capacity.
+func (c *Collector) QueryHost(ctx context.Context, r Range) (HostSeries, error) {
+	d := r.duration()
+	if d == 0 {
+		return HostSeries{}, ErrInvalidRange
+	}
+	start, step := window(c.now(), d)
+	buckets, err := c.store.HostBuckets(ctx, start.Add(-step), step, Buckets+1)
+	if err != nil {
+		return HostSeries{}, err
+	}
+	last := -1
+	if n := len(buckets); n > 0 {
+		last = buckets[n-1].Index
+	}
+	start, shift := settle(start, step, last)
+	s := HostSeries{
+		Range: r, Start: start, Step: step,
+		CPU: series(), Memory: series(), DiskUsed: series(),
+		NetRx: series(), NetTx: series(), DiskRead: series(), DiskWrite: series(),
+	}
+	for _, b := range buckets {
+		if i := b.Index - shift; i >= 0 && i < Buckets {
+			s.CPU[i], s.Memory[i], s.DiskUsed[i] = ptr(b.CPU), ptr(b.Memory), ptr(b.DiskUsed)
+			s.NetRx[i], s.NetTx[i] = ptr(b.NetRx), ptr(b.NetTx)
+			s.DiskRead[i], s.DiskWrite[i] = ptr(b.DiskRead), ptr(b.DiskWrite)
+		}
+	}
+	if c.host != nil {
+		h, err := c.host.Read(ctx)
+		if err != nil {
+			return HostSeries{}, err
+		}
+		s.CPUs, s.MemoryTotal, s.DiskTotal = h.CPUs, int64(h.MemoryTotal), int64(h.DiskTotal)
+	}
+	return s, nil
 }

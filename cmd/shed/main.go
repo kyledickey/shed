@@ -28,6 +28,7 @@ import (
 	"github.com/kyledickey/shed/internal/config"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
@@ -140,7 +141,12 @@ func run() error {
 		Log: log,
 	})
 
-	collector := metrics.New(metrics.Config{Docker: dc, Store: st, Log: log})
+	collector := metrics.New(metrics.Config{
+		Docker: dc,
+		Host:   host.Reader{Path: cfg.Data.Dir},
+		Store:  st,
+		Log:    log,
+	})
 
 	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {

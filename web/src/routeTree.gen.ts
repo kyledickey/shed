@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppServerRouteImport } from './routes/_app/server'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
@@ -48,6 +49,11 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppServerRoute = AppServerRouteImport.update({
+  id: '/server',
+  path: '/server',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/server': typeof AppServerRoute
   '/settings': typeof AppSettingsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -136,6 +143,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/server': typeof AppServerRoute
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -153,6 +161,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/_app/server': typeof AppServerRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
+    | '/server'
     | '/settings'
     | '/projects/$projectId'
     | '/projects/$projectId/settings'
@@ -189,6 +199,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
+    | '/server'
     | '/settings'
     | '/'
     | '/projects/$projectId/settings'
@@ -205,6 +216,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
+    | '/_app/server'
     | '/_app/settings'
     | '/_app/'
     | '/_app/projects/$projectId'
@@ -261,6 +273,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/server': {
+      id: '/_app/server'
+      path: '/server'
+      fullPath: '/server'
+      preLoaderRoute: typeof AppServerRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings': {
@@ -390,12 +409,14 @@ const AppProjectsProjectIdRouteWithChildren =
   AppProjectsProjectIdRoute._addFileChildren(AppProjectsProjectIdRouteChildren)
 
 interface AppRouteChildren {
+  AppServerRoute: typeof AppServerRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRouteWithChildren
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppServerRoute: AppServerRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppProjectsProjectIdRoute: AppProjectsProjectIdRouteWithChildren,

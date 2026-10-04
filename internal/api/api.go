@@ -176,6 +176,7 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
+	authed("GET /api/host/metrics", s.hostMetrics)
 
 	authed("GET /api/services/{id}/backups", s.serviceBackups)
 	authed("PUT /api/services/{id}/backups/policy", s.putServiceBackupPolicy)

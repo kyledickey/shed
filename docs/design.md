@@ -81,10 +81,11 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
+| `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
-| `internal/metrics` | container resource sampling, per-service time series | interfaces only + docker/store types |
+| `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
 | `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
@@ -195,6 +196,17 @@ CREATE TABLE metric_samples (            -- one row per service per sampling tic
   disk_read REAL NOT NULL,
   disk_write REAL NOT NULL,
   PRIMARY KEY (service_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE host_samples (             -- one row per sampling tick
+  ts INTEGER PRIMARY KEY,                -- unix seconds
+  cpu REAL NOT NULL,                     -- percent of one core
+  memory INTEGER NOT NULL,               -- bytes
+  disk_used INTEGER NOT NULL,            -- bytes used on the data dir's filesystem
+  net_rx REAL NOT NULL,                  -- bytes/s
+  net_tx REAL NOT NULL,
+  disk_read REAL NOT NULL,
+  disk_write REAL NOT NULL
 ) WITHOUT ROWID;
 
 CREATE TABLE backup_policies (           -- absent row = default policy
@@ -343,7 +355,17 @@ to the same container's previous sample (a container's first sample, or one
 after a counter reset, yields nothing): CPU is percent of one core, memory is
 usage minus inactive page cache, network and block I/O are bytes/s. Containers
 of the same service (overlap during a zero-downtime deploy) are summed into
-one `metric_samples` row per tick. Samples older than 7 days are pruned hourly.
+one `metric_samples` row per tick.
+
+On the same tick it reads the host through `internal/host` and stores one
+`host_samples` row, with rates from the difference to the previous reading:
+CPU is busy time (all but idle and iowait in `/proc/stat`) in percent of one
+core, memory is `MemTotal - MemAvailable`, network and disk I/O are bytes/s
+summed over physical devices only (those with a `device` link in sysfs, which
+leaves out Docker bridges, veth pairs, loop and device-mapper devices), and
+disk used is the used space of the filesystem holding `data.dir`.
+
+Samples older than 7 days are pruned hourly.
 
 A query for range `1h`, `6h`, `24h`, or `7d` returns 180 buckets of width
 range/180 (20s, 120s, 480s, 3360s), aligned to multiples of the width since
@@ -353,6 +375,9 @@ bucket, so the series never ends in a null just because the current bucket is
 young. Each bucket is the average of its samples, or null if it has none. `cpuLimit` and `memoryLimit`
 are the running container's configured limits (0 = unlimited, which is
 always the case today since shed sets none).
+
+Host queries bucket the same way; `cpus`, `memoryTotal`, and `diskTotal`
+are read live at query time.
 
 ### Backups
 
@@ -642,6 +667,7 @@ POST   /api/deployments/{id}/cancel             → Deployment
 GET    /api/deployments/{id}/logs               SSE build log (replays file, follows while building)
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
 GET    /api/services/{id}/metrics?range=        → Metrics  (range: 1h | 6h | 24h | 7d; default 1h)
+GET    /api/host/metrics?range=                 → HostMetrics  (same ranges)
 
 GET    /api/services/{id}/backups               → ServiceBackups  (newest first, 100)
 PUT    /api/services/{id}/backups/policy  BackupPolicyInput → BackupPolicy
@@ -739,6 +765,22 @@ type Metrics = {
   netTx: (number | null)[];            // bytes/s sent
   diskRead: (number | null)[];         // bytes/s
   diskWrite: (number | null)[];        // bytes/s
+};
+
+// Resource usage of the whole host, bucketed like Metrics.
+type HostMetrics = {
+  range: "1h" | "6h" | "24h" | "7d";
+  start: string; step: number;
+  cpus: number;                        // online CPUs
+  memoryTotal: number;                 // bytes
+  diskTotal: number;                   // bytes, filesystem holding data.dir
+  cpu: (number | null)[];              // percent of one core (max cpus*100)
+  memory: (number | null)[];           // bytes in use (total - available)
+  diskUsed: (number | null)[];         // bytes used on that filesystem
+  netRx: (number | null)[];            // bytes/s, physical interfaces
+  netTx: (number | null)[];
+  diskRead: (number | null)[];         // bytes/s, physical disks
+  diskWrite: (number | null)[];
 };
 
 type BackupCompression = "fastest" | "default" | "better" | "best";

@@ -118,6 +118,19 @@ func (f *fakeMetrics) Query(_ context.Context, _ string, r metrics.Range) (metri
 	}, nil
 }
 
+func (f *fakeMetrics) QueryHost(_ context.Context, r metrics.Range) (metrics.HostSeries, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, r)
+	one := 1.5
+	series := []*float64{nil, &one}
+	return metrics.HostSeries{
+		Range: r, Start: time.Date(2026, 5, 1, 11, 0, 20, 0, time.UTC), Step: 20 * time.Second,
+		CPUs: 2, MemoryTotal: 1024, DiskTotal: 4096,
+		CPU: series, Memory: series, DiskUsed: series, NetRx: series, NetTx: series, DiskRead: series, DiskWrite: series,
+	}, nil
+}
+
 type fixture struct {
 	t        *testing.T
 	st       *store.Store
@@ -355,6 +368,20 @@ func TestServiceMetrics(t *testing.T) {
 	}
 	f.decode(f.do("GET", base+"?range=2h", ""), http.StatusBadRequest)
 	f.decode(f.do("GET", "/api/services/nope/metrics", ""), http.StatusNotFound)
+}
+
+func TestHostMetrics(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do("GET", "/api/host/metrics?range=6h", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body)
+	}
+	want := `{"range":"6h","start":"2026-05-01T11:00:20Z","step":20,"cpus":2,"memoryTotal":1024,"diskTotal":4096,` +
+		`"cpu":[null,1.5],"memory":[null,1.5],"diskUsed":[null,1.5],"netRx":[null,1.5],"netTx":[null,1.5],"diskRead":[null,1.5],"diskWrite":[null,1.5]}` + "\n"
+	if rec.Body.String() != want {
+		t.Errorf("body = %s, want %s", rec.Body, want)
+	}
+	f.decode(f.do("GET", "/api/host/metrics?range=2h", ""), http.StatusBadRequest)
 }
 
 func TestServiceControls(t *testing.T) {

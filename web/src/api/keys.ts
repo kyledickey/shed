@@ -7,6 +7,7 @@ export const keys = {
   variables: (serviceId: string) => ["services", serviceId, "variables"] as const,
   deployments: (serviceId: string) => ["services", serviceId, "deployments"] as const,
   metrics: (serviceId: string, range: string) => ["services", serviceId, "metrics", range] as const,
+  hostMetrics: (range: string) => ["host", "metrics", range] as const,
   serviceBackups: (serviceId: string) => ["services", serviceId, "backups"] as const,
   systemBackups: ["backups", "system"] as const,
   backupSettings: ["backups", "settings"] as const,

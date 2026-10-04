@@ -458,6 +458,47 @@ func TestMetrics(t *testing.T) {
 	}
 }
 
+func TestHostMetrics(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	from := time.Unix(1_000_000, 0)
+	at := func(sec int64) time.Time { return from.Add(time.Duration(sec) * time.Second) }
+	for _, m := range []HostSample{
+		{Time: at(-1), CPU: 99},
+		{Time: at(0), CPU: 10, Memory: 100, DiskUsed: 1000, NetRx: 1},
+		{Time: at(9), CPU: 30, Memory: 300, DiskUsed: 3000, NetRx: 3},
+		{Time: at(9), CPU: 30, Memory: 300, DiskUsed: 3000, NetRx: 3}, // replaces
+		{Time: at(25), CPU: 50, Memory: 500, DiskUsed: 5000, DiskWrite: 6},
+		{Time: at(30), CPU: 99},
+	} {
+		if err := s.InsertHostSample(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.HostBuckets(ctx, from, 10*time.Second, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []HostBucket{
+		{Index: 0, CPU: 20, Memory: 200, DiskUsed: 2000, NetRx: 2},
+		{Index: 2, CPU: 50, Memory: 500, DiskUsed: 5000, DiskWrite: 6},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("HostBuckets() = %+v, want %+v", got, want)
+	}
+	if _, err := s.HostBuckets(ctx, from, time.Millisecond, 3); err == nil {
+		t.Error("HostBuckets(sub-second step) succeeded")
+	}
+
+	if err := s.DeleteMetricSamplesBefore(ctx, at(25)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.HostBuckets(ctx, from.Add(-time.Hour), time.Hour, 3)
+	if want := []HostBucket{{Index: 1, CPU: 74.5, Memory: 250, DiskUsed: 2500, DiskWrite: 3}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("after delete: HostBuckets() = %+v, want %+v", got, want)
+	}
+}
+
 func TestDeleteDisallowedSessions(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

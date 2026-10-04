@@ -55,10 +55,47 @@ func (s *Store) MetricBuckets(ctx context.Context, serviceID string, from time.T
 	return bs, nil
 }
 
-// DeleteMetricSamplesBefore deletes every metric sample older than t.
+// InsertHostSample stores a host sample, replacing any at the same second.
+func (s *Store) InsertHostSample(ctx context.Context, m HostSample) error {
+	err := s.exec(ctx, `INSERT OR REPLACE INTO host_samples
+		(ts, cpu, memory, disk_used, net_rx, net_tx, disk_read, disk_write)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.Time.Unix(), m.CPU, m.Memory, m.DiskUsed, m.NetRx, m.NetTx, m.DiskRead, m.DiskWrite)
+	if err != nil {
+		return fmt.Errorf("store: insert host sample: %w", err)
+	}
+	return nil
+}
+
+// HostBuckets is like [Store.MetricBuckets] for host samples.
+func (s *Store) HostBuckets(ctx context.Context, from time.Time, step time.Duration, n int) ([]HostBucket, error) {
+	start, width := from.Unix(), int64(step/time.Second)
+	if width <= 0 {
+		return nil, fmt.Errorf("store: host buckets: step %v is under a second", step)
+	}
+	bs, err := queryAll(ctx, s, func(r scanner) (HostBucket, error) {
+		var b HostBucket
+		err := r.Scan(&b.Index, &b.CPU, &b.Memory, &b.DiskUsed, &b.NetRx, &b.NetTx, &b.DiskRead, &b.DiskWrite)
+		return b, err
+	}, `SELECT (ts - ?1) / ?2 AS bucket,
+			AVG(cpu), AVG(memory), AVG(disk_used), AVG(net_rx), AVG(net_tx), AVG(disk_read), AVG(disk_write)
+		FROM host_samples
+		WHERE ts >= ?1 AND ts < ?1 + ?2 * ?3
+		GROUP BY bucket ORDER BY bucket`, start, width, n)
+	if err != nil {
+		return nil, fmt.Errorf("store: host buckets: %w", err)
+	}
+	return bs, nil
+}
+
+// DeleteMetricSamplesBefore deletes every service and host metric sample
+// older than t.
 func (s *Store) DeleteMetricSamplesBefore(ctx context.Context, t time.Time) error {
 	if err := s.exec(ctx, `DELETE FROM metric_samples WHERE ts < ?`, t.Unix()); err != nil {
 		return fmt.Errorf("store: delete metric samples: %w", err)
+	}
+	if err := s.exec(ctx, `DELETE FROM host_samples WHERE ts < ?`, t.Unix()); err != nil {
+		return fmt.Errorf("store: delete host samples: %w", err)
 	}
 	return nil
 }

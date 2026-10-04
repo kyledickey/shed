@@ -13,6 +13,7 @@ import {
   Plus,
   Rocket,
   ScrollText,
+  Server,
   Settings,
   SlidersHorizontal,
   Sun,
@@ -42,7 +43,7 @@ import styles from "./AppShell.module.css";
 
 export type ServiceTab = "deployments" | "logs" | "metrics" | "variables" | "backups" | "settings";
 type ProjectTab = "services" | "settings";
-type RootTab = "projects" | "settings";
+type RootTab = "projects" | "server" | "settings";
 
 const serviceTabs: { value: ServiceTab; label: string; icon: ReactNode }[] = [
   { value: "deployments", label: "Deployments", icon: <Rocket size={15} /> },
@@ -60,6 +61,7 @@ const projectTabs: { value: ProjectTab; label: string; icon: ReactNode }[] = [
 
 const rootTabs: { value: RootTab; label: string; icon: ReactNode }[] = [
   { value: "projects", label: "Projects", icon: <Layers size={15} /> },
+  { value: "server", label: "Server", icon: <Server size={15} /> },
   { value: "settings", label: "Settings", icon: <Settings size={15} /> },
 ];
 
@@ -228,9 +230,9 @@ function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string 
   return (
     <Tabs
       label="Sections"
-      value={activeTab(pathname, "", ["settings"] as RootTab[], "projects")}
+      value={activeTab(pathname, "", ["server", "settings"] as RootTab[], "projects")}
       items={rootTabs}
-      onChange={(next) => void navigate({ to: next === "projects" ? "/" : "/settings" })}
+      onChange={(next) => void navigate({ to: next === "projects" ? "/" : `/${next}` })}
     />
   );
 }
@@ -340,6 +342,13 @@ function Palette({
     });
   }
   commands.push(
+    {
+      id: "server",
+      group: "Actions",
+      label: "Server metrics",
+      icon: <Server size={15} />,
+      run: () => void navigate({ to: "/server" }),
+    },
     {
       id: "settings",
       group: "Actions",

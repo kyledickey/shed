@@ -158,6 +158,30 @@ type MetricBucket struct {
 	DiskRead, DiskWrite float64
 }
 
+// HostSample is the resource usage of the whole host at one instant.
+type HostSample struct {
+	// Time is stored at second precision.
+	Time time.Time
+	// CPU is the percentage of one core in use.
+	CPU float64
+	// Memory and DiskUsed are the memory and filesystem space in use in
+	// bytes.
+	Memory, DiskUsed int64
+	// NetRx, NetTx, DiskRead, and DiskWrite are rates in bytes per second.
+	NetRx, NetTx        float64
+	DiskRead, DiskWrite float64
+}
+
+// HostBucket holds the averages of the host samples that fall into one
+// bucket of a time window.
+type HostBucket struct {
+	// Index is the bucket's position in the window, from zero.
+	Index                 int
+	CPU, Memory, DiskUsed float64
+	NetRx, NetTx          float64
+	DiskRead, DiskWrite   float64
+}
+
 // BackupPolicy configures a service's scheduled backups.
 type BackupPolicy struct {
 	ServiceID string
