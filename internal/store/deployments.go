@@ -72,8 +72,45 @@ func (s *Store) UpdateDeployment(ctx context.Context, d Deployment) error {
 	return nil
 }
 
-// ActiveDeployment returns the most recent active deployment of a service, or
-// ErrNotFound if there is none.
+// ActivateDeployment records d, with its status set to active, as the active
+// deployment of its service. In the same transaction it marks the service's
+// previous active deployment, if any, removed, so a service never has two
+// active deployments. It returns ErrNotFound for an unknown deployment.
+func (s *Store) ActivateDeployment(ctx context.Context, d Deployment) error {
+	if err := s.activateDeployment(ctx, d); err != nil {
+		return fmt.Errorf("store: activate deployment %s: %w", d.ID, err)
+	}
+	return nil
+}
+
+func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET status = ?
+		WHERE service_id = ? AND status = ? AND id <> ?`,
+		StatusRemoved, d.ServiceID, StatusActive, d.ID); err != nil {
+		return mapError(err)
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE deployments SET status = ?, commit_sha = ?,
+		commit_message = ?, commit_author = ?, image = ?, container_id = ?, error = ?,
+		started_at = ?, finished_at = ?
+		WHERE id = ? AND service_id = ?`,
+		StatusActive, d.CommitSHA, d.CommitMessage, d.CommitAuthor, d.Image, d.ContainerID, d.Error,
+		optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.ID, d.ServiceID)
+	if err != nil {
+		return mapError(err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+// ActiveDeployment returns the active deployment of a service, or ErrNotFound
+// if there is none.
 func (s *Store) ActiveDeployment(ctx context.Context, serviceID string) (Deployment, error) {
 	d, err := queryOne(ctx, s, scanDeployment, `SELECT `+deploymentCols+`
 		FROM deployments WHERE service_id = ? AND status = ?

@@ -437,7 +437,9 @@ func (j *job) switchOver(ctx context.Context) error {
 	ctx = context.WithoutCancel(ctx)
 	now := time.Now()
 	j.dep.Status, j.dep.FinishedAt = store.StatusActive, &now
-	if err := j.store.UpdateDeployment(ctx, j.dep); err != nil {
+	// One transaction retires the predecessor, so a crash cannot leave two
+	// active deployments.
+	if err := j.store.ActivateDeployment(ctx, j.dep); err != nil {
 		if j.proxy != nil {
 			if routes, routeErr := j.routes(ctx); routeErr == nil {
 				_ = j.proxy.Apply(routes)
@@ -450,12 +452,6 @@ func (j *job) switchOver(ctx context.Context) error {
 	if svc.Stopped {
 		if err := j.store.SetServiceStopped(ctx, j.svc.ID, false); err != nil {
 			j.log.Error("clear stopped flag", "service", j.svc.Name, "err", err)
-		}
-	}
-	if hasPrev {
-		prev.Status = store.StatusRemoved
-		if err := j.store.UpdateDeployment(ctx, prev); err != nil {
-			j.log.Error("mark deployment removed", "deployment", prev.ID, "err", err)
 		}
 	}
 	j.removeOthers(ctx, j.svc.ID, j.container)

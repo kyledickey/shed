@@ -336,7 +336,17 @@ func (d *Deployer) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("deploy: reconcile: %w", err)
 	}
+	// Only one deployment per service is restored: the newest, as
+	// ActiveDeployment picks it. Containers of any other deployment are
+	// removed, such as a predecessor left running by a crash mid-switchover.
+	winners := make(map[string]string) // deployment ID by service ID
+	for _, dep := range active {       // oldest first
+		winners[dep.ServiceID] = dep.ID
+	}
 	for _, dep := range active {
+		if winners[dep.ServiceID] != dep.ID {
+			continue
+		}
 		svc, err := d.store.Service(ctx, dep.ServiceID)
 		if err != nil {
 			d.log.Error("restore active deployment", "deployment", dep.ID, "err", err)
@@ -345,9 +355,12 @@ func (d *Deployer) Reconcile(ctx context.Context) error {
 		if svc.Stopped {
 			continue
 		}
-		if err := d.ensureRunning(ctx, dep); err != nil {
+		id, err := d.ensureRunning(ctx, dep)
+		if err != nil {
 			d.log.Error("restore active deployment", "deployment", dep.ID, "err", err)
+			continue
 		}
+		d.removeOthers(ctx, svc.ID, id)
 	}
 	if err := d.ApplyRoutes(ctx); err != nil {
 		return fmt.Errorf("deploy: reconcile: %w", err)
@@ -370,50 +383,50 @@ func (d *Deployer) removeDeploymentContainers(ctx context.Context, deploymentID 
 }
 
 // ensureRunning starts the container of an active deployment, recreating it
-// from the deployment's image if it no longer exists.
-func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) error {
+// from the deployment's image if it no longer exists, and returns its ID.
+func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (string, error) {
 	containers, err := d.docker.List(ctx, map[string]string{labelDeployment: dep.ID})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(containers) > 0 {
 		c := containers[0]
 		if !c.Running && c.State != "restarting" {
 			d.log.Info("starting stopped container", "container", c.Name)
 			if err := d.docker.Start(ctx, c.ID); err != nil {
-				return err
+				return "", err
 			}
 		}
 		if dep.ContainerID != c.ID {
 			dep.ContainerID = c.ID
-			return d.store.UpdateDeployment(ctx, dep)
+			return c.ID, d.store.UpdateDeployment(ctx, dep)
 		}
-		return nil
+		return c.ID, nil
 	}
 
 	svc, err := d.store.Service(ctx, dep.ServiceID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	project, err := d.store.Project(ctx, svc.ProjectID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
 	if err != nil {
-		return err
+		return "", err
 	}
 	vols, err := d.store.Volumes(ctx, svc.ID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
 	id, err := d.runContainer(ctx, containerSpec(svc, dep, env, vols))
 	if err != nil {
-		return err
+		return "", err
 	}
 	dep.ContainerID = id
-	return d.store.UpdateDeployment(ctx, dep)
+	return id, d.store.UpdateDeployment(ctx, dep)
 }
 
 // DeleteService stops a service's deployments, removes its containers,

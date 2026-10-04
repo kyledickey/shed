@@ -188,6 +188,8 @@ CREATE TABLE deployments (
   finished_at TEXT
 );
 CREATE INDEX deployments_service ON deployments(service_id, created_at DESC);
+-- At most one active deployment per service.
+CREATE UNIQUE INDEX deployments_one_active ON deployments(service_id) WHERE status = 'active';
 
 CREATE TABLE metric_samples (            -- one row per service per sampling tick
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -329,9 +331,10 @@ the same service.
    on `healthcheck_path` if set, at the container's IP on the project network.
    A service without a port is watched for 3s instead. Either way the
    deployment fails if the container exits meanwhile.
-5. **Switch**: apply proxy routes to the healthy candidate, then mark the new
-   deployment `active` and clear the service's `stopped` flag. Only after routing
-   succeeds, stop/remove the previous container and mark its deployment `removed`.
+5. **Switch**: apply proxy routes to the healthy candidate, then, in one
+   transaction, mark the new deployment `active` and the previous one
+   `removed`; then clear the service's `stopped` flag. Only after routing
+   succeeds, stop/remove the previous container.
 6. On failure at any step: mark `failed`, record `error`, remove the new
    container, and restart the previous container if step 3 stopped it and
    removal of the replacement is confirmed.
@@ -346,9 +349,11 @@ a port), the new container's own stdout/stderr is copied into the build log
 without Docker's timestamps, so its boot output and last words before an exit
 are visible.
 
-On boot, `deploy.Reconcile` ensures the active deployment's container of every
-service that is not stopped is running, marks orphaned in-progress deployments
-`failed`, and applies routes.
+On boot, `deploy.Reconcile` marks orphaned in-progress deployments `failed`,
+ensures the active deployment's container of every service that is not
+stopped is running, and applies routes. It restores one deployment per
+service, the newest active one, and removes the service's other containers,
+such as a predecessor left behind by a crash during a switchover.
 
 ### Stopping a service
 

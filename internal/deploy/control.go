@@ -70,7 +70,7 @@ func (d *Deployer) StartService(ctx context.Context, serviceID string) error {
 	if err := d.store.SetServiceStopped(ctx, serviceID, false); err != nil {
 		return err
 	}
-	if err := d.ensureRunning(ctx, dep); err != nil {
+	if _, err := d.ensureRunning(ctx, dep); err != nil {
 		if svc.Stopped {
 			if err := d.store.SetServiceStopped(context.WithoutCancel(ctx), serviceID, true); err != nil {
 				d.log.Error("restore stopped flag", "service", serviceID, "err", err)
@@ -311,5 +311,6 @@ func (h *Held) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return h.d.ensureRunning(ctx, dep)
+	_, err = h.d.ensureRunning(ctx, dep)
+	return err
 }
