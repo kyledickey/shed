@@ -538,6 +538,30 @@ func TestSPA(t *testing.T) {
 	}
 }
 
+func TestSecurityHeaders(t *testing.T) {
+	f := newFixture(t)
+	want := map[string]string{
+		"Content-Security-Policy": "frame-ancestors 'none'",
+		"X-Frame-Options":         "DENY",
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "same-origin",
+	}
+	for _, target := range []string{"/", "/projects/abc", "/assets/app-1.js", "/api/me", "/api/nope", "/api/auth/login"} {
+		rec := f.do("GET", target, "")
+		for k, v := range want {
+			if got := rec.Header().Get(k); got != v {
+				t.Errorf("GET %s: %s = %q, want %q", target, k, got, v)
+			}
+		}
+	}
+	req := httptest.NewRequest("GET", "/api/me", nil) // unauthenticated
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("X-Frame-Options") != "DENY" {
+		t.Errorf("unauthenticated: %d, X-Frame-Options %q", rec.Code, rec.Header().Get("X-Frame-Options"))
+	}
+}
+
 func TestSetupRequiresToken(t *testing.T) {
 	f := newFixture(t)
 	rec := f.do("GET", "/api/setup/github?token=wrong", "")

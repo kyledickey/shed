@@ -749,6 +749,10 @@ application origins are rejected. POST, PUT, and PATCH require
 `Content-Type: application/json`, even with an empty body. Logout and the
 setup import have the same protections. For Vite development, set `server.url`
 to the dashboard dev origin.
+Every response from shed's handler (API and dashboard) carries
+`Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, and `Referrer-Policy: same-origin`, so the
+dashboard cannot be framed by another site.
 SSE endpoints emit `event: log` (one line per event), `event: status`
 (deployment status changes, data `{"status":"…"}`), and `event: end`.
 Reconnecting clients get history replayed. Runtime log lines start with the

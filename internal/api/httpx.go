@@ -14,6 +14,20 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
+// securityHeaders sets headers that forbid framing the dashboard
+// (clickjacking), MIME sniffing, and cross-origin referrers on every
+// response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
 // handlerFunc is an HTTP handler that reports failure by returning an error.
 type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 

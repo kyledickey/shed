@@ -205,7 +205,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.Handle("/", spa(s.web))
 
-	return s.logRequests(mux)
+	return s.logRequests(securityHeaders(mux))
 }
 
 // logRequests logs every request at debug level.
