@@ -1,0 +1,370 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+func newStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "shed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func mustProject(t *testing.T, s *Store, name string) Project {
+	t.Helper()
+	p, err := s.CreateProject(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func mustService(t *testing.T, s *Store, sv Service) Service {
+	t.Helper()
+	sv, err := s.CreateService(context.Background(), sv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sv
+}
+
+func TestOpenReopenKeepsData(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "shed.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSetting(ctx, "k", "v"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = Open(path) // Migrations must be idempotent.
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got, err := s.Setting(ctx, "k"); err != nil || got != "v" {
+		t.Errorf("Setting() = %q, %v", got, err)
+	}
+}
+
+func TestNewID(t *testing.T) {
+	id := NewID()
+	if len(id) != 12 || id != strings.ToLower(id) {
+		t.Errorf("NewID() = %q", id)
+	}
+	if id == NewID() {
+		t.Error("NewID() repeated")
+	}
+}
+
+func TestSettings(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	if _, err := s.Setting(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Setting(missing) error = %v, want ErrNotFound", err)
+	}
+	for _, v := range []string{"one", "two"} {
+		if err := s.SetSetting(ctx, "k", v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := s.Setting(ctx, "k"); got != "two" {
+		t.Errorf("Setting() = %q, want two", got)
+	}
+}
+
+func TestUsersAndSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	if n, err := s.CountUsers(ctx); err != nil || n != 0 {
+		t.Fatalf("CountUsers() = %d, %v", n, err)
+	}
+	if err := s.UpsertUser(ctx, User{GitHubID: 7, Login: "alice", Name: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertUser(ctx, User{GitHubID: 7, Login: "alice2", Name: "Alice B", AvatarURL: "http://a"}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.User(ctx, 7)
+	if err != nil || u.Login != "alice2" || u.Name != "Alice B" || u.AvatarURL != "http://a" || u.CreatedAt.IsZero() {
+		t.Fatalf("User() = %+v, %v", u, err)
+	}
+	if n, _ := s.CountUsers(ctx); n != 1 {
+		t.Errorf("CountUsers() = %d, want 1", n)
+	}
+	if _, err := s.User(ctx, 8); !errors.Is(err, ErrNotFound) {
+		t.Errorf("User(8) error = %v", err)
+	}
+
+	if err := s.CreateSession(ctx, "live", 7, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateSession(ctx, "dead", 7, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SessionUser(ctx, "live"); err != nil || got.GitHubID != 7 {
+		t.Errorf("SessionUser(live) = %+v, %v", got, err)
+	}
+	if _, err := s.SessionUser(ctx, "dead"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SessionUser(dead) error = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteExpiredSessions(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM sessions`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("sessions after cleanup = %d, %v; want 1", n, err)
+	}
+	if err := s.DeleteSession(ctx, "live"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionUser(ctx, "live"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SessionUser after delete error = %v", err)
+	}
+}
+
+func TestProjects(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "web")
+	if _, err := s.CreateProject(ctx, "web"); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate CreateProject error = %v, want ErrConflict", err)
+	}
+	got, err := s.Project(ctx, p.ID)
+	if err != nil || got.Name != "web" || got.CreatedAt.IsZero() {
+		t.Fatalf("Project() = %+v, %v", got, err)
+	}
+	if err := s.RenameProject(ctx, p.ID, "site"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameProject(ctx, "nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("RenameProject(nope) error = %v", err)
+	}
+	if ps, err := s.Projects(ctx); err != nil || len(ps) != 1 || ps[0].Name != "site" {
+		t.Errorf("Projects() = %+v, %v", ps, err)
+	}
+	if err := s.DeleteProject(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Project(ctx, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Project after delete error = %v", err)
+	}
+}
+
+func TestServices(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	app := mustService(t, s, Service{
+		ProjectID: p.ID, Name: "api", Kind: "app", Repo: "Owner/Repo", Branch: "main",
+		Port: 8080, AutoDeploy: true,
+	})
+	mustService(t, s, Service{ProjectID: p.ID, Name: "manual", Kind: "app", Repo: "owner/repo", Branch: "main"})
+	mustService(t, s, Service{ProjectID: p.ID, Name: "other", Kind: "app", Repo: "owner/repo", Branch: "dev", AutoDeploy: true})
+	mustService(t, s, Service{ProjectID: p.ID, Name: "db", Kind: "postgres", Repo: "owner/repo", Branch: "main", AutoDeploy: true})
+
+	if _, err := s.CreateService(ctx, Service{ProjectID: p.ID, Name: "api", Kind: "app"}); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate CreateService error = %v, want ErrConflict", err)
+	}
+	got, err := s.Service(ctx, app.ID)
+	if err != nil || !reflect.DeepEqual(got, app) {
+		t.Fatalf("Service() = %+v, %v; want %+v", got, err, app)
+	}
+
+	push, err := s.ServicesForPush(ctx, "owner/repo", "main")
+	if err != nil || len(push) != 1 || push[0].ID != app.ID {
+		t.Errorf("ServicesForPush() = %+v, %v; want only api", push, err)
+	}
+
+	app.Port, app.WaitForCI, app.Name = 9090, true, "api2"
+	if err := s.UpdateService(ctx, app); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Service(ctx, app.ID); got.Port != 9090 || !got.WaitForCI || got.Name != "api2" {
+		t.Errorf("after update: %+v", got)
+	}
+	if err := s.UpdateService(ctx, Service{ID: "nope"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateService(nope) error = %v", err)
+	}
+	if svs, _ := s.Services(ctx, p.ID); len(svs) != 4 {
+		t.Errorf("Services() len = %d, want 4", len(svs))
+	}
+	if svs, _ := s.AllServices(ctx); len(svs) != 4 {
+		t.Errorf("AllServices() len = %d, want 4", len(svs))
+	}
+}
+
+func TestVariables(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	sv := mustService(t, s, Service{ProjectID: mustProject(t, s, "p").ID, Name: "a", Kind: "app"})
+
+	if vars, err := s.Variables(ctx, sv.ID); err != nil || len(vars) != 0 {
+		t.Fatalf("Variables() = %v, %v", vars, err)
+	}
+	if err := s.SetVariables(ctx, sv.ID, map[string]string{"A": "1", "B": "2"}); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"B": "3", "C": "4"}
+	if err := s.SetVariables(ctx, sv.ID, want); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Variables(ctx, sv.ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("Variables() = %v, want %v", got, want)
+	}
+	// A failed replace must leave the previous variables intact.
+	if err := s.SetVariables(ctx, "missing-service", map[string]string{"X": "1"}); err == nil {
+		t.Error("SetVariables on unknown service succeeded")
+	}
+	if got, _ := s.Variables(ctx, sv.ID); !reflect.DeepEqual(got, want) {
+		t.Errorf("Variables() after failure = %v, want %v", got, want)
+	}
+}
+
+func TestVolumesAndDomains(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	a := mustService(t, s, Service{ProjectID: p.ID, Name: "a", Kind: "app"})
+	b := mustService(t, s, Service{ProjectID: p.ID, Name: "b", Kind: "app"})
+
+	v, err := s.CreateVolume(ctx, a.ID, "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateVolume(ctx, a.ID, "/data"); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate CreateVolume error = %v", err)
+	}
+	if _, err := s.CreateVolume(ctx, b.ID, "/data"); err != nil {
+		t.Errorf("same path on another service: %v", err)
+	}
+	if got, err := s.Volume(ctx, v.ID); err != nil || got.MountPath != "/data" {
+		t.Errorf("Volume() = %+v, %v", got, err)
+	}
+	if vs, _ := s.Volumes(ctx, a.ID); len(vs) != 1 {
+		t.Errorf("Volumes() len = %d", len(vs))
+	}
+	if err := s.DeleteVolume(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteVolume(ctx, v.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second DeleteVolume error = %v", err)
+	}
+
+	d, err := s.CreateDomain(ctx, a.ID, "App.Example.COM", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Host != "app.example.com" || !d.Generated {
+		t.Errorf("CreateDomain() = %+v", d)
+	}
+	if _, err := s.CreateDomain(ctx, b.ID, "APP.example.com", false); !errors.Is(err, ErrConflict) {
+		t.Errorf("duplicate host error = %v, want ErrConflict", err)
+	}
+	if got, err := s.Domain(ctx, d.ID); err != nil || !got.Generated {
+		t.Errorf("Domain() = %+v, %v", got, err)
+	}
+	if ds, _ := s.AllDomains(ctx); len(ds) != 1 {
+		t.Errorf("AllDomains() len = %d", len(ds))
+	}
+	if ds, _ := s.Domains(ctx, b.ID); len(ds) != 0 {
+		t.Errorf("Domains(b) len = %d", len(ds))
+	}
+	if err := s.DeleteDomain(ctx, d.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleting the service cascades to its remaining resources.
+	if _, err := s.CreateDomain(ctx, a.ID, "x.example.com", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteService(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := s.AllDomains(ctx); len(ds) != 0 {
+		t.Errorf("domains survived service delete: %+v", ds)
+	}
+}
+
+func TestDeployments(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	sv := mustService(t, s, Service{ProjectID: mustProject(t, s, "p").ID, Name: "a", Kind: "app"})
+
+	if _, err := s.LatestDeployment(ctx, sv.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("LatestDeployment on empty error = %v", err)
+	}
+	first, err := s.CreateDeployment(ctx, Deployment{ServiceID: sv.ID, Status: StatusQueued, Trigger: TriggerCreate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateDeployment(ctx, Deployment{
+		ServiceID: sv.ID, Status: StatusQueued, Trigger: TriggerPush,
+		CommitSHA: "abc", CommitMessage: "msg", CommitAuthor: "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	first.Status, first.Image, first.StartedAt, first.FinishedAt = StatusActive, "shed/x:1", &now, &now
+	if err := s.UpdateDeployment(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Deployment(ctx, first.ID)
+	if err != nil || got.Status != StatusActive || got.Image != "shed/x:1" ||
+		got.StartedAt == nil || !got.StartedAt.Equal(now) || got.FinishedAt == nil {
+		t.Fatalf("Deployment() = %+v, %v", got, err)
+	}
+	if got, _ := s.Deployment(ctx, second.ID); got.StartedAt != nil || got.CommitSHA != "abc" {
+		t.Errorf("second = %+v", got)
+	}
+
+	if d, err := s.ActiveDeployment(ctx, sv.ID); err != nil || d.ID != first.ID {
+		t.Errorf("ActiveDeployment() = %+v, %v", d, err)
+	}
+	if d, err := s.LatestDeployment(ctx, sv.ID); err != nil || d.ID != second.ID {
+		t.Errorf("LatestDeployment() = %+v, %v", d, err)
+	}
+	ds, err := s.Deployments(ctx, sv.ID, 0)
+	if err != nil || len(ds) != 2 || ds[0].ID != second.ID {
+		t.Errorf("Deployments() = %+v, %v; want newest first", ds, err)
+	}
+	if ds, _ := s.Deployments(ctx, sv.ID, 1); len(ds) != 1 {
+		t.Errorf("Deployments(limit 1) len = %d", len(ds))
+	}
+	if ds, _ := s.DeploymentsByStatus(ctx, StatusQueued, StatusBuilding); len(ds) != 1 || ds[0].ID != second.ID {
+		t.Errorf("DeploymentsByStatus() = %+v", ds)
+	}
+	if ds, err := s.DeploymentsByStatus(ctx); err != nil || ds != nil {
+		t.Errorf("DeploymentsByStatus() with no statuses = %v, %v", ds, err)
+	}
+	if err := s.UpdateDeployment(ctx, Deployment{ID: "nope"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateDeployment(nope) error = %v", err)
+	}
+}
+
+func TestStatusTerminal(t *testing.T) {
+	for st, want := range map[DeploymentStatus]bool{
+		StatusQueued: false, StatusWaiting: false, StatusBuilding: false, StatusDeploying: false,
+		StatusActive: true, StatusFailed: true, StatusCrashed: true,
+		StatusRemoved: true, StatusCanceled: true, StatusSkipped: true,
+	} {
+		if got := st.Terminal(); got != want {
+			t.Errorf("%s.Terminal() = %v, want %v", st, got, want)
+		}
+	}
+}
