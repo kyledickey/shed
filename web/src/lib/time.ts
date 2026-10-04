@@ -34,9 +34,13 @@ export function formatDuration(from: string, to: string | null): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+// dateStyle/timeStyle cannot be combined with timeZoneName, so spell out the fields.
 const utcFormat = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
   timeZone: "UTC",
   timeZoneName: "short",
 });
