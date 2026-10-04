@@ -15,6 +15,9 @@ embedded Caddy reverse proxy. Docker runs all workloads.
 - Per-service variables, domains, volumes, deployment history, build logs,
   runtime logs.
 - Persistent Docker volumes survive deploys.
+- Scheduled, compressed, optionally encrypted backups of every service with a
+  volume and of shed's own database, kept locally and in S3-compatible storage,
+  with restore, download, and run-now from the dashboard.
 - Sign in with GitHub through a single GitHub App, which is also used for repo
   access, push webhooks, and CI status.
 
@@ -39,7 +42,7 @@ listen = "127.0.0.1:3000"          # dashboard + API listener (Caddy fronts it)
 url    = "https://shed.example.com" # public dashboard URL; used for GitHub callbacks
 
 [data]
-dir = "/var/lib/shed"              # shed.db, builds/, logs/
+dir = "/var/lib/shed"              # shed.db, builds/, logs/, backups/
 
 [proxy]
 enabled     = true
@@ -78,10 +81,12 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
+| `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
+| `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container resource sampling, per-service time series | interfaces only + docker/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, store |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -189,6 +194,46 @@ CREATE TABLE metric_samples (            -- one row per service per sampling tic
   disk_write REAL NOT NULL,
   PRIMARY KEY (service_id, ts)
 ) WITHOUT ROWID;
+
+CREATE TABLE backup_policies (           -- absent row = default policy
+  service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL,
+  schedule TEXT NOT NULL,                -- cron expression, UTC unless CRON_TZ=
+  compression TEXT NOT NULL,             -- fastest | default | better | best
+  keep_local INTEGER NOT NULL,           -- scheduled backups kept on disk
+  upload INTEGER NOT NULL,               -- also store in S3 (when configured)
+  keep_remote INTEGER NOT NULL           -- scheduled backups kept in S3
+);
+
+CREATE TABLE backups (
+  id TEXT PRIMARY KEY,
+  service_id TEXT REFERENCES services(id) ON DELETE CASCADE, -- NULL = shed.db
+  trigger TEXT NOT NULL,                 -- schedule | manual | pre-restore
+  method TEXT NOT NULL,                  -- dump | volume | sqlite
+  status TEXT NOT NULL,                  -- queued | running | succeeded | failed
+  file TEXT NOT NULL DEFAULT '',         -- archive file name, e.g. <id>.sql.zst.age
+  size INTEGER NOT NULL DEFAULT 0,       -- archive bytes
+  encrypted INTEGER NOT NULL DEFAULT 0,
+  local INTEGER NOT NULL DEFAULT 0,      -- archive present under <data>/backups
+  remote_key TEXT NOT NULL DEFAULT '',   -- S3 object key; '' = not uploaded
+  remote_error TEXT NOT NULL DEFAULT '', -- last upload failure
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT
+);
+CREATE INDEX backups_service ON backups(service_id, created_at DESC);
+
+CREATE TABLE restores (
+  id TEXT PRIMARY KEY,
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  backup_id TEXT NOT NULL,               -- not a foreign key: the backup may be pruned later
+  status TEXT NOT NULL,                  -- running | succeeded | failed
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX restores_service ON restores(service_id, created_at DESC);
 ```
 
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
@@ -307,6 +352,119 @@ young. Each bucket is the average of its samples, or null if it has none. `cpuLi
 are the running container's configured limits (0 = unlimited, which is
 always the case today since shed sets none).
 
+### Backups
+
+`internal/backup` backs up every service that has at least one volume, and
+shed's own database. A backup is one archive file: data → zstd → optionally
+age. Archives are standard formats, so they can be recovered by hand with
+`age -d -i key.txt | zstd -d`, `tar`, `psql`, etc.
+
+**Methods.** What gets archived depends on the service and its state:
+
+| Service | Container running | Method | Archive | File |
+|---|---|---|---|---|
+| postgres | yes | `dump` | `pg_dumpall --clean --if-exists` (plain SQL) | `<id>.sql.zst` |
+| mysql | yes | `dump` | `mysqldump --all-databases --single-transaction --routines --events --triggers` | `<id>.sql.zst` |
+| mongo | yes | `dump` | `mongodump --archive` (uncompressed; zstd compresses better) | `<id>.archive.zst` |
+| redis | yes | `dump` | `BGSAVE`, wait for it to finish, then the RDB file | `<id>.rdb.zst` |
+| database | no | `volume` | tar of its volumes (consistent because the server is stopped) | `<id>.tar.zst` |
+| app | either | `volume` | tar of its volumes, read live | `<id>.tar.zst` |
+| shed.db | — | `sqlite` | `VACUUM INTO` snapshot | `<id>.db.zst` |
+
+Encrypted archives get a `.age` suffix. Dumps run with `docker exec` in the
+active container, through `sh -c`, so credentials come from the container's
+own environment (`POSTGRES_USER`, `MYSQL_ROOT_PASSWORD`,
+`MONGO_INITDB_ROOT_*`, `REDIS_PASSWORD`). Volume archives are read with the
+Docker archive API from a helper container: it is created but never started,
+uses the active deployment's image, mounts the service's volumes, is named
+`shed-backup-<backupID>`, and is labeled `shed.backup=<backupID>`. Tar entries
+are rooted at each volume's mount path relative to `/` (for example
+`var/lib/data/...`), and ownership and modes are kept. A volume backup of a
+stopped database holds the service (see Restore) so that nothing starts it
+mid-archive. App volumes are archived without a hold, while the app runs. A
+service with volumes but no active deployment cannot be backed up yet.
+
+**Compression.** zstd (`klauspost/compress`). The policy's `compression`
+maps to the encoder levels `fastest`, `default`, `better`, and `best`. The
+default is `best`, because backups are written once and kept for a long time.
+
+**Encryption.** Encryption is a global setting. When it is first enabled, shed
+generates an age X25519 identity and stores it in `settings`
+(`backup.age_identity`). While encryption is on, every new archive, local and
+remote, is encrypted to that identity's recipient. Older archives keep their
+own `encrypted` flag, and shed decrypts them with the stored identity. The
+dashboard reveals the identity so the user can store it off the server.
+Without it, encrypted backups, including those of shed.db, cannot be
+recovered after the server is lost.
+
+**S3.** One global destination is stored in `settings` (`backup.s3`, JSON:
+endpoint URL, region, bucket, prefix, access key ID, secret, path-style).
+`internal/s3` wraps minio-go and uses multipart upload for large objects.
+Object keys are `<prefix>/services/<serviceID>/<file>` and
+`<prefix>/system/<file>`. The API never returns the secret.
+
+**Storage and flow.** A backup row starts `queued`. One backup or restore
+runs at a time across shed, and the others wait in order. A service may have
+only one backup queued or running at a time. While running, the archive is
+written to `<data>/backups/<serviceID or "system">/<file>.partial`, synced,
+and then renamed. After that the backup is `succeeded` with `local` set. If
+the policy uploads and S3 is configured, the local file is then uploaded.
+Upload failure keeps the backup `succeeded` but records `remote_error`.
+`keep_local = 0` (allowed only when uploading) deletes the local file after a
+successful upload.
+
+**Schedule.** One loop wakes every minute. It evaluates each service with
+volumes (its stored policy, or the default) and the system policy.
+Schedules are standard 5-field cron, in UTC unless prefixed with
+`CRON_TZ=<zone>`, and they are parsed with robfig/cron. Next-run times are
+kept in memory and computed from boot time, so runs missed while shed was
+down are skipped. The default service policy is enabled, `0 3 * * *`, `best`,
+keep 7 local, upload, keep 30 remote. The system policy lives in `settings`
+(`backup.system`, JSON) with the same fields and defaults.
+
+**Retention.** After each scheduled backup, the newest `keep_local`
+succeeded scheduled backups with a local file keep it, and older ones lose it.
+`keep_remote` works the same way for S3 objects. A backup with neither a local
+file nor a remote object is deleted. Manual and pre-restore backups are never
+pruned automatically. Failed backups older than 30 days are deleted.
+
+**Restore.** `POST /api/backups/{id}/restore` creates a `restores` row and
+runs in the background. Restores apply to service backups only. To restore
+shed.db, follow the manual steps below.
+
+1. Take a `pre-restore` backup of the current state, using the policy's
+   compression and upload settings. If it fails, the restore fails.
+2. Open the archive, local or downloaded from S3 into a temp file, and check
+   that it decrypts.
+3. Hold the service through `deploy` for the rest of the restore. Deployments
+   in progress are canceled. Deploy, redeploy, start, stop, restart, delete,
+   and volume deletion are rejected with `ErrServiceBusy` (409).
+4. `volume`, and redis `dump`: stop and remove the active container (the
+   deployment stays `active`). For each of the service's volumes whose mount
+   path appears in the archive, remove and recreate the Docker volume, then
+   extract into it through a helper container. A redis RDB goes to
+   `/data/dump.rdb` after the volume is emptied, so the server rebuilds its
+   AOF from it on start.
+5. postgres, mysql, and mongo `dump`: the active container must be running.
+   Stream the decoded dump into `psql` / `mysql` / `mongorestore --archive
+   --drop` with `docker exec`. psql runs without `ON_ERROR_STOP`, because
+   `--clean` emits harmless errors for the connected role, and its exit status
+   is checked.
+6. Release the hold. Unless the user had stopped the service, the active
+   deployment's container is started again (recreated if removed) and routes
+   are applied.
+
+**Boot and deletion.** On boot, `queued` and `running` backups and `running`
+restores are marked `failed` ("interrupted by restart"). Leftover `.partial`
+files and `shed.backup` helper containers are removed. Deleting a service
+cancels its backup jobs and removes `<data>/backups/<serviceID>`. Its rows go
+with the service. S3 objects are kept as the off-site copy, and the user can
+remove them by hand.
+
+**Recovering shed.db.** Stop shed, then fetch the newest
+`<prefix>/system/*.db.zst[.age]`. Run `age -d -i key.txt` if it is encrypted,
+then `zstd -d -o /var/lib/shed/shed.db`, and start shed.
+
 ### Proxy
 
 Embedded Caddy (`caddy.Load` with a generated JSON config). Routes:
@@ -410,6 +568,20 @@ GET    /api/deployments/{id}/logs               SSE build log (replays file, fol
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
 GET    /api/services/{id}/metrics?range=        → Metrics  (range: 1h | 6h | 24h | 7d; default 1h)
 
+GET    /api/services/{id}/backups               → ServiceBackups  (newest first, 100)
+PUT    /api/services/{id}/backups/policy  BackupPolicyInput → BackupPolicy
+POST   /api/services/{id}/backups               202 → Backup  (run now; 409 if one is queued/running; 400 if no volumes)
+GET    /api/backups/system                      → SystemBackups
+PUT    /api/backups/system/policy  BackupPolicyInput → BackupPolicy
+POST   /api/backups/system                      202 → Backup
+GET    /api/backups/{id}/download               archive, decrypted, still zstd-compressed (Content-Disposition)
+POST   /api/backups/{id}/restore                202 → Restore  (409 if busy; 400 for shed.db backups)
+DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running)
+GET    /api/backups/settings                    → BackupSettings
+PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
+POST   /api/backups/settings/test  BackupSettingsInput → 204  (400 {error} with the S3 failure)
+GET    /api/backups/settings/key                → { identity: string }  (age secret key; 404 if none)
+
 GET    /api/github/repos                        → Repo[]
 GET    /api/github/repos/{owner}/{repo}/branches → string[]
 POST   /api/github/webhook
@@ -481,6 +653,53 @@ type Metrics = {
   netTx: (number | null)[];            // bytes/s sent
   diskRead: (number | null)[];         // bytes/s
   diskWrite: (number | null)[];        // bytes/s
+};
+
+type BackupCompression = "fastest" | "default" | "better" | "best";
+type BackupPolicy = {
+  enabled: boolean;
+  schedule: string;                    // cron, UTC unless "CRON_TZ=<zone> ..."
+  compression: BackupCompression;
+  keepLocal: number;                   // 0 only with upload
+  upload: boolean;                     // ignored while S3 is not configured
+  keepRemote: number;
+  nextRunAt: string | null;            // null when disabled
+};
+type BackupPolicyInput = Omit<BackupPolicy, "nextRunAt">;
+type BackupStatus = "queued" | "running" | "succeeded" | "failed";
+type Backup = {
+  id: string; serviceId: string | null;  // null = shed.db
+  trigger: "schedule" | "manual" | "pre-restore";
+  method: "dump" | "volume" | "sqlite";
+  status: BackupStatus;
+  fileName: string;                    // download name, e.g. "postgres-20261004-030000.sql.zst"
+  size: number;                        // archive bytes
+  encrypted: boolean;
+  local: boolean; remote: boolean;
+  remoteError: string; error: string;
+  createdAt: string; finishedAt: string | null;
+};
+type Restore = {
+  id: string; serviceId: string; backupId: string;
+  status: "running" | "succeeded" | "failed"; error: string;
+  createdAt: string; finishedAt: string | null;
+};
+type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; restore: Restore | null }; // latest restore
+type SystemBackups = { policy: BackupPolicy; backups: Backup[] };
+type S3Settings = {
+  endpoint: string;                    // URL, e.g. "https://s3.us-east-1.amazonaws.com"
+  region: string; bucket: string; prefix: string;
+  accessKeyId: string; pathStyle: boolean;
+  hasSecret: boolean;
+};
+type BackupSettings = {
+  s3: S3Settings | null;
+  encryption: { enabled: boolean; recipient: string };  // recipient "" until a key exists
+};
+// secretAccessKey omitted or "" keeps the stored secret. s3 null removes the destination.
+type BackupSettingsInput = {
+  s3: (Omit<S3Settings, "hasSecret"> & { secretAccessKey?: string }) | null;
+  encryption: { enabled: boolean };
 };
 ```
 
