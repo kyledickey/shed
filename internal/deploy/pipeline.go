@@ -105,7 +105,6 @@ func (j *job) waitForCI(ctx context.Context) error {
 	j.setStatus(store.StatusWaiting)
 	j.step("Waiting for CI on %s", shortSHA(j.dep.CommitSHA))
 
-	start := time.Now()
 	ctx, cancel := context.WithTimeoutCause(ctx, j.ciTimeout,
 		fmt.Errorf("timed out after %s waiting for CI", j.ciTimeout))
 	defer cancel()
@@ -119,9 +118,6 @@ func (j *job) waitForCI(ctx context.Context) error {
 			return nil
 		case state == github.CIFailure:
 			return errCIFailed
-		case state == github.CINone && time.Since(start) >= j.ciGrace:
-			j.step("No CI checks found; continuing")
-			return nil
 		}
 		select {
 		case <-ctx.Done():

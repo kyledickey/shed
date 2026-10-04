@@ -129,7 +129,6 @@ type Deployer struct {
 
 	// Timings and the health probe, replaced in tests.
 	ciInterval     time.Duration
-	ciGrace        time.Duration // how long to wait for checks to appear
 	ciTimeout      time.Duration
 	healthInterval time.Duration
 	healthTimeout  time.Duration
@@ -176,7 +175,6 @@ func New(cfg Config) *Deployer {
 		dashboard:        cfg.Dashboard,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
-		ciGrace:          2 * time.Minute,
 		ciTimeout:        60 * time.Minute,
 		healthInterval:   time.Second,
 		healthTimeout:    120 * time.Second,

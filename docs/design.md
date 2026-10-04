@@ -237,7 +237,8 @@ the same service.
 
 1. **Wait for CI** (apps with `wait_for_ci` and a commit): poll GitHub every
    10s until all check runs and statuses for the SHA complete. Any failure →
-   `skipped`. Timeout 60 min → `failed`.
+   `skipped`. No checks is not approval: keep waiting until checks appear
+   and pass. Timeout 60 min → `failed`.
 2. **Build**: repo apps clone the commit with an installation token and build
    `shed/<serviceID>:<deploymentID>`. Image apps and databases pull their
    image. Redeploys of an old deployment reuse its image and skip this step.

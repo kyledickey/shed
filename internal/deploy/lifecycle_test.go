@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -188,5 +189,29 @@ func TestDeletionRejectsConcurrentDeployment(t *testing.T) {
 				t.Fatal("orphan container remains")
 			}
 		})
+	}
+}
+
+type noChecksGitHub struct{ fakeGitHub }
+
+func (noChecksGitHub) CIStatus(context.Context, string, string) (github.CIState, error) {
+	return github.CINone, nil
+}
+func TestWaitForCIRequiresChecks(t *testing.T) {
+	f := newFixture(t)
+	f.svc.WaitForCI = true
+	if err := f.st.UpdateService(context.Background(), f.svc); err != nil {
+		t.Fatal(err)
+	}
+	f.d.github = func() (GitHub, bool) { return noChecksGitHub{}, true }
+	f.d.ciInterval = time.Millisecond
+	f.d.ciTimeout = 15 * time.Millisecond
+	dep := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	if dep.Status != store.StatusFailed {
+		t.Fatalf("status = %s", dep.Status)
+	}
+	if len(f.docker.runs) != 0 {
+		t.Fatal("started container without CI approval")
 	}
 }
