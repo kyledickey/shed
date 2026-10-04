@@ -178,12 +178,7 @@ func (e *itEnv) startService(kind, image string, env []string, cmd []string, mou
 			t.Errorf("helper containers left: %v", helpers)
 		}
 		for _, c := range append(cs, helpers...) {
-			e.dc.Remove(ctx, c.ID)
-			for _, v := range c.Volumes {
-				if v != volumeName(vol) {
-					e.dc.RemoveVolume(ctx, v) // Anonymous volumes of the image.
-				}
-			}
+			e.dc.Remove(ctx, c.ID) // Also removes the image's anonymous volumes.
 		}
 		if err := e.dc.RemoveVolume(ctx, volumeName(vol)); err != nil {
 			t.Errorf("remove volume: %v", err)

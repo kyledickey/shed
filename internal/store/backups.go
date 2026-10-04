@@ -83,14 +83,15 @@ func (s *Store) CreateBackup(ctx context.Context, b Backup) (Backup, error) {
 	return b, nil
 }
 
-// UpdateBackup overwrites the mutable fields of the backup b.ID: its status,
-// archive details, errors, and start and finish times. It returns ErrNotFound
-// for an unknown backup.
+// UpdateBackup overwrites the mutable fields of the backup b.ID: its method,
+// status, archive details, errors, and start and finish times. It returns
+// ErrNotFound for an unknown backup.
 func (s *Store) UpdateBackup(ctx context.Context, b Backup) error {
-	err := s.execOne(ctx, `UPDATE backups SET status = ?, file = ?, size = ?, encrypted = ?,
-		local = ?, remote_key = ?, remote_error = ?, error = ?, started_at = ?, finished_at = ?
+	err := s.execOne(ctx, `UPDATE backups SET method = ?, status = ?, file = ?, size = ?,
+		encrypted = ?, local = ?, remote_key = ?, remote_error = ?, error = ?, started_at = ?,
+		finished_at = ?
 		WHERE id = ?`,
-		b.Status, b.File, b.Size, b.Encrypted, b.Local, b.RemoteKey, b.RemoteError, b.Error,
+		b.Method, b.Status, b.File, b.Size, b.Encrypted, b.Local, b.RemoteKey, b.RemoteError, b.Error,
 		optionalTime(b.StartedAt), optionalTime(b.FinishedAt), b.ID)
 	if err != nil {
 		return fmt.Errorf("store: update backup %s: %w", b.ID, err)

@@ -327,9 +327,13 @@ func (c *Client) Restart(ctx context.Context, id string, timeout time.Duration) 
 	return nil
 }
 
-// Remove force-removes the container. A missing container is not an error.
+// Remove force-removes the container and its anonymous volumes, such as those
+// Docker creates for the VOLUME paths of its image. Named volumes (like
+// shed-vol-*) are never removed by RemoveVolumes: Docker deletes only the
+// volumes it generated names for, like docker rm -v. A missing container is
+// not an error.
 func (c *Client) Remove(ctx context.Context, id string) error {
-	_, err := c.api.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
+	_, err := c.api.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	if err != nil && !IsNotFound(err) {
 		return fmt.Errorf("docker: remove container %s: %w", id, err)
 	}

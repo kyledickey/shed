@@ -268,13 +268,7 @@ func (m *Manager) Recover(ctx context.Context) error {
 		return fmt.Errorf("backup: recover: %w", err)
 	}
 	for _, c := range helpers {
-		var vols []store.Volume
-		for _, name := range c.Volumes {
-			if id, ok := strings.CutPrefix(name, "shed-vol-"); ok {
-				vols = append(vols, store.Volume{ID: id})
-			}
-		}
-		m.removeHelper(ctx, c.ID, vols)
+		m.removeHelper(ctx, c.ID)
 	}
 	return nil
 }

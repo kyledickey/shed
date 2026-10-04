@@ -106,7 +106,7 @@ func TestBackups(t *testing.T) {
 	// Update writes every mutable column and leaves the immutable ones alone.
 	b := created["first"]
 	start, end := base.Add(time.Second), base.Add(2*time.Second)
-	b.Status, b.File, b.Size, b.Encrypted, b.Local = BackupSucceeded, b.ID+".sql.zst.age", 1234, true, true
+	b.Method, b.Status, b.File, b.Size, b.Encrypted, b.Local = MethodVolume, BackupSucceeded, b.ID+".sql.zst.age", 1234, true, true
 	b.RemoteKey, b.RemoteError, b.Error = "backups/x", "upload failed", "warn"
 	b.StartedAt, b.FinishedAt = &start, &end
 	if err := s.UpdateBackup(ctx, b); err != nil {

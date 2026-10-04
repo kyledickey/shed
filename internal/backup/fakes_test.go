@@ -58,10 +58,11 @@ type fakeDocker struct {
 	// imageVolume makes created containers get an anonymous volume, as
 	// for images that declare a VOLUME.
 	imageVolume bool
+	anonymous   map[string]bool // anonymous volumes not yet removed
 }
 
 func newFakeDocker(rec *recorder) *fakeDocker {
-	return &fakeDocker{rec: rec, containers: make(map[string]docker.Container), volumes: make(map[string][]byte)}
+	return &fakeDocker{rec: rec, containers: make(map[string]docker.Container), anonymous: make(map[string]bool), volumes: make(map[string][]byte)}
 }
 
 func (f *fakeDocker) Inspect(_ context.Context, id string) (docker.Container, error) {
@@ -113,6 +114,7 @@ func (f *fakeDocker) Create(_ context.Context, spec docker.RunSpec) (string, err
 	}
 	if f.imageVolume {
 		vols = append(vols, "anon-"+id)
+		f.anonymous["anon-"+id] = true
 	}
 	f.containers[id] = docker.Container{ID: id, Name: spec.Name, Labels: spec.Labels, Volumes: vols}
 	f.rec.add("create %s %s %s", spec.Name, spec.Image, strings.Join(mounts, ","))
@@ -122,6 +124,9 @@ func (f *fakeDocker) Create(_ context.Context, spec docker.RunSpec) (string, err
 func (f *fakeDocker) Remove(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, v := range f.containers[id].Volumes {
+		delete(f.anonymous, v) // Like RemoveVolumes: named volumes stay.
+	}
 	delete(f.containers, id)
 	f.rec.add("remove %s", id)
 	return nil

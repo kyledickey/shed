@@ -1246,22 +1246,20 @@ func TestHelperRemovesAnonymousVolumes(t *testing.T) {
 	sv := e.service("mongo", false, "/data/db")
 	e.docker.volumes["/data/db"] = volumeTar("/data/db", nil)
 	e.backUp(sv.ID)
-	events := e.rec.list()
-	i := slices.Index(events, "remove helper1")
-	if i < 0 || i+1 >= len(events) || events[i+1] != "remove volume anon-helper1" {
-		t.Errorf("events = %q, want the helper's anonymous volume removed after it", events)
+	if len(e.docker.anonymous) != 0 {
+		t.Errorf("anonymous volumes left after the backup: %v", e.docker.anonymous)
 	}
-	if slices.ContainsFunc(events, func(ev string) bool { return strings.HasPrefix(ev, "remove volume shed-vol-") }) {
+	if events := e.rec.list(); slices.ContainsFunc(events, func(ev string) bool { return strings.HasPrefix(ev, "remove volume shed-vol-") }) {
 		t.Errorf("a service volume was removed: %q", events)
 	}
 
 	// Recover cleans up leftover helpers the same way.
 	e.docker.containers["h"] = docker.Container{ID: "h", Labels: map[string]string{helperLabel: "x"}, Volumes: []string{"shed-vol-abc", "anon-h"}}
+	e.docker.anonymous["anon-h"] = true
 	if err := e.m.Recover(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	events = e.rec.list()
-	if !slices.Contains(events, "remove volume anon-h") || slices.Contains(events, "remove volume shed-vol-abc") {
-		t.Errorf("events after Recover = %q", events)
+	if _, ok := e.docker.containers["h"]; ok || len(e.docker.anonymous) != 0 {
+		t.Errorf("after Recover: containers %v, anonymous volumes %v", e.docker.containers, e.docker.anonymous)
 	}
 }

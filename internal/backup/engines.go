@@ -51,7 +51,7 @@ exec pg_dumpall --clean --if-exists -U "${POSTGRES_USER:-postgres}"`,
 		dump: `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
 exec mysqldump -uroot --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF`,
 		restore: `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
-exec mysql -uroot`,
+exec mysql -uroot --init-command="SET SESSION lock_wait_timeout=300"`,
 	},
 	"mongo": {
 		ext:     "archive",

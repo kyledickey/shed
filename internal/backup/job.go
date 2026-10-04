@@ -160,17 +160,13 @@ func (m *Manager) produce(ctx context.Context, b *store.Backup, level string) er
 }
 
 // setMethod records the method a backup ended up using, when the service's
-// state changed after the backup was queued. The store keeps a backup's
-// method immutable, so the record is replaced by one with the same ID.
+// state changed after the backup was queued.
 func (m *Manager) setMethod(ctx context.Context, b *store.Backup, method store.BackupMethod) error {
 	if b.Method == method {
 		return nil
 	}
 	b.Method = method
-	if err := m.store.DeleteBackup(ctx, b.ID); err != nil {
-		return fmt.Errorf("backup: %w", err)
-	}
-	if _, err := m.store.CreateBackup(ctx, *b); err != nil {
+	if err := m.store.UpdateBackup(ctx, *b); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
 	return nil
@@ -282,28 +278,15 @@ func (m *Manager) helper(ctx context.Context, name, id, image string, vols []sto
 	if err != nil {
 		return "", nil, fmt.Errorf("backup: create helper container: %w", err)
 	}
-	return cid, func() { m.removeHelper(context.WithoutCancel(ctx), cid, vols) }, nil
+	return cid, func() { m.removeHelper(context.WithoutCancel(ctx), cid) }, nil
 }
 
-// removeHelper removes a helper container and the anonymous volumes Docker
-// created for the VOLUME paths of its image that vols do not cover.
-func (m *Manager) removeHelper(ctx context.Context, cid string, vols []store.Volume) {
-	var anonymous []string
-	if c, err := m.docker.Inspect(ctx, cid); err == nil {
-		for _, name := range c.Volumes {
-			if !slices.ContainsFunc(vols, func(v store.Volume) bool { return volumeName(v) == name }) {
-				anonymous = append(anonymous, name)
-			}
-		}
-	}
+// removeHelper removes a helper container. Docker also removes the anonymous
+// volumes it created for the VOLUME paths of the container's image, but never
+// the service's named volumes.
+func (m *Manager) removeHelper(ctx context.Context, cid string) {
 	if err := m.docker.Remove(ctx, cid); err != nil {
 		m.log.Error("backup: remove helper container", "container", cid, "err", err)
-		return
-	}
-	for _, name := range anonymous {
-		if err := m.docker.RemoveVolume(ctx, name); err != nil {
-			m.log.Error("backup: remove helper volume", "volume", name, "err", err)
-		}
 	}
 }
 

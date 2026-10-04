@@ -378,9 +378,11 @@ active container, through `sh -c`, so credentials come from the container's
 own environment (`POSTGRES_USER`/`POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`,
 `MONGO_INITDB_ROOT_*`, `REDIS_PASSWORD`). Passwords never appear on a
 command line: they are passed as `PGPASSWORD`, `MYSQL_PWD`, and
-`REDISCLI_AUTH`, and to the mongo tools through a private `--config` file. A
-failed command's error ends with the last 4 KiB of its stderr. The redis dump
-waits until no background save is running, starts `BGSAVE SCHEDULE`, waits
+`REDISCLI_AUTH`, and to the mongo tools through a private `--config` file. The
+mysql restore sets `lock_wait_timeout=300` for its session, so a restore blocked
+by a metadata lock from an application transaction fails after 5 minutes instead
+of hanging. A failed command's error ends with the last 4 KiB of its stderr.
+The redis dump waits until no background save is running, starts `BGSAVE SCHEDULE`, waits
 until `rdb_saves` has advanced and no save is in progress, checks
 `rdb_last_bgsave_status:ok`, and streams `/data/dump.rdb` (redis 7 or newer).
 
@@ -389,8 +391,9 @@ it is created but never started, uses the active deployment's image, mounts
 the service's volumes read-only, is named `shed-backup-<backupID>`, and is
 labeled `shed.backup=<backupID>`. Removing a helper also removes the
 anonymous volumes Docker created for its image's other `VOLUME` paths (for
-example mongo's `/data/configdb`). Tar entries are rooted at each volume's
-mount path relative to `/` (for example `var/lib/data/...`), and ownership,
+example mongo's `/data/configdb`); `docker.Client.Remove` always removes a
+container's anonymous volumes, never its named ones. Tar entries are rooted
+at each volume's mount path relative to `/` (for example `var/lib/data/...`), and ownership,
 modes, and extended attributes are kept. A volume nested inside another's
 mount path is archived only once, from its own volume. A volume backup of a
 stopped database holds the service (see Restore) so that nothing starts it

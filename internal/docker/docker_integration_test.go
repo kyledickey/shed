@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/client"
 )
 
 const testImage = "alpine:3"
@@ -202,4 +204,63 @@ func TestExec(t *testing.T) {
 			t.Errorf("Exec took %v after cancel", d)
 		}
 	})
+}
+
+// volumeExists reports whether the named volume exists.
+func volumeExists(t *testing.T, c *Client, name string) bool {
+	t.Helper()
+	_, err := c.api.VolumeInspect(context.Background(), name, client.VolumeInspectOptions{})
+	if err != nil && !IsNotFound(err) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+func TestRemoveDeletesAnonymousVolumes(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	// mongo declares VOLUME /data/db and /data/configdb. The named volume
+	// takes the place of the first, as in a deployed database.
+	const image = "mongo:8"
+	if err := c.PullImage(ctx, image, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	named := "shed-test-named-" + suffix(t)
+	if err := c.EnsureVolume(ctx, named); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.RemoveVolume(context.Background(), named) })
+
+	id := create(t, c, RunSpec{
+		Name:   "shed-test-volumes-" + suffix(t),
+		Image:  image,
+		Mounts: []Mount{{Volume: named, Target: "/data/db"}},
+	})
+	info, err := c.Inspect(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var anonymous string
+	for _, v := range info.Volumes {
+		if v != named {
+			anonymous = v
+		}
+	}
+	if anonymous == "" || len(info.Volumes) != 2 {
+		t.Fatalf("container volumes = %v, want %s and an anonymous one", info.Volumes, named)
+	}
+	t.Cleanup(func() { _ = c.RemoveVolume(context.Background(), anonymous) })
+	if !volumeExists(t, c, anonymous) {
+		t.Fatalf("anonymous volume %s was not created", anonymous)
+	}
+
+	if err := c.Remove(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if volumeExists(t, c, anonymous) {
+		t.Errorf("anonymous volume %s survived Remove", anonymous)
+	}
+	if !volumeExists(t, c, named) {
+		t.Errorf("named volume %s was removed by Remove", named)
+	}
 }
