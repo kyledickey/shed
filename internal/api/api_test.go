@@ -126,7 +126,7 @@ func newFixture(t *testing.T) *fixture {
 
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
-	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", nil, log)
+	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, metrics: &fakeMetrics{}, github: gh}
 	srv, err := New(context.Background(), Config{
 		Store:      st,

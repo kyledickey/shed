@@ -134,6 +134,10 @@ func run() error {
 		return nil, false
 	}, cfg.Server.URL, cfg.Auth.AllowedUsers, log)
 
+	if err := authn.RevokeDisallowedSessions(ctx); err != nil {
+		return err
+	}
+
 	server, err := api.New(ctx, api.Config{
 		Store:      st,
 		Deployer:   deployer,

@@ -17,7 +17,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -45,8 +47,6 @@ type User struct {
 // Store persists users and sessions. Sessions are keyed by the hash of their
 // token, never the token itself.
 type Store interface {
-	// User returns the user with the given GitHub ID, and whether it exists.
-	User(ctx context.Context, githubID int64) (User, bool, error)
 	// UpsertUser creates the user or updates its profile.
 	UpsertUser(ctx context.Context, u User) error
 	// CreateSession stores a session that expires at the given time.
@@ -56,6 +56,8 @@ type Store interface {
 	SessionUser(ctx context.Context, tokenHash string) (User, bool, error)
 	// DeleteSession removes a session.
 	DeleteSession(ctx context.Context, tokenHash string) error
+	// DeleteDisallowedSessions removes sessions for logins outside allowed.
+	DeleteDisallowedSessions(ctx context.Context, allowed []string) error
 }
 
 // OAuth performs the GitHub sign-in handshake. *github.Client implements it.
@@ -183,7 +185,7 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			a.fail(w, "look up session", err)
 			return
 		}
-		if !ok {
+		if !ok || !a.allowed[strings.ToLower(user.Login)] {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -202,19 +204,12 @@ func UserFrom(ctx context.Context) (User, bool) {
 var errDenied = errors.New("auth: user not permitted")
 
 // admit applies the access rule to user and, if it passes, records the user
-// and a new session, returning the session token. A login is permitted if it
-// is in the allowed list or its user already exists. New users must be
-// explicitly allowed, including the first administrator.
+// and a new session, returning the session token. The allowlist is authoritative.
 func (a *Auth) admit(ctx context.Context, user User) (token string, err error) {
 	if !a.allowed[strings.ToLower(user.Login)] {
-		_, exists, err := a.store.User(ctx, user.GitHubID)
-		if err != nil {
-			return "", fmt.Errorf("auth: look up user %q: %w", user.Login, err)
-		}
-		if !exists {
-			return "", errDenied
-		}
+		return "", errDenied
 	}
+
 	if err := a.store.UpsertUser(ctx, user); err != nil {
 		return "", fmt.Errorf("auth: save user %q: %w", user.Login, err)
 	}
@@ -277,4 +272,10 @@ func randomToken(n int) (string, error) {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+// RevokeDisallowedSessions permanently invalidates sessions for removed users.
+// Call it on startup after loading the access policy.
+func (a *Auth) RevokeDisallowedSessions(ctx context.Context) error {
+	return a.store.DeleteDisallowedSessions(ctx, slices.Sorted(maps.Keys(a.allowed)))
 }

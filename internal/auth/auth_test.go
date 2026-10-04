@@ -134,8 +134,8 @@ func TestCallbackAccessRule(t *testing.T) {
 	}{
 		{"first user requires allow list", nil, nil, alice, false},
 		{"second user denied without allow list", []User{{GitHubID: 1, Login: "Alice"}}, nil, bob, false},
-		{"existing user allowed", []User{{GitHubID: 2, Login: "bob"}}, nil, bob, true},
-		{"existing user still allowed when list excludes them", []User{{GitHubID: 2, Login: "bob"}}, []string{"alice"}, bob, true},
+		{"empty allowlist denies existing user", []User{{GitHubID: 2, Login: "bob"}}, nil, bob, false},
+		{"removed user denied", []User{{GitHubID: 2, Login: "bob"}}, []string{"alice"}, bob, false},
 		{"allow list matches case-insensitively", nil, []string{"ALICE"}, alice, true},
 		{"not in allow list on empty db", nil, []string{"carol"}, alice, false},
 		{"allow list admits new user despite existing", []User{{GitHubID: 9, Login: "x"}}, []string{"bob"}, bob, true},
@@ -261,5 +261,40 @@ func TestLogout(t *testing.T) {
 	}
 	if c := cookieNamed(rec, sessionCookie); c == nil || c.MaxAge >= 0 {
 		t.Errorf("cookie not cleared: %+v", c)
+	}
+}
+
+func (m *memStore) DeleteDisallowedSessions(_ context.Context, allowed []string) error {
+	for hash, id := range m.sessions {
+		ok := false
+		for _, login := range allowed {
+			if strings.EqualFold(login, m.users[id].Login) {
+				ok = true
+			}
+		}
+		if !ok {
+			delete(m.sessions, hash)
+		}
+	}
+	return nil
+}
+
+func TestRemovedUserSessions(t *testing.T) {
+	st := newMemStore()
+	first := newAuth(st, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x", "alice")
+	cookie := cookieNamed(signIn(t, first, "code"), sessionCookie)
+	removed := newAuth(st, nil, "http://x", "bob")
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	removed.Require(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("removed user admitted") })).ServeHTTP(rec, req)
+	if rec.Code != 401 {
+		t.Fatal(rec.Code)
+	}
+	if err := removed.RevokeDisallowedSessions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatal("removed sessions retained")
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -106,6 +107,21 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
 	if err := s.exec(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, formatTime(time.Now())); err != nil {
 		return fmt.Errorf("store: delete expired sessions: %w", err)
+	}
+	return nil
+}
+
+// DeleteDisallowedSessions revokes sessions for users outside the login allowlist.
+// An empty allowlist revokes every session.
+func (s *Store) DeleteDisallowedSessions(ctx context.Context, allowed []string) error {
+	args := make([]any, len(allowed))
+	for i, login := range allowed {
+		args[i] = strings.ToLower(login)
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	query := `DELETE FROM sessions WHERE github_id IN (SELECT github_id FROM users WHERE lower(login) NOT IN (` + marks + `))`
+	if err := s.exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("store: revoke disallowed sessions: %w", err)
 	}
 	return nil
 }

@@ -336,8 +336,10 @@ stores app ID, slug, client ID/secret, webhook secret, and private key in
 
 `/api/auth/login` → GitHub OAuth authorize (app client ID, random state cookie)
 → `/api/auth/callback` exchanges the code, fetches the user, and checks access:
-allowed if the login is in `auth.allowed_users` or already in `users`. New
-accounts, including the first administrator, require an explicit allowlist entry.
+allowed only if the login is in `auth.allowed_users` (case-insensitive). An
+empty list denies all access. The middleware checks this rule on every request;
+startup permanently revokes sessions for removed logins. Change the configuration
+and restart shed to revoke a user, including all existing streams.
 Session cookie `shed_session` (random 32 bytes, stored hashed), HttpOnly,
 SameSite=Lax, Secure when `server.url` is https, 30 days.
 

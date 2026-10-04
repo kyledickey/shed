@@ -447,3 +447,31 @@ func TestMetrics(t *testing.T) {
 		t.Errorf("after DeleteService: MetricBuckets() = %+v, want none", got)
 	}
 }
+
+func TestDeleteDisallowedSessions(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	for i, login := range []string{"Alice", "bob"} {
+		if err := s.UpsertUser(ctx, User{GitHubID: int64(i + 1), Login: login}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.CreateSession(ctx, login, int64(i+1), time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteDisallowedSessions(ctx, []string{"ALICE"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionUser(ctx, "Alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionUser(ctx, "bob"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDisallowedSessions(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SessionUser(ctx, "Alice"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}

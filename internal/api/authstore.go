@@ -18,8 +18,8 @@ type authStore struct {
 	st *store.Store
 }
 
-func (a authStore) User(ctx context.Context, githubID int64) (auth.User, bool, error) {
-	return found(a.st.User(ctx, githubID))
+func (a authStore) DeleteDisallowedSessions(ctx context.Context, allowed []string) error {
+	return a.st.DeleteDisallowedSessions(ctx, allowed)
 }
 
 func (a authStore) UpsertUser(ctx context.Context, u auth.User) error {
