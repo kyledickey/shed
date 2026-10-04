@@ -123,7 +123,7 @@ var (
 	// are meant to be shown to the user.
 	ErrInvalid = errors.New("backup: invalid request")
 	// ErrBusy is returned when a conflicting backup or restore is queued or
-	// running.
+	// running, or the service is paused.
 	ErrBusy = errors.New("backup: a backup or restore is already in progress")
 	// ErrNoVolumes is returned when backing up a service without volumes.
 	ErrNoVolumes = errors.New("backup: service has no volumes")
@@ -147,6 +147,7 @@ var errNotDeployed = invalidError{"service has not been deployed yet"}
 // Causes of canceled jobs.
 var (
 	errForgotten = errors.New("service deleted")
+	errPaused    = errors.New("canceled: service is being deleted")
 	errShutdown  = errors.New("interrupted by shutdown")
 )
 
@@ -184,6 +185,7 @@ type Manager struct {
 	stopped bool
 	wake    chan struct{}
 	next    map[string]scheduled // by target
+	paused  map[string]int       // pauses by service ID
 }
 
 // New returns a Manager. Call Recover and then Run.
@@ -210,6 +212,7 @@ func New(cfg Config) *Manager {
 		now:       func() time.Time { return now().UTC().Truncate(time.Millisecond) },
 		wake:      make(chan struct{}, 1),
 		next:      make(map[string]scheduled),
+		paused:    make(map[string]int),
 	}
 }
 
@@ -498,7 +501,7 @@ func (m *Manager) enqueueBackup(ctx context.Context, serviceID string, trigger s
 	if m.stopped {
 		return store.Backup{}, ErrStopped
 	}
-	if m.busy(serviceID, false) {
+	if m.paused[serviceID] > 0 || m.busy(serviceID, false) {
 		return store.Backup{}, ErrBusy
 	}
 	if b, err = m.store.CreateBackup(ctx, b); err != nil {
@@ -510,8 +513,8 @@ func (m *Manager) enqueueBackup(ctx context.Context, serviceID string, trigger s
 
 // BackUp queues a manual backup of a service, or of shed.db for an empty
 // serviceID. It returns ErrBusy if the service already has a backup or
-// restore queued or running, ErrNoVolumes if it has no volumes, and an error
-// wrapping ErrInvalid if it was never deployed.
+// restore queued or running, or is paused, ErrNoVolumes if it has no volumes,
+// and an error wrapping ErrInvalid if it was never deployed.
 func (m *Manager) BackUp(ctx context.Context, serviceID string) (store.Backup, error) {
 	return m.enqueueBackup(ctx, serviceID, store.BackupManual)
 }
@@ -532,7 +535,7 @@ func (m *Manager) Backups(ctx context.Context, serviceID string, limit int) ([]s
 // Restore queues a restore of a service backup into its service. It returns
 // an error wrapping ErrInvalid for backups of shed.db, backups that did not
 // succeed, and backups whose archive is gone, and ErrBusy if a restore of the
-// service is already queued or running.
+// service is already queued or running or the service is paused.
 func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, error) {
 	b, err := m.store.Backup(ctx, backupID)
 	if err != nil {
@@ -551,7 +554,7 @@ func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, 
 	if m.stopped {
 		return store.Restore{}, ErrStopped
 	}
-	if m.busy(b.ServiceID, true) {
+	if m.paused[b.ServiceID] > 0 || m.busy(b.ServiceID, true) {
 		return store.Restore{}, ErrBusy
 	}
 	r, err := m.store.CreateRestore(ctx, store.Restore{
@@ -690,6 +693,82 @@ func DownloadName(b store.Backup, serviceName string) string {
 	return serviceName + "-" + b.CreatedAt.UTC().Format("20060102-150405") + ext
 }
 
+// cancelJobs removes the queued jobs of a service and cancels its running
+// job with cause. It returns the queued jobs, which the caller must fail and
+// close, and the running job's done channel, or nil. The caller holds m.mu.
+func (m *Manager) cancelJobs(serviceID string, cause error) (queued []*job, done chan struct{}) {
+	m.queue = slices.DeleteFunc(m.queue, func(j *job) bool {
+		if j.serviceID == serviceID {
+			queued = append(queued, j)
+			return true
+		}
+		return false
+	})
+	if j := m.running; j != nil && j.serviceID == serviceID {
+		j.cancel(cause)
+		done = j.done
+	}
+	return queued, done
+}
+
+// finishCanceled records the queued jobs returned by cancelJobs as failed
+// and waits for the running one, if any, to stop.
+func (m *Manager) finishCanceled(ctx context.Context, queued []*job, done chan struct{}, cause error) error {
+	for _, j := range queued {
+		m.failQueued(ctx, j, cause.Error())
+		close(j.done)
+	}
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// PauseService cancels the queued and running backups of a service, waits
+// until the running one has stopped and removed its helper container, and
+// rejects new jobs for the service until resume is called: BackUp and Restore
+// return ErrBusy, and scheduled backups are skipped. Call it before deleting
+// the service, whose volumes a helper container would keep in use. If a
+// restore of the service is running, PauseService returns ErrBusy and cancels
+// nothing, since stopping a restore halfway would leave the volumes partly
+// restored. Queued restores are canceled. If ctx ends while waiting, the
+// service is not paused and the error wraps the context's. resume is safe to
+// call more than once.
+func (m *Manager) PauseService(ctx context.Context, serviceID string) (resume func(), err error) {
+	if serviceID == "" {
+		return nil, fmt.Errorf("backup: pause service: empty service ID")
+	}
+	m.mu.Lock()
+	if j := m.running; j != nil && j.serviceID == serviceID && j.restore != nil {
+		m.mu.Unlock()
+		return nil, ErrBusy
+	}
+	m.paused[serviceID]++
+	queued, done := m.cancelJobs(serviceID, errPaused)
+	m.mu.Unlock()
+
+	var once sync.Once
+	resume = func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.paused[serviceID]--; m.paused[serviceID] <= 0 {
+				delete(m.paused, serviceID)
+			}
+		})
+	}
+	if err := m.finishCanceled(ctx, queued, done, errPaused); err != nil {
+		resume()
+		return nil, fmt.Errorf("backup: pause service %s: %w", serviceID, err)
+	}
+	return resume, nil
+}
+
 // ForgetService cancels the queued and running jobs of a deleted service,
 // waits for the running one to stop, and removes its local archives. Call it
 // after the service is deleted: its S3 objects are kept.
@@ -698,32 +777,12 @@ func (m *Manager) ForgetService(ctx context.Context, serviceID string) error {
 		return fmt.Errorf("backup: forget service: empty service ID")
 	}
 	m.mu.Lock()
-	var queued []*job
-	m.queue = slices.DeleteFunc(m.queue, func(j *job) bool {
-		if j.serviceID == serviceID {
-			queued = append(queued, j)
-			return true
-		}
-		return false
-	})
-	var done chan struct{}
-	if j := m.running; j != nil && j.serviceID == serviceID {
-		j.cancel(errForgotten)
-		done = j.done
-	}
+	queued, done := m.cancelJobs(serviceID, errForgotten)
 	delete(m.next, serviceID)
 	m.mu.Unlock()
 
-	for _, j := range queued {
-		m.failQueued(ctx, j, errForgotten.Error())
-		close(j.done)
-	}
-	if done != nil {
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return fmt.Errorf("backup: forget service %s: %w", serviceID, ctx.Err())
-		}
+	if err := m.finishCanceled(ctx, queued, done, errForgotten); err != nil {
+		return fmt.Errorf("backup: forget service %s: %w", serviceID, err)
 	}
 	if err := os.RemoveAll(m.targetDir(serviceID)); err != nil {
 		return fmt.Errorf("backup: forget service %s: %w", serviceID, err)

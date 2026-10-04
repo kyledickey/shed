@@ -103,12 +103,17 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := s.deployer.DeleteProject(r.Context(), id); err != nil {
-		return err
-	}
 	ids := make([]string, 0, len(services))
 	for _, svc := range services {
 		ids = append(ids, svc.ID)
+	}
+	resume, err := s.pauseBackups(r.Context(), ids...)
+	if err != nil {
+		return err
+	}
+	defer resume()
+	if err := s.deployer.DeleteProject(r.Context(), id); err != nil {
+		return err
 	}
 	s.forgetBackups(r.Context(), ids...)
 	w.WriteHeader(http.StatusNoContent)

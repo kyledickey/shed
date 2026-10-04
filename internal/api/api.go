@@ -50,6 +50,7 @@ type Backups interface {
 	Restore(ctx context.Context, backupID string) (store.Restore, error)
 	Delete(ctx context.Context, backupID string) error
 	Open(ctx context.Context, backupID string) (io.ReadCloser, error)
+	PauseService(ctx context.Context, serviceID string) (resume func(), err error)
 	ForgetService(ctx context.Context, serviceID string) error
 	Policy(ctx context.Context, serviceID string) (backup.Policy, error)
 	SetPolicy(ctx context.Context, serviceID string, in backup.PolicyInput) (backup.Policy, error)

@@ -416,6 +416,7 @@ func (m *Manager) prune(ctx context.Context, serviceID string, p PolicyInput) er
 				errs = append(errs, err)
 			}
 		}
+		var err error
 		switch {
 		case !changed:
 		case !b.Local && b.RemoteKey == "":

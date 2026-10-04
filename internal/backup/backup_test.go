@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -1261,5 +1262,257 @@ func TestHelperRemovesAnonymousVolumes(t *testing.T) {
 	}
 	if _, ok := e.docker.containers["h"]; ok || len(e.docker.anonymous) != 0 {
 		t.Errorf("after Recover: containers %v, anonymous volumes %v", e.docker.containers, e.docker.anonymous)
+	}
+}
+
+// failingStore fails deleting and updating the backups in fail.
+type failingStore struct {
+	Store
+	fail map[string]bool
+}
+
+func (s failingStore) DeleteBackup(ctx context.Context, id string) error {
+	if s.fail[id] {
+		return errors.New("delete " + id + " failed")
+	}
+	return s.Store.DeleteBackup(ctx, id)
+}
+
+func (s failingStore) UpdateBackup(ctx context.Context, b store.Backup) error {
+	if s.fail[b.ID] {
+		return errors.New("update " + b.ID + " failed")
+	}
+	return s.Store.UpdateBackup(ctx, b)
+}
+
+func TestPruneReportsEachFailureOnce(t *testing.T) {
+	tests := []struct {
+		name string
+		fail []int // indexes into the backups, newest first
+		want []string
+	}{
+		{name: "none"},
+		{name: "one delete", fail: []int{1}, want: []string{"delete %s failed"}},
+		{name: "last delete before an exempt backup", fail: []int{2}, want: []string{"delete %s failed"}},
+		{name: "two deletes", fail: []int{1, 2}, want: []string{"delete %s failed", "delete %s failed"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			sv := e.service("postgres", true, "/var/lib/postgresql")
+			// Newest first: a kept backup, two to drop, and an exempt manual
+			// backup after them, which a stale error would be repeated for.
+			specs := []struct {
+				trigger store.BackupTrigger
+				age     int
+			}{{store.BackupSchedule, 0}, {store.BackupSchedule, 1}, {store.BackupSchedule, 2}, {store.BackupManual, 3}}
+			var ids []string
+			for _, sp := range specs {
+				b, err := e.st.CreateBackup(e.ctx, store.Backup{
+					ServiceID: sv.ID, Trigger: sp.trigger, Method: store.MethodDump, Status: store.BackupSucceeded,
+					File: store.NewID() + ".sql.zst", Local: true,
+					CreatedAt: time.Date(2026, 10, 4-sp.age, 3, 0, 0, 0, time.UTC),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, b.ID)
+			}
+			fail := make(map[string]bool)
+			var want []string
+			for i, idx := range tt.fail {
+				fail[ids[idx]] = true
+				want = append(want, fmt.Sprintf(tt.want[i], ids[idx]))
+			}
+			m := New(Config{Store: failingStore{e.st, fail}, Docker: e.docker, Services: e.services, Dir: e.dir, Now: e.clock.Now})
+
+			err := m.prune(e.ctx, sv.ID, PolicyInput{KeepLocal: 1})
+			var got []string
+			if err != nil {
+				got = strings.Split(err.Error(), "\n")
+			}
+			slices.Sort(got)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("prune errors = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// blockingCopyDocker blocks reads of volumes. They end when their context
+// does, or, with ignoreCtx, only when release is closed.
+type blockingCopyDocker struct {
+	*fakeDocker
+	started           chan struct{}
+	release           chan struct{}
+	ignoreCtx         bool
+	once, releaseOnce sync.Once
+}
+
+func (b *blockingCopyDocker) CopyFrom(ctx context.Context, id, p string) (io.ReadCloser, error) {
+	b.once.Do(func() { close(b.started) })
+	if b.ignoreCtx {
+		<-b.release
+	} else {
+		<-ctx.Done()
+	}
+	return nil, ctx.Err()
+}
+
+// startBlocked replaces e.m with a Manager over the same store and
+// directory whose volume reads block, and starts its worker. The worker
+// stops, and the test waits for it, when the test ends.
+func startBlocked(e *testEnv, ignoreCtx bool) *blockingCopyDocker {
+	bd := &blockingCopyDocker{fakeDocker: e.docker, started: make(chan struct{}), release: make(chan struct{}), ignoreCtx: ignoreCtx}
+	e.m = New(Config{Store: e.st, Docker: bd, Services: e.services, Dir: e.dir, Now: e.clock.Now})
+	ctx, cancel := context.WithCancel(e.ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { e.m.work(ctx) })
+	e.t.Cleanup(func() {
+		cancel()
+		bd.releaseOnce.Do(func() { close(bd.release) })
+		wg.Wait()
+	})
+	return bd
+}
+
+func (e *testEnv) helpers() int {
+	e.t.Helper()
+	cs, err := e.docker.List(e.ctx, map[string]string{helperLabel: ""})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return len(cs)
+}
+
+func (e *testEnv) pausedCount(serviceID string) int {
+	e.m.mu.Lock()
+	defer e.m.mu.Unlock()
+	return e.m.paused[serviceID]
+}
+
+func TestPauseServiceCancelsBackups(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv/a")
+	e.docker.volumes["/srv/a"] = volumeTar("/srv/a", map[string]string{"x": "1"})
+	done := e.backUp(sv.ID)
+	bd := startBlocked(e, false)
+
+	running, err := e.m.BackUp(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-bd.started
+	r, err := e.st.CreateRestore(e.ctx, store.Restore{ServiceID: sv.ID, BackupID: done.ID, Status: store.RestoreRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.m.mu.Lock()
+	e.m.push(&job{serviceID: sv.ID, backup: done, restore: &r})
+	e.m.mu.Unlock()
+
+	resume, err := e.m.PauseService(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.backup(running.ID); got.Status != store.BackupFailed || got.Error != errPaused.Error() {
+		t.Errorf("running backup = %+v, want failed with %q", got, errPaused)
+	}
+	if got := mustLatestRestore(t, e, sv.ID); got.Status != store.RestoreFailed || got.Error != errPaused.Error() {
+		t.Errorf("queued restore = %+v, want failed with %q", got, errPaused)
+	}
+	if n := e.helpers(); n != 0 {
+		t.Errorf("%d helper containers left when PauseService returned", n)
+	}
+
+	// New work is rejected, scheduled backups are skipped.
+	if _, err := e.m.BackUp(e.ctx, sv.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("BackUp while paused = %v, want ErrBusy", err)
+	}
+	if _, err := e.m.Restore(e.ctx, done.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("Restore while paused = %v, want ErrBusy", err)
+	}
+	e.m.tick(e.ctx, time.Date(2026, 10, 4, 2, 59, 31, 0, time.UTC))
+	e.m.tick(e.ctx, time.Date(2026, 10, 4, 3, 0, 1, 0, time.UTC))
+	bs, _ := e.st.Backups(e.ctx, sv.ID, 0)
+	for _, b := range bs {
+		if b.Trigger == store.BackupSchedule {
+			t.Errorf("scheduled backup %+v ran while paused", b)
+		}
+	}
+
+	// A second pause keeps the service paused until both resume.
+	resume2, err := e.m.PauseService(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume()
+	resume()
+	if _, err := e.m.BackUp(e.ctx, sv.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("BackUp with one pause left = %v, want ErrBusy", err)
+	}
+	resume2()
+	if n := e.pausedCount(sv.ID); n != 0 {
+		t.Errorf("paused count = %d after resuming, want 0", n)
+	}
+	if _, err := e.m.BackUp(e.ctx, sv.ID); err != nil {
+		t.Errorf("BackUp after resume = %v", err)
+	}
+}
+
+func TestPauseServiceKeepsRunningRestore(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv/a")
+	e.docker.volumes["/srv/a"] = volumeTar("/srv/a", map[string]string{"x": "1"})
+	b := e.backUp(sv.ID)
+	bd := startBlocked(e, false)
+
+	r, err := e.m.Restore(e.ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-bd.started // Blocked in the pre-restore backup.
+	if _, err := e.m.PauseService(e.ctx, sv.ID); !errors.Is(err, ErrBusy) {
+		t.Fatalf("PauseService during a restore = %v, want ErrBusy", err)
+	}
+	if n := e.pausedCount(sv.ID); n != 0 {
+		t.Errorf("paused count = %d, want 0", n)
+	}
+	got, err := e.st.LatestRestore(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != r.ID || got.Status != store.RestoreRunning {
+		t.Errorf("restore = %+v, want still running", got)
+	}
+	e.m.mu.Lock()
+	canceled := e.m.running.ctx.Err()
+	e.m.mu.Unlock()
+	if canceled != nil {
+		t.Errorf("running restore was canceled: %v", canceled)
+	}
+}
+
+func TestPauseServiceContext(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv/a")
+	bd := startBlocked(e, true)
+	if _, err := e.m.BackUp(e.ctx, sv.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-bd.started
+
+	ctx, cancel := context.WithTimeout(e.ctx, 50*time.Millisecond)
+	defer cancel()
+	resume, err := e.m.PauseService(ctx, sv.ID)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("PauseService = %v, want the context's error", err)
+	}
+	if resume != nil {
+		t.Error("PauseService returned a resume function with its error")
+	}
+	if n := e.pausedCount(sv.ID); n != 0 {
+		t.Errorf("paused count = %d after the context ended, want 0", n)
 	}
 }

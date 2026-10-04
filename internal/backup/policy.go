@@ -256,7 +256,7 @@ func (m *Manager) tick(ctx context.Context, now time.Time) {
 		if _, err := m.enqueueBackup(ctx, id, store.BackupSchedule); err != nil {
 			switch {
 			case errors.Is(err, ErrBusy):
-				m.log.Info("backup: skip scheduled backup, one is already queued", "service", id)
+				m.log.Info("backup: skip scheduled backup, the service is busy", "service", id)
 			case errors.Is(err, errNotDeployed):
 				m.log.Debug("backup: skip scheduled backup of a service that was never deployed", "service", id)
 			default:

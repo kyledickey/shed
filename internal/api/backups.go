@@ -19,6 +19,30 @@ const backupsPageSize = 100
 // backup to stop.
 const forgetTimeout = 30 * time.Second
 
+// pauseBackups stops the backups and restores of services from running until
+// the returned function is called, so that deleting them does not find their
+// volumes in use. It returns backup.ErrBusy, pausing nothing, if a restore of
+// one of them is running.
+func (s *Server) pauseBackups(ctx context.Context, serviceIDs ...string) (resume func(), err error) {
+	ctx, cancel := context.WithTimeout(ctx, forgetTimeout)
+	defer cancel()
+	var resumes []func()
+	resume = func() {
+		for _, r := range resumes {
+			r()
+		}
+	}
+	for _, id := range serviceIDs {
+		r, err := s.backups.PauseService(ctx, id)
+		if err != nil {
+			resume()
+			return nil, err
+		}
+		resumes = append(resumes, r)
+	}
+	return resume, nil
+}
+
 // forgetBackups tells the backup manager that services were deleted. A
 // failure does not undo the deletion, so it is only logged.
 func (s *Server) forgetBackups(ctx context.Context, serviceIDs ...string) {

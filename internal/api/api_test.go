@@ -33,8 +33,10 @@ import (
 type fakeDeployer struct {
 	mu         sync.Mutex
 	deploy     []store.Trigger
-	controls   []string // "stop <id>", "start <id>", "restart <id>"
-	controlErr error    // returned by the service controls
+	controls   []string        // "stop <id>", "start <id>", "restart <id>"
+	controlErr error           // returned by the service controls
+	deleteErr  error           // returned by DeleteService and DeleteProject
+	onDelete   func(id string) // called by them with "delete <id>"
 }
 
 func (f *fakeDeployer) control(op, serviceID string) error {
@@ -42,6 +44,16 @@ func (f *fakeDeployer) control(op, serviceID string) error {
 	defer f.mu.Unlock()
 	f.controls = append(f.controls, op+" "+serviceID)
 	return f.controlErr
+}
+
+func (f *fakeDeployer) delete(id string) error {
+	f.mu.Lock()
+	onDelete, err := f.onDelete, f.deleteErr
+	f.mu.Unlock()
+	if onDelete != nil {
+		onDelete("delete " + id)
+	}
+	return err
 }
 
 func (f *fakeDeployer) StopService(_ context.Context, id string) error { return f.control("stop", id) }
@@ -74,10 +86,10 @@ func (f *fakeDeployer) Cancel(context.Context, string) (store.Deployment, error)
 func (f *fakeDeployer) ServiceStatuses(context.Context, string) (map[string]deploy.ServiceStatus, error) {
 	return map[string]deploy.ServiceStatus{}, nil
 }
-func (f *fakeDeployer) ApplyRoutes(context.Context) error           { return nil }
-func (f *fakeDeployer) DeleteService(context.Context, string) error { return nil }
-func (f *fakeDeployer) DeleteProject(context.Context, string) error { return nil }
-func (f *fakeDeployer) DeleteVolume(context.Context, string) error  { return nil }
+func (f *fakeDeployer) ApplyRoutes(context.Context) error                { return nil }
+func (f *fakeDeployer) DeleteService(_ context.Context, id string) error { return f.delete(id) }
+func (f *fakeDeployer) DeleteProject(_ context.Context, id string) error { return f.delete(id) }
+func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { return nil }
 func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, io.Writer) error {
 	return deploy.ErrNoContainer
 }

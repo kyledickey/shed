@@ -508,9 +508,13 @@ manual steps below.
 `running` restores are marked `failed` ("interrupted by restart"). Leftover
 `.partial` files (archives, snapshots, downloads) and `shed.backup` helper
 containers are removed. On shutdown the running job is canceled and it and
-the queued ones are marked `failed` ("interrupted by shutdown"). After a
-service is deleted, its queued and running jobs are canceled ("service
-deleted") and `<data>/backups/<serviceID>` is removed. Its rows go with the
+the queued ones are marked `failed` ("interrupted by shutdown"). Deleting a
+service or project first pauses its services in the backup manager: running
+backups and queued jobs are canceled ("canceled: service is being deleted"),
+their helper containers are removed, and new jobs get `ErrBusy` until the delete
+ends; a running restore makes the delete fail with 409. After a
+service is deleted, any remaining jobs are canceled ("service deleted") and
+`<data>/backups/<serviceID>` is removed. Its rows go with the
 service. S3 objects are kept as the off-site copy, and the user can remove
 them by hand. Deleting a single backup removes its local file and S3 object;
 while S3 is not configured, the object is kept and logged.

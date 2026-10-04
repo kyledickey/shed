@@ -189,6 +189,11 @@ func relative(p string) bool {
 
 func (s *Server) deleteService(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
+	resume, err := s.pauseBackups(r.Context(), id)
+	if err != nil {
+		return err
+	}
+	defer resume()
 	if err := s.deployer.DeleteService(r.Context(), id); err != nil {
 		return err
 	}

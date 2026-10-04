@@ -25,6 +25,7 @@ type fakeBackups struct {
 
 	mu       sync.Mutex
 	err      error
+	pauseErr map[string]error // PauseService errors by service ID
 	calls    []string
 	policy   backup.Policy
 	setPol   backup.PolicyInput
@@ -85,6 +86,21 @@ func (f *fakeBackups) Open(_ context.Context, backupID string) (io.ReadCloser, e
 		return nil, err
 	}
 	return io.NopCloser(strings.NewReader(f.archive)), nil
+}
+
+func (f *fakeBackups) PauseService(_ context.Context, serviceID string) (func(), error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.pauseErr[serviceID]; err != nil {
+		f.calls = append(f.calls, "pause failed "+serviceID)
+		return nil, err
+	}
+	f.calls = append(f.calls, "pause "+serviceID)
+	return func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.calls = append(f.calls, "resume "+serviceID)
+	}, nil
 }
 
 func (f *fakeBackups) ForgetService(_ context.Context, serviceID string) error {
@@ -541,8 +557,8 @@ func TestDeleteForgetsBackups(t *testing.T) {
 	if rec := f.do("DELETE", "/api/services/"+a.ID, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete service: status = %d", rec.Code)
 	}
-	if calls := f.backups.seen(); !slices.Equal(calls, []string{"forget " + a.ID}) {
-		t.Errorf("calls = %v, want forget of the service", calls)
+	if calls, want := f.backups.seen(), []string{"pause " + a.ID, "forget " + a.ID, "resume " + a.ID}; !slices.Equal(calls, want) {
+		t.Errorf("calls = %v, want %v", calls, want)
 	}
 
 	// A failure to clean up does not fail the deletion.
@@ -550,12 +566,90 @@ func TestDeleteForgetsBackups(t *testing.T) {
 	if rec := f.do("DELETE", "/api/projects/"+a.ProjectID, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete project: status = %d; body: %s", rec.Code, rec.Body)
 	}
-	calls := f.backups.seen()[1:]
+	calls := f.backups.seen()[3:]
 	slices.Sort(calls)
-	want := []string{"forget " + a.ID, "forget " + b.ID}
+	want := []string{
+		"pause " + a.ID, "pause " + b.ID, "forget " + a.ID, "forget " + b.ID, "resume " + a.ID, "resume " + b.ID,
+	}
 	slices.Sort(want)
 	if !slices.Equal(calls, want) {
 		t.Errorf("project delete calls = %v, want %v", calls, want)
+	}
+}
+
+func TestDeletePausesBackups(t *testing.T) {
+	f := newFixture(t)
+	a := createApp(t, f.st)
+	b, err := f.st.CreateService(context.Background(), store.Service{ProjectID: a.ProjectID, Name: "db", Kind: "postgres"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceCall := func() *httptest.ResponseRecorder { return f.do("DELETE", "/api/services/"+a.ID, "") }
+	projectCall := func() *httptest.ResponseRecorder { return f.do("DELETE", "/api/projects/"+a.ProjectID, "") }
+
+	tests := []struct {
+		name      string
+		call      func() *httptest.ResponseRecorder
+		pauseErr  map[string]error
+		deleteErr error
+		status    int
+		want      []string // in order; the project's services are sorted
+	}{
+		{
+			name: "service", call: serviceCall, status: http.StatusNoContent,
+			want: []string{"pause " + a.ID, "delete " + a.ID, "forget " + a.ID, "resume " + a.ID},
+		},
+		{
+			name: "service busy", call: serviceCall, status: http.StatusConflict,
+			pauseErr: map[string]error{a.ID: backup.ErrBusy},
+			want:     []string{"pause failed " + a.ID},
+		},
+		{
+			name: "service delete fails", call: serviceCall, status: http.StatusConflict,
+			deleteErr: deploy.ErrServiceBusy,
+			want:      []string{"pause " + a.ID, "delete " + a.ID, "resume " + a.ID},
+		},
+		{
+			name: "project", call: projectCall, status: http.StatusNoContent,
+			want: []string{
+				"pause " + a.ID, "pause " + b.ID, "delete " + a.ProjectID,
+				"forget " + a.ID, "forget " + b.ID, "resume " + a.ID, "resume " + b.ID,
+			},
+		},
+		{
+			name: "project busy resumes the paused", call: projectCall, status: http.StatusConflict,
+			pauseErr: map[string]error{b.ID: backup.ErrBusy},
+			want:     []string{"pause " + a.ID, "pause failed " + b.ID, "resume " + a.ID},
+		},
+		{
+			name: "project delete fails", call: projectCall, status: http.StatusConflict,
+			deleteErr: deploy.ErrServiceBusy,
+			want: []string{
+				"pause " + a.ID, "pause " + b.ID, "delete " + a.ProjectID, "resume " + a.ID, "resume " + b.ID,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f.backups.mu.Lock()
+			f.backups.calls, f.backups.pauseErr = nil, tt.pauseErr
+			f.backups.mu.Unlock()
+			f.deployer.mu.Lock()
+			f.deployer.deleteErr = tt.deleteErr
+			f.deployer.onDelete = func(call string) {
+				f.backups.mu.Lock()
+				defer f.backups.mu.Unlock()
+				f.backups.calls = append(f.backups.calls, call)
+			}
+			f.deployer.mu.Unlock()
+
+			if rec := tt.call(); rec.Code != tt.status {
+				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.status, rec.Body)
+			}
+			if got := f.backups.seen(); !slices.Equal(got, tt.want) {
+				t.Errorf("calls = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
