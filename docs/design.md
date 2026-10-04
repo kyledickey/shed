@@ -289,7 +289,9 @@ and author. Other events are acknowledged and ignored.
 JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
 status. All routes except auth, setup, and webhook require a session.
 SSE endpoints emit `event: log` (one line per event), `event: status`
-(deployment status changes), and `event: end`.
+(deployment status changes, data `{"status":"…"}`), and `event: end`.
+Reconnecting clients get history replayed. Runtime logs send `end` right away
+when nothing is running. Setup failures redirect to `/setup?error=…`.
 
 ```
 GET    /api/me                                  → User
@@ -303,7 +305,7 @@ GET    /api/setup/github/callback?code=&state=  302 → GitHub install page
 
 GET    /api/projects                            → Project[]
 POST   /api/projects            {name}          → Project
-GET    /api/projects/{id}                       → Project
+GET    /api/projects/{id}                       → ProjectDetail
 PATCH  /api/projects/{id}       {name}          → Project
 DELETE /api/projects/{id}                       204  (tears down everything)
 
@@ -351,6 +353,7 @@ type Project = {
   id: string; name: string; createdAt: string;
   services: { id: string; name: string; kind: ServiceKind; status: ServiceStatus }[];
 };
+type ProjectDetail = Omit<Project, "services"> & { services: Service[] };
 
 type Service = {
   id: string; projectId: string; name: string; kind: ServiceKind;
