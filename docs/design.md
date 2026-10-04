@@ -584,3 +584,11 @@ Deleting a volume tolerates a missing Docker volume and defers removal only when
 Docker reports that the volume is still in use. Other Docker errors fail the
 request and preserve the volume record for retry; they are not reported as a
 successful deferred deletion.
+
+### Webhook delivery deduplication
+
+Successfully authenticated push payloads are hashed and tracked per matching
+service. Repeated deliveries skip deployments already enqueued; concurrent
+processing or enqueue failures return 503, allowing retries without duplicating
+successful enqueues. The in-memory cache holds at most 1,024 entries for up to
+24 hours and clears on restart; old completed entries may be evicted at capacity.

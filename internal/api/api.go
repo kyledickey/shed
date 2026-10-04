@@ -76,6 +76,7 @@ type Server struct {
 	log        *slog.Logger
 
 	webhooks   webhookGuard
+	deliveries deliveryCache
 	setupMu    sync.Mutex // serializes completing the GitHub setup
 	tokenMu    sync.Mutex
 	setupToken string // guarded by tokenMu; empty once GitHub is configured

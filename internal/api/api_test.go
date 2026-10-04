@@ -393,6 +393,9 @@ func TestWebhook(t *testing.T) {
 	if code := send("sha256=" + hex.EncodeToString(mac.Sum(nil))); code != http.StatusAccepted {
 		t.Errorf("good signature: status = %d, want 202", code)
 	}
+	if code := send("sha256=" + hex.EncodeToString(mac.Sum(nil))); code != http.StatusAccepted {
+		t.Errorf("duplicate signature: status = %d, want 202", code)
+	}
 	if got := f.deployer.triggers(); len(got) != 1 || got[0] != store.TriggerPush {
 		t.Errorf("deploys = %v, want [push]", got)
 	}

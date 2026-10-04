@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -292,9 +293,21 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	commit := deploy.Commit{SHA: ev.SHA, Message: ev.Message, Author: ev.Author}
+	digest := sha256.Sum256(body)
 	for _, svc := range services {
-		if _, err := s.deployer.Deploy(r.Context(), svc.ID, store.TriggerPush, commit); err != nil {
+		key := deliveryKey{body: digest, service: svc.ID}
+		duplicate, busy := s.deliveries.begin(key, time.Now())
+		if duplicate {
+			continue
+		}
+		if busy {
+			return errorf(http.StatusServiceUnavailable, "delivery is already being scheduled; retry later")
+		}
+		_, err := s.deployer.Deploy(r.Context(), svc.ID, store.TriggerPush, commit)
+		s.deliveries.finish(key, err == nil)
+		if err != nil {
 			s.log.Error("deploy on push", "service", svc.ID, "err", err)
+			return errorf(http.StatusServiceUnavailable, "could not schedule delivery; retry later")
 		}
 	}
 	s.log.Info("push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
