@@ -4,7 +4,7 @@ DEV_CONFIG ?= shed.dev.toml
 .PHONY: web build test dev
 
 web:
-	cd web && npm ci && npm run build
+	cd web && bun ci && bun run build
 
 build: web
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/shed ./cmd/shed

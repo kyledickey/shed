@@ -63,5 +63,5 @@ cp deploy/shed.example.toml shed.dev.toml
 # In shed.dev.toml: url = "http://localhost:3000", a writable data.dir, and
 # proxy.enabled = false.
 make dev                       # runs shed with shed.dev.toml
-cd web && npm run dev          # dashboard with hot reload
+cd web && bun run dev          # dashboard with hot reload
 ```
