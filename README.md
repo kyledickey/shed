@@ -30,7 +30,8 @@ sudo cp deploy/shed.service /etc/systemd/system/
 sudo systemctl enable --now shed
 ```
 
-Set at least `server.url` (the public dashboard URL) and `proxy.acme_email`.
+Set `server.url` (the public dashboard URL), `proxy.acme_email`, and
+`auth.allowed_users = ["your-github-login"]`.
 Every setting can also be given as an environment variable, such as
 `SHED_SERVER_URL`. Logs go to `shed.log` next to the config file and to the
 journal.
@@ -52,8 +53,8 @@ journal.
    GitHub App. GitHub sends you back to shed, which stores the App's
    credentials.
 3. Install the App on the accounts or repositories you want to deploy.
-4. Sign in with GitHub. If `auth.allowed_users` is empty, the first person to
-   sign in becomes the owner and nobody else can sign in.
+4. Sign in with a GitHub login listed in `auth.allowed_users`. There is no
+   automatic first-user enrollment.
 
 ## Development
 

@@ -132,7 +132,7 @@ func TestCallbackAccessRule(t *testing.T) {
 		who      github.User
 		want     bool
 	}{
-		{"first user becomes owner", nil, nil, alice, true},
+		{"first user requires allow list", nil, nil, alice, false},
 		{"second user denied without allow list", []User{{GitHubID: 1, Login: "Alice"}}, nil, bob, false},
 		{"existing user allowed", []User{{GitHubID: 2, Login: "bob"}}, nil, bob, true},
 		{"existing user still allowed when list excludes them", []User{{GitHubID: 2, Login: "bob"}}, []string{"alice"}, bob, true},
@@ -168,7 +168,7 @@ func TestCallbackAccessRule(t *testing.T) {
 
 func TestCallbackSessionCookie(t *testing.T) {
 	for base, secure := range map[string]bool{"https://x": true, "http://x": false} {
-		rec := signIn(t, newAuth(newMemStore(), fakeOAuth{user: github.User{ID: 1, Login: "a"}}, base), "code")
+		rec := signIn(t, newAuth(newMemStore(), fakeOAuth{user: github.User{ID: 1, Login: "a"}}, base, "a"), "code")
 		c := cookieNamed(rec, sessionCookie)
 		if c == nil || c.Secure != secure || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode ||
 			c.MaxAge != 30*24*3600 || len(c.Value) != 43 {
@@ -215,7 +215,7 @@ func TestCallbackRejections(t *testing.T) {
 
 func TestRequire(t *testing.T) {
 	store := newMemStore()
-	a := newAuth(store, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x")
+	a := newAuth(store, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x", "alice")
 	var seen User
 	h := a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen, _ = UserFrom(r.Context())
@@ -249,7 +249,7 @@ func TestRequire(t *testing.T) {
 
 func TestLogout(t *testing.T) {
 	store := newMemStore()
-	a := newAuth(store, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x")
+	a := newAuth(store, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x", "alice")
 	sess := cookieNamed(signIn(t, a, "code"), sessionCookie)
 
 	req := httptest.NewRequest("POST", "/api/auth/logout", nil)

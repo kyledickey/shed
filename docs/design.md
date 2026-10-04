@@ -49,7 +49,7 @@ acme_email  = ""
 base_domain = ""                   # e.g. "apps.example.com" → generated domains
 
 [auth]
-allowed_users = []                 # GitHub logins; if empty, the first sign-in becomes the owner
+allowed_users = []                 # Explicit GitHub logins; configure before first sign-in
 
 [log]
 level = "info"
@@ -336,8 +336,8 @@ stores app ID, slug, client ID/secret, webhook secret, and private key in
 
 `/api/auth/login` → GitHub OAuth authorize (app client ID, random state cookie)
 → `/api/auth/callback` exchanges the code, fetches the user, and checks access:
-allowed if the login is in `auth.allowed_users`, or already in `users`, or
-`users` is empty and `allowed_users` is empty (first user becomes owner).
+allowed if the login is in `auth.allowed_users` or already in `users`. New
+accounts, including the first administrator, require an explicit allowlist entry.
 Session cookie `shed_session` (random 32 bytes, stored hashed), HttpOnly,
 SameSite=Lax, Secure when `server.url` is https, 30 days.
 

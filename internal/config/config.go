@@ -63,8 +63,8 @@ type Proxy struct {
 
 // Auth configures dashboard access.
 type Auth struct {
-	// AllowedUsers lists the GitHub logins that may sign in. When empty, the
-	// first user to sign in becomes the owner.
+	// AllowedUsers lists the GitHub logins that may sign in. New accounts
+	// must be listed explicitly, including the first administrator.
 	AllowedUsers []string `koanf:"allowed_users"`
 }
 

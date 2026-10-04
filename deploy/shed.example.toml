@@ -17,8 +17,7 @@ acme_email = "you@example.com"
 base_domain = "apps.example.com"
 
 [auth]
-# GitHub logins allowed to sign in. Leave empty to let the first sign-in
-# become the owner.
+# Add your GitHub login before signing in for the first time.
 allowed_users = []
 
 [log]

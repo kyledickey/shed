@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kyledickey/shed/internal/github"
@@ -46,8 +45,6 @@ type User struct {
 // Store persists users and sessions. Sessions are keyed by the hash of their
 // token, never the token itself.
 type Store interface {
-	// CountUsers returns the number of known users.
-	CountUsers(ctx context.Context) (int, error)
 	// User returns the user with the given GitHub ID, and whether it exists.
 	User(ctx context.Context, githubID int64) (User, bool, error)
 	// UpsertUser creates the user or updates its profile.
@@ -79,10 +76,6 @@ type Auth struct {
 	allowed map[string]bool // Lowercase logins.
 	secure  bool            // Whether cookies are marked Secure.
 	log     *slog.Logger
-
-	// signInMu makes the first-user check and the user insert atomic, so two
-	// simultaneous first sign-ins cannot both become the owner.
-	signInMu sync.Mutex
 }
 
 // New returns an Auth that keeps sessions in store. oauth reports the GitHub
@@ -210,25 +203,16 @@ var errDenied = errors.New("auth: user not permitted")
 
 // admit applies the access rule to user and, if it passes, records the user
 // and a new session, returning the session token. A login is permitted if it
-// is in the allowed list, or its user already exists, or no users exist and
-// no list is configured (the first user becomes the owner).
+// is in the allowed list or its user already exists. New users must be
+// explicitly allowed, including the first administrator.
 func (a *Auth) admit(ctx context.Context, user User) (token string, err error) {
-	a.signInMu.Lock()
-	defer a.signInMu.Unlock()
-
 	if !a.allowed[strings.ToLower(user.Login)] {
 		_, exists, err := a.store.User(ctx, user.GitHubID)
 		if err != nil {
 			return "", fmt.Errorf("auth: look up user %q: %w", user.Login, err)
 		}
 		if !exists {
-			n, err := a.store.CountUsers(ctx)
-			if err != nil {
-				return "", fmt.Errorf("auth: count users: %w", err)
-			}
-			if n > 0 || len(a.allowed) > 0 {
-				return "", errDenied
-			}
+			return "", errDenied
 		}
 	}
 	if err := a.store.UpsertUser(ctx, user); err != nil {

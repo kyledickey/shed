@@ -18,10 +18,6 @@ type authStore struct {
 	st *store.Store
 }
 
-func (a authStore) CountUsers(ctx context.Context) (int, error) {
-	return a.st.CountUsers(ctx)
-}
-
 func (a authStore) User(ctx context.Context, githubID int64) (auth.User, bool, error) {
 	return found(a.st.User(ctx, githubID))
 }
