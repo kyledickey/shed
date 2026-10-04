@@ -8,7 +8,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Menu, MenuItem, MenuSeparator } from "../../components/Menu";
 import { ProjectNameDialog } from "./ProjectNameDialog";
 
-export function ProjectMenu({ project }: { project: Project }) {
+export function ProjectMenu({ project }: { project: Pick<Project, "id" | "name"> }) {
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
   const rename = useRenameProject(project.id);
   const remove = useDeleteProject(project.id);

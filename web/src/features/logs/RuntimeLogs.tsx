@@ -11,7 +11,7 @@ const stateLabels: Record<StreamState, string> = {
   connecting: "Connecting",
   open: "Live",
   reconnecting: "Reconnecting",
-  ended: "Stream ended",
+  ended: "Not running",
   closed: "Disconnected",
 };
 
@@ -22,7 +22,7 @@ export function RuntimeLogs({ service }: { service: Service }) {
   const visible = query ? lines.filter((l) => l.text.toLowerCase().includes(query)) : lines;
 
   const empty =
-    service.status === "offline" || service.status === "failed"
+    lines.length === 0 && (state === "ended" || service.status === "offline")
       ? "Nothing is running. Deploy the service to see its logs."
       : query && lines.length > 0
         ? `No lines match “${filter}”.`

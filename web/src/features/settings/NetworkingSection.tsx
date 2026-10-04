@@ -8,7 +8,6 @@ import { Card } from "../../components/Card";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { CopyButton } from "../../components/CopyButton";
 import { Input } from "../../components/Input";
-import { useRedeployHint } from "../services/redeploy";
 import { useSectionForm } from "./SettingsSection";
 import styles from "./Settings.module.css";
 
@@ -55,18 +54,11 @@ function Subsection({
 
 function Domains({ service }: { service: Service }) {
   const add = useAddDomain(service.id);
-  const hint = useRedeployHint();
   const [host, setHost] = useState("");
   const [removing, setRemoving] = useState<Domain | null>(null);
   const remove = useDeleteDomain(service.id);
 
-  const submit = (value?: string) =>
-    add.mutate(value, {
-      onSuccess: () => {
-        setHost("");
-        hint.markPending();
-      },
-    });
+  const submit = (value?: string) => add.mutate(value, { onSuccess: () => setHost("") });
 
   return (
     <Subsection
@@ -136,10 +128,7 @@ function Domains({ service }: { service: Service }) {
         onConfirm={() =>
           removing &&
           remove.mutate(removing.id, {
-            onSuccess: () => {
-              setRemoving(null);
-              hint.markPending();
-            },
+            onSuccess: () => setRemoving(null),
           })
         }
       >

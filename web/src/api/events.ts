@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import type { DeploymentStatus } from "./types";
 
 export type StreamState = "connecting" | "open" | "reconnecting" | "ended" | "closed";
 
 type Handlers = {
   open?: () => void;
   log?: (line: string) => void;
-  status?: (status: string) => void;
+  status?: (status: DeploymentStatus) => void;
   end?: () => void;
 };
 
@@ -34,7 +35,10 @@ export function useEventSource(url: string | null, handlers: Handlers): StreamSt
       handlersRef.current.open?.();
     });
     es.addEventListener("log", (e) => handlersRef.current.log?.(e.data));
-    es.addEventListener("status", (e) => handlersRef.current.status?.(parseStatus(e.data)));
+    es.addEventListener("status", (e) => {
+      const { status } = JSON.parse(e.data) as { status: DeploymentStatus };
+      handlersRef.current.status?.(status);
+    });
     es.addEventListener("end", () => {
       es.close();
       set("ended");
@@ -49,19 +53,6 @@ export function useEventSource(url: string | null, handlers: Handlers): StreamSt
   return state.url === url ? state.value : "connecting";
 }
 
-function parseStatus(data: string): string {
-  try {
-    const parsed: unknown = JSON.parse(data);
-    if (typeof parsed === "string") return parsed;
-    if (parsed && typeof parsed === "object" && "status" in parsed) {
-      return String(parsed.status);
-    }
-  } catch {
-    // Plain-text status.
-  }
-  return data.trim();
-}
-
 export type LogLine = { id: number; text: string };
 
 const MAX_LINES = 5000;
@@ -73,7 +64,7 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
  * animation frame. The server replays history on (re)connect, so lines reset
  * whenever the stream opens.
  */
-export function useLogStream(url: string | null, onStatus?: (status: string) => void) {
+export function useLogStream(url: string | null, onStatus?: (status: DeploymentStatus) => void) {
   const [lines, setLines] = useState<LogLine[]>([]);
   const pending = useRef<LogLine[]>([]);
   const frame = useRef(0);

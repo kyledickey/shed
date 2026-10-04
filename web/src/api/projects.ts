@@ -1,9 +1,9 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { Project } from "./types";
+import type { Project, ProjectDetail } from "./types";
 
-const anyDeploying = (projects: Project[] | undefined) =>
+const anyDeploying = (projects: (Project | ProjectDetail)[] | undefined) =>
   projects?.some((p) => p.services.some((s) => s.status === "deploying")) ?? false;
 
 export const projectsQuery = queryOptions({
@@ -15,7 +15,7 @@ export const projectsQuery = queryOptions({
 export const projectQuery = (id: string) =>
   queryOptions({
     queryKey: keys.project(id),
-    queryFn: () => api.get<Project>(`/projects/${id}`),
+    queryFn: () => api.get<ProjectDetail>(`/projects/${id}`),
     refetchInterval: (q) =>
       anyDeploying(q.state.data ? [q.state.data] : undefined) ? 3000 : 15_000,
   });
@@ -32,10 +32,7 @@ export function useRenameProject(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => api.patch<Project>(`/projects/${id}`, { name }),
-    onSuccess: (project) => {
-      qc.setQueryData(keys.project(id), project);
-      return qc.invalidateQueries({ queryKey: keys.projects, exact: true });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects }),
   });
 }
 

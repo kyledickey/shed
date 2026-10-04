@@ -24,6 +24,9 @@ export type Project = {
   services: ServiceSummary[];
 };
 
+/** GET /api/projects/{id} returns full services instead of summaries. */
+export type ProjectDetail = Omit<Project, "services"> & { services: Service[] };
+
 export type Service = {
   id: string;
   projectId: string;

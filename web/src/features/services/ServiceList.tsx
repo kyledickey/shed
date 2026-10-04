@@ -1,45 +1,45 @@
-import { useQueries } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { serviceQuery } from "../../api/services";
-import type { Project, Service } from "../../api/types";
+import { useEffect } from "react";
+import { keys } from "../../api/keys";
+import type { ProjectDetail, Service } from "../../api/types";
 import { RelativeTime } from "../../components/RelativeTime";
 import { kindLabels, ServiceIcon } from "../../components/ServiceIcon";
 import { StatusDot } from "../../components/StatusDot";
 import styles from "./ServiceList.module.css";
 
-export function ServiceList({ project }: { project: Project }) {
-  const details = useQueries({ queries: project.services.map((s) => serviceQuery(s.id)) });
+export function ServiceList({ project }: { project: ProjectDetail }) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    for (const service of project.services) qc.setQueryData(keys.service(service.id), service);
+  }, [project, qc]);
 
   return (
     <ul className={styles.list}>
-      {project.services.map((summary, i) => {
-        const service = details[i]?.data;
-        return (
-          <li key={summary.id}>
-            <Link
-              to="/projects/$projectId/services/$serviceId"
-              params={{ projectId: project.id, serviceId: summary.id }}
-              className={styles.row}
-            >
-              <ServiceIcon kind={summary.kind} repo={service?.repo} />
-              <div className={styles.main}>
-                <div className={styles.name}>{summary.name}</div>
-                <div className={styles.source}>
-                  {service ? serviceSource(service) : kindLabels[summary.kind]}
-                </div>
-              </div>
-              <div className={styles.time}>
-                {service?.latestDeployment && (
-                  <RelativeTime iso={service.latestDeployment.createdAt} />
-                )}
-              </div>
-              <div className={styles.status}>
-                <StatusDot status={service?.status ?? summary.status} />
-              </div>
-            </Link>
-          </li>
-        );
-      })}
+      {project.services.map((service) => (
+        <li key={service.id}>
+          <Link
+            to="/projects/$projectId/services/$serviceId"
+            params={{ projectId: project.id, serviceId: service.id }}
+            className={styles.row}
+          >
+            <ServiceIcon kind={service.kind} repo={service.repo} />
+            <div className={styles.main}>
+              <div className={styles.name}>{service.name}</div>
+              <div className={styles.source}>{serviceSource(service)}</div>
+            </div>
+            <div className={styles.time}>
+              {service.latestDeployment && (
+                <RelativeTime iso={service.latestDeployment.createdAt} />
+              )}
+            </div>
+            <div className={styles.status}>
+              <StatusDot status={service.status} />
+            </div>
+          </Link>
+        </li>
+      ))}
     </ul>
   );
 }
