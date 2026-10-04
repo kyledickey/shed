@@ -22,7 +22,7 @@ function ServerLayout() {
   const { pathname } = useLocation();
   const tab = tabs.find((t) => pathname === `/server/${t.value}`)?.value ?? "metrics";
   return (
-    <Page wide>
+    <Page>
       <PageHeader title="Server" description="The machine shed runs on, and shed itself." />
       <Tabs
         label="Server sections"
