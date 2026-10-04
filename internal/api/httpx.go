@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -59,8 +60,16 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status, msg = http.StatusConflict, "service is stopped; start it instead"
 	case errors.Is(err, deploy.ErrServiceBusy):
 		status, msg = http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"
-	case errors.Is(err, deploy.ErrStopped):
+	case errors.Is(err, deploy.ErrDeleting):
+		status, msg = http.StatusConflict, "service is being deleted"
+	case errors.Is(err, deploy.ErrStopped), errors.Is(err, backup.ErrStopped):
 		status, msg = http.StatusServiceUnavailable, "shutting down"
+	case errors.Is(err, backup.ErrInvalid):
+		status, msg = http.StatusBadRequest, err.Error()
+	case errors.Is(err, backup.ErrNoVolumes):
+		status, msg = http.StatusBadRequest, "service has no volumes to back up"
+	case errors.Is(err, backup.ErrBusy):
+		status, msg = http.StatusConflict, "a backup or restore is already in progress"
 	default:
 		s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 	}

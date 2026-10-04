@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/auth"
+	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -41,10 +42,30 @@ type Deployer interface {
 
 var _ Deployer = (*deploy.Deployer)(nil)
 
+// Backups runs backups and restores and holds the backup settings.
+// *backup.Manager implements it.
+type Backups interface {
+	BackUp(ctx context.Context, serviceID string) (store.Backup, error)
+	Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error)
+	Restore(ctx context.Context, backupID string) (store.Restore, error)
+	Delete(ctx context.Context, backupID string) error
+	Open(ctx context.Context, backupID string) (io.ReadCloser, error)
+	ForgetService(ctx context.Context, serviceID string) error
+	Policy(ctx context.Context, serviceID string) (backup.Policy, error)
+	SetPolicy(ctx context.Context, serviceID string, in backup.PolicyInput) (backup.Policy, error)
+	Settings(ctx context.Context) (backup.Settings, error)
+	SetSettings(ctx context.Context, in backup.SettingsInput) (backup.Settings, error)
+	TestS3(ctx context.Context, in backup.S3Input) error
+	Identity(ctx context.Context) (string, error)
+}
+
+var _ Backups = (*backup.Manager)(nil)
+
 // Config configures a Server.
 type Config struct {
 	Store    *store.Store
 	Deployer Deployer
+	Backups  Backups
 	Metrics  Metrics
 	Auth     *auth.Auth
 	// GitHub holds the GitHub client. New fills it from the stored App
@@ -66,6 +87,7 @@ type Config struct {
 type Server struct {
 	store      *store.Store
 	deployer   Deployer
+	backups    Backups
 	metrics    Metrics
 	auth       *auth.Auth
 	github     *GitHubHolder
@@ -88,6 +110,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
 		store:      cfg.Store,
 		deployer:   cfg.Deployer,
+		backups:    cfg.Backups,
 		metrics:    cfg.Metrics,
 		auth:       cfg.Auth,
 		github:     cfg.GitHub,
@@ -151,6 +174,20 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
+
+	authed("GET /api/services/{id}/backups", s.serviceBackups)
+	authed("PUT /api/services/{id}/backups/policy", s.putServiceBackupPolicy)
+	authed("POST /api/services/{id}/backups", s.runServiceBackup)
+	authed("GET /api/backups/system", s.systemBackups)
+	authed("PUT /api/backups/system/policy", s.putSystemBackupPolicy)
+	authed("POST /api/backups/system", s.runSystemBackup)
+	authed("GET /api/backups/settings", s.getBackupSettings)
+	authed("PUT /api/backups/settings", s.putBackupSettings)
+	authed("POST /api/backups/settings/test", s.testBackupSettings)
+	authed("GET /api/backups/settings/key", s.getBackupKey)
+	authed("GET /api/backups/{id}/download", s.downloadBackup)
+	authed("POST /api/backups/{id}/restore", s.restoreBackup)
+	authed("DELETE /api/backups/{id}", s.deleteBackup)
 
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)

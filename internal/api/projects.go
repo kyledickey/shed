@@ -98,9 +98,19 @@ func (s *Server) renameProject(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) error {
-	if err := s.deployer.DeleteProject(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	services, err := s.store.Services(r.Context(), id)
+	if err != nil {
 		return err
 	}
+	if err := s.deployer.DeleteProject(r.Context(), id); err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(services))
+	for _, svc := range services {
+		ids = append(ids, svc.ID)
+	}
+	s.forgetBackups(r.Context(), ids...)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

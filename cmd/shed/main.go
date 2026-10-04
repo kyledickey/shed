@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,12 +23,14 @@ import (
 
 	"github.com/kyledickey/shed/internal/api"
 	"github.com/kyledickey/shed/internal/auth"
+	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/config"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/proxy"
+	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/web"
 )
@@ -66,7 +69,8 @@ func run() error {
 
 	dataDir := cfg.Data.Dir
 	logDir, buildDir := filepath.Join(dataDir, "logs"), filepath.Join(dataDir, "builds")
-	for _, dir := range []string{dataDir, logDir, buildDir} {
+	backupDir := filepath.Join(dataDir, "backups")
+	for _, dir := range []string{dataDir, logDir, buildDir, backupDir} {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return fmt.Errorf("create data directory: %w", err)
 		}
@@ -125,6 +129,17 @@ func run() error {
 	})
 	defer deployer.Stop()
 
+	backups := backup.New(backup.Config{
+		Store:    st,
+		Docker:   dc,
+		Services: backupServices{deployer},
+		NewRemote: func(c backup.S3Config) (backup.Remote, error) {
+			return s3.New(s3.Config(c))
+		},
+		Dir: backupDir,
+		Log: log,
+	})
+
 	collector := metrics.New(metrics.Config{Docker: dc, Store: st, Log: log})
 
 	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
@@ -141,6 +156,7 @@ func run() error {
 	server, err := api.New(ctx, api.Config{
 		Store:      st,
 		Deployer:   deployer,
+		Backups:    backups,
 		Metrics:    collector,
 		Auth:       authn,
 		GitHub:     gh,
@@ -156,16 +172,30 @@ func run() error {
 	if err := deployer.Reconcile(ctx); err != nil {
 		return err
 	}
-	collectorDone := make(chan struct{})
-	go func() {
-		defer close(collectorDone)
-		collector.Run(ctx)
-	}()
+	// Backups hold services through the deployer, which is ready after
+	// Reconcile.
+	if err := backups.Recover(ctx); err != nil {
+		return err
+	}
+	var background sync.WaitGroup
+	background.Go(func() { collector.Run(ctx) })
+	background.Go(func() { backups.Run(ctx) })
 	defer func() {
-		stop() // Also ends the collector when serve fails.
-		<-collectorDone
+		stop() // Also ends the collector and backups when serve fails.
+		background.Wait()
 	}()
 	return serve(ctx, cfg.Server.Listen, server.Handler(), log)
+}
+
+// backupServices adapts the deployer to backup.Services.
+type backupServices struct{ d *deploy.Deployer }
+
+func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held, error) {
+	h, err := b.d.Hold(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 
 // newLogger returns a text logger writing to stderr and to a rotated file.

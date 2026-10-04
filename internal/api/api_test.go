@@ -110,6 +110,7 @@ type fixture struct {
 	t        *testing.T
 	st       *store.Store
 	deployer *fakeDeployer
+	backups  *fakeBackups
 	metrics  *fakeMetrics
 	github   *GitHubHolder
 	handler  http.Handler
@@ -127,10 +128,11 @@ func newFixture(t *testing.T) *fixture {
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, metrics: &fakeMetrics{}, github: gh}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, github: gh}
 	srv, err := New(context.Background(), Config{
 		Store:      st,
 		Deployer:   f.deployer,
+		Backups:    f.backups,
 		Metrics:    f.metrics,
 		Auth:       authn,
 		GitHub:     gh,
@@ -325,6 +327,10 @@ func TestServiceControls(t *testing.T) {
 		{"start", svc.ID, deploy.ErrNoContainer, http.StatusConflict, "nothing to run; deploy the service first"},
 		{"restart", svc.ID, deploy.ErrNoContainer, http.StatusConflict, "nothing to run; deploy the service first"},
 		{"restart", svc.ID, deploy.ErrServiceStopped, http.StatusConflict, "service is stopped; start it instead"},
+		{"stop", svc.ID, deploy.ErrServiceBusy, http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"},
+		{"start", svc.ID, deploy.ErrServiceBusy, http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"},
+		{"restart", svc.ID, deploy.ErrDeleting, http.StatusConflict, "service is being deleted"},
+		{"stop", svc.ID, deploy.ErrStopped, http.StatusServiceUnavailable, "shutting down"},
 		{"stop", "nope", store.ErrNotFound, http.StatusNotFound, "not found"},
 		{"stop", "nope", nil, http.StatusNotFound, "not found"},
 	}
