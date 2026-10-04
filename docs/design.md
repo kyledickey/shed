@@ -294,7 +294,8 @@ JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
 status. All routes except auth, setup, and webhook require a session.
 SSE endpoints emit `event: log` (one line per event), `event: status`
 (deployment status changes, data `{"status":"…"}`), and `event: end`.
-Reconnecting clients get history replayed. Runtime logs send `end` right away
+Reconnecting clients get history replayed. Runtime log lines start with the
+container's RFC 3339 timestamp and a space. Runtime logs send `end` right away
 when nothing is running. Setup failures redirect to `/setup?error=…`.
 
 ```
@@ -333,6 +334,7 @@ POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image =
 POST   /api/deployments/{id}/cancel             → Deployment
 GET    /api/deployments/{id}/logs               SSE build log (replays file, follows while building)
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
+GET    /api/services/{id}/metrics?range=        → Metrics  (range: 1h | 6h | 24h | 7d; default 1h)
 
 GET    /api/github/repos                        → Repo[]
 GET    /api/github/repos/{owner}/{repo}/branches → string[]
@@ -391,6 +393,21 @@ type Deployment = {
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
+
+// Container resource usage. Sample i is at start + i*step seconds; series
+// are the same length, oldest first, null where nothing was running.
+type Metrics = {
+  range: "1h" | "6h" | "24h" | "7d";
+  start: string; step: number;         // step in seconds
+  cpuLimit: number;                    // cores, 0 = unlimited
+  memoryLimit: number;                 // bytes, 0 = unlimited
+  cpu: (number | null)[];              // percent of one core (200 = two cores busy)
+  memory: (number | null)[];           // bytes in use
+  netRx: (number | null)[];            // bytes/s received
+  netTx: (number | null)[];            // bytes/s sent
+  diskRead: (number | null)[];         // bytes/s
+  diskWrite: (number | null)[];        // bytes/s
+};
 ```
 
 Service status is derived: latest deployment non-terminal → `deploying`;

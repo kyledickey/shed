@@ -99,6 +99,23 @@ export type Repo = { fullName: string; defaultBranch: string; private: boolean }
 
 export type Variables = Record<string, string>;
 
+export type MetricsRange = "1h" | "6h" | "24h" | "7d";
+
+/** Resource usage samples for a service's running container, evenly spaced from start. */
+export type Metrics = {
+  range: MetricsRange;
+  start: string;
+  step: number;
+  cpuLimit: number;
+  memoryLimit: number;
+  cpu: (number | null)[];
+  memory: (number | null)[];
+  netRx: (number | null)[];
+  netTx: (number | null)[];
+  diskRead: (number | null)[];
+  diskWrite: (number | null)[];
+};
+
 const pendingStatuses: ReadonlySet<DeploymentStatus> = new Set([
   "queued",
   "waiting",

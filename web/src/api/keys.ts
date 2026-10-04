@@ -6,6 +6,7 @@ export const keys = {
   service: (id: string) => ["services", id] as const,
   variables: (serviceId: string) => ["services", serviceId, "variables"] as const,
   deployments: (serviceId: string) => ["services", serviceId, "deployments"] as const,
+  metrics: (serviceId: string, range: string) => ["services", serviceId, "metrics", range] as const,
   repos: ["github", "repos"] as const,
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
 };

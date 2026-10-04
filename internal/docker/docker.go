@@ -400,8 +400,8 @@ func volumeNames(mounts []container.MountPoint) []string {
 	return names
 }
 
-// Logs copies the container's stdout and stderr to w. A negative tail means
-// all lines. With follow, Logs blocks until ctx is done or the container
+// Logs copies the container's stdout and stderr to w, each line prefixed
+// with its RFC 3339 timestamp and a space. A negative tail means all lines. With follow, Logs blocks until ctx is done or the container
 // exits; canceling ctx is not an error.
 func (c *Client) Logs(ctx context.Context, id string, tail int, follow bool, w io.Writer) error {
 	tailArg := "all"
@@ -413,6 +413,7 @@ func (c *Client) Logs(ctx context.Context, id string, tail int, follow bool, w i
 		ShowStderr: true,
 		Follow:     follow,
 		Tail:       tailArg,
+		Timestamps: true,
 	})
 	if err != nil {
 		return fmt.Errorf("docker: logs %s: %w", id, err)
