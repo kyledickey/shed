@@ -41,6 +41,9 @@ func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { retur
 func (f *fakeDocker) EnsureVolume(context.Context, string) error         { return nil }
 func (f *fakeDocker) RemoveVolume(context.Context, string) error         { return nil }
 func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
+func (f *fakeDocker) ResolveImage(context.Context, string) (string, error) {
+	return "sha256:original", nil
+}
 func (f *fakeDocker) ExposedPorts(context.Context, string) ([]int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

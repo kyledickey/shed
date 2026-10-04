@@ -170,7 +170,11 @@ func (j *job) buildImage(ctx context.Context, env map[string]string) error {
 		if err := j.docker.PullImage(ctx, j.svc.Image, j.out); err != nil {
 			return err
 		}
-		j.dep.Image = j.svc.Image
+		image, err := j.docker.ResolveImage(ctx, j.svc.Image)
+		if err != nil {
+			return err
+		}
+		j.dep.Image = image
 	}
 	j.save()
 	return nil

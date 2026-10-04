@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ type Docker interface {
 	EnsureVolume(ctx context.Context, name string) error
 	RemoveVolume(ctx context.Context, name string) error
 	PullImage(ctx context.Context, ref string, w io.Writer) error
+	ResolveImage(ctx context.Context, ref string) (string, error)
 	ListImages(ctx context.Context, repo string) ([]docker.Image, error)
 	ExposedPorts(ctx context.Context, ref string) ([]int, error)
 	RemoveImage(ctx context.Context, ref string) error
@@ -221,7 +223,7 @@ func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Dep
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	if old.Image == "" {
+	if old.Image == "" || (!strings.HasPrefix(old.Image, "sha256:") && !strings.Contains(old.Image, "@sha256:") && !strings.HasPrefix(old.Image, imageRepo(old.ServiceID)+":")) {
 		return store.Deployment{}, ErrNoImage
 	}
 	return d.enqueue(ctx, store.Deployment{

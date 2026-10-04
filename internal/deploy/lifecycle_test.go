@@ -215,3 +215,46 @@ func TestWaitForCIRequiresChecks(t *testing.T) {
 		t.Fatal("started container without CI approval")
 	}
 }
+
+type movingImageDocker struct {
+	*fakeDocker
+	image string
+}
+
+func (d *movingImageDocker) ResolveImage(context.Context, string) (string, error) {
+	return d.image, nil
+}
+func TestImageRollbackUsesOriginalIdentity(t *testing.T) {
+	f := newFixture(t)
+	f.svc.Repo = ""
+	f.svc.Image = "example:latest"
+	if err := f.st.UpdateService(context.Background(), f.svc); err != nil {
+		t.Fatal(err)
+	}
+	docker := &movingImageDocker{f.docker, "sha256:original"}
+	f.d.docker = docker
+	old := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	docker.image = "sha256:replacement"
+	f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	rollback, err := f.d.Redeploy(context.Background(), old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := f.wait(t, rollback.ID, terminal)
+	f.settle(t)
+	if restored.Image != "sha256:original" || f.docker.runs[len(f.docker.runs)-1].Image != "sha256:original" {
+		t.Fatal("rollback followed mutable tag")
+	}
+}
+func TestRedeployRejectsLegacyMutableImage(t *testing.T) {
+	f := newFixture(t)
+	old, err := f.st.CreateDeployment(context.Background(), store.Deployment{ServiceID: f.svc.ID, Image: "example:latest", Status: store.StatusRemoved, Trigger: store.TriggerManual})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.Redeploy(context.Background(), old.ID); !errors.Is(err, ErrNoImage) {
+		t.Fatalf("redeploy error = %v", err)
+	}
+}

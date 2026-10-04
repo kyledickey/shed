@@ -241,7 +241,10 @@ the same service.
    and pass. Timeout 60 min → `failed`.
 2. **Build**: repo apps clone the commit with an installation token and build
    `shed/<serviceID>:<deploymentID>`. Image apps and databases pull their
-   image. Redeploys of an old deployment reuse its image and skip this step.
+   image and record its immutable local image ID. Containers and rollbacks use
+   that ID even after the configured tag moves. Redeploys of old deployments
+   reuse the recorded image and skip this step; legacy tag-only records for
+   pulled images cannot be redeployed safely and must be deployed afresh.
    Railpack writes its generated plan and info into the private build workspace,
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
