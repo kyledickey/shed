@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/kyledickey/shed/internal/catalog"
@@ -22,8 +23,16 @@ var (
 	envKey   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
-// defaultAppPort is the port of new repo apps, which receive it as PORT.
-const defaultAppPort = 8080
+const (
+	// defaultAppPort is the port of new repo apps, which receive it as PORT.
+	defaultAppPort = 8080
+	// defaultCPULimit and defaultMemoryLimit are the container limits of new
+	// services: one core and 1 GiB.
+	defaultCPULimit    = 1
+	defaultMemoryLimit = 1 << 30
+	// minMemoryLimit is the smallest memory limit a service may set.
+	minMemoryLimit = 64 << 20
+)
 
 type newServiceRequest struct {
 	Name   string `json:"name"`
@@ -49,7 +58,14 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) error {
 		return errorf(http.StatusBadRequest, "service name must be a DNS label: lowercase letters, digits, and hyphens")
 	}
 
-	svc := store.Service{ProjectID: project.ID, Name: req.Name, Kind: req.Kind, AutoDeploy: true}
+	svc := store.Service{
+		ProjectID:   project.ID,
+		Name:        req.Name,
+		Kind:        req.Kind,
+		CPULimit:    defaultCPULimit,
+		MemoryLimit: defaultMemoryLimit,
+		AutoDeploy:  true,
+	}
 	var commit deploy.Commit
 	tmpl, isDB := catalog.Lookup(req.Kind)
 	switch {
@@ -109,17 +125,19 @@ func (s *Server) getService(w http.ResponseWriter, r *http.Request) error {
 }
 
 type servicePatch struct {
-	Repo            *string `json:"repo"`
-	Branch          *string `json:"branch"`
-	RootDir         *string `json:"rootDir"`
-	Image           *string `json:"image"`
-	DockerfilePath  *string `json:"dockerfilePath"`
-	StartCommand    *string `json:"startCommand"`
-	Port            *int    `json:"port"`
-	HealthcheckPath *string `json:"healthcheckPath"`
-	PublicPort      *int    `json:"publicPort"`
-	AutoDeploy      *bool   `json:"autoDeploy"`
-	WaitForCI       *bool   `json:"waitForCi"`
+	Repo            *string  `json:"repo"`
+	Branch          *string  `json:"branch"`
+	RootDir         *string  `json:"rootDir"`
+	Image           *string  `json:"image"`
+	DockerfilePath  *string  `json:"dockerfilePath"`
+	StartCommand    *string  `json:"startCommand"`
+	Port            *int     `json:"port"`
+	HealthcheckPath *string  `json:"healthcheckPath"`
+	PublicPort      *int     `json:"publicPort"`
+	CPULimit        *float64 `json:"cpuLimit"`
+	MemoryLimit     *int64   `json:"memoryLimit"`
+	AutoDeploy      *bool    `json:"autoDeploy"`
+	WaitForCI       *bool    `json:"waitForCi"`
 }
 
 // patchService saves settings; they apply from the next deployment.
@@ -141,6 +159,8 @@ func (s *Server) patchService(w http.ResponseWriter, r *http.Request) error {
 	set(&svc.Port, p.Port)
 	set(&svc.HealthcheckPath, p.HealthcheckPath)
 	set(&svc.PublicPort, p.PublicPort)
+	set(&svc.CPULimit, p.CPULimit)
+	set(&svc.MemoryLimit, p.MemoryLimit)
 	set(&svc.AutoDeploy, p.AutoDeploy)
 	set(&svc.WaitForCI, p.WaitForCI)
 	if err := validateService(svc); err != nil {
@@ -173,6 +193,10 @@ func validateService(svc store.Service) error {
 		return errorf(http.StatusBadRequest, "public port must be between 0 and 65535")
 	case svc.PublicPort > 0 && svc.Port == 0:
 		return errorf(http.StatusBadRequest, "a public port needs a container port")
+	case svc.CPULimit != 0 && (svc.CPULimit < 0.01 || svc.CPULimit > float64(runtime.NumCPU())):
+		return errorf(http.StatusBadRequest, "CPU limit must be 0 (unlimited) or between 0.01 and %d cores", runtime.NumCPU())
+	case svc.MemoryLimit != 0 && svc.MemoryLimit < minMemoryLimit:
+		return errorf(http.StatusBadRequest, "memory limit must be 0 (unlimited) or at least 64 MiB")
 	case svc.HealthcheckPath != "" && !strings.HasPrefix(svc.HealthcheckPath, "/"):
 		return errorf(http.StatusBadRequest, "health check path must start with /")
 	case !relative(svc.RootDir):
@@ -417,6 +441,8 @@ func (s *Server) serviceView(ctx context.Context, svc store.Service, statuses ma
 		Port:             svc.Port,
 		HealthcheckPath:  svc.HealthcheckPath,
 		PublicPort:       svc.PublicPort,
+		CPULimit:         svc.CPULimit,
+		MemoryLimit:      svc.MemoryLimit,
 		AutoDeploy:       svc.AutoDeploy,
 		WaitForCI:        svc.WaitForCI,
 		Status:           status,

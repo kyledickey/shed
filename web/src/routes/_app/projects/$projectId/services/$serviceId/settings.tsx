@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { serviceQuery } from "../../../../../../api/services";
 import { BuildCard, DeployCard, SourceCard } from "../../../../../../features/settings/AppCards";
 import { DangerCard } from "../../../../../../features/settings/DangerCard";
+import { ResourcesCard } from "../../../../../../features/settings/ResourcesCard";
 import { NetworkingCard } from "../../../../../../features/settings/NetworkingCard";
 import { VolumesCard } from "../../../../../../features/settings/VolumesCard";
 import { Stack } from "../../../../../../components/Layout";
@@ -20,6 +21,7 @@ function ServiceSettingsPage() {
       <SourceCard service={service} />
       {isApp && <BuildCard service={service} />}
       {isApp && <DeployCard service={service} />}
+      <ResourcesCard service={service} />
       <NetworkingCard service={service} />
       <VolumesCard service={service} />
       <DangerCard service={service} />

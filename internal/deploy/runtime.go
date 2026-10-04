@@ -106,6 +106,8 @@ func containerSpec(svc store.Service, dep store.Deployment, env map[string]strin
 		},
 		Network: networkName(svc.ProjectID),
 		Aliases: []string{svc.Name},
+		CPUs:    svc.CPULimit,
+		Memory:  svc.MemoryLimit,
 	}
 	for _, k := range slices.Sorted(maps.Keys(env)) {
 		spec.Env = append(spec.Env, k+"="+env[k])

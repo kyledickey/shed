@@ -231,6 +231,10 @@ type RunSpec struct {
 	Aliases []string // DNS names on Network
 	Mounts  []Mount
 	Publish []PortBinding
+	// CPUs is the CPU quota in cores and Memory the memory limit in bytes,
+	// with no extra swap. Zero means unlimited.
+	CPUs   float64
+	Memory int64
 }
 
 // Run creates and starts a container and returns its ID. The container is
@@ -279,7 +283,7 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 			PortBindings:  bindings,
 			Mounts:        volumeMounts(spec.Mounts),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
-			Resources:     workloadResources(),
+			Resources:     workloadResources(spec),
 			LogConfig:     container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
 		},
 	}
@@ -547,7 +551,11 @@ func statsFrom(r container.StatsResponse) Stats {
 }
 
 // workloadResources caps each workload, including database containers.
-func workloadResources() container.Resources {
+func workloadResources(spec RunSpec) container.Resources {
 	pids := int64(512)
-	return container.Resources{Memory: 1 << 30, MemorySwap: 1 << 30, NanoCPUs: 1_000_000_000, PidsLimit: &pids}
+	r := container.Resources{NanoCPUs: int64(spec.CPUs * 1e9), PidsLimit: &pids}
+	if spec.Memory > 0 {
+		r.Memory, r.MemorySwap = spec.Memory, spec.Memory
+	}
+	return r
 }

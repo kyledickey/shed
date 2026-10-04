@@ -52,6 +52,8 @@ type serviceJSON struct {
 	Port             int                  `json:"port"`
 	HealthcheckPath  string               `json:"healthcheckPath"`
 	PublicPort       int                  `json:"publicPort"`
+	CPULimit         float64              `json:"cpuLimit"`
+	MemoryLimit      int64                `json:"memoryLimit"`
 	AutoDeploy       bool                 `json:"autoDeploy"`
 	WaitForCI        bool                 `json:"waitForCi"`
 	Status           deploy.ServiceStatus `json:"status"`

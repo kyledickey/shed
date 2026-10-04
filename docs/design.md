@@ -136,6 +136,8 @@ CREATE TABLE services (
   port INTEGER NOT NULL DEFAULT 0,       -- container port; injected as PORT for apps
   healthcheck_path TEXT NOT NULL DEFAULT '',
   public_port INTEGER NOT NULL DEFAULT 0,-- host TCP port to publish (0 = none)
+  cpu_limit REAL NOT NULL DEFAULT 1,     -- cores (0 = unlimited)
+  memory_limit INTEGER NOT NULL DEFAULT 1073741824, -- bytes, no extra swap (0 = unlimited)
   auto_deploy INTEGER NOT NULL DEFAULT 1,
   wait_for_ci INTEGER NOT NULL DEFAULT 0,
   stopped INTEGER NOT NULL DEFAULT 0,    -- stopped by the user; see "Stopping a service"
@@ -693,6 +695,8 @@ type Service = {
   repo: string; branch: string; rootDir: string; image: string;
   dockerfilePath: string; startCommand: string;
   port: number; healthcheckPath: string; publicPort: number;
+  cpuLimit: number;                    // cores, 0 = unlimited
+  memoryLimit: number;                 // bytes, 0 = unlimited
   autoDeploy: boolean; waitForCi: boolean;
   status: ServiceStatus;
   privateHost: string;                 // "<name>"
@@ -707,7 +711,8 @@ type NewService = { name: string; kind: ServiceKind; repo?: string; branch?: str
 // Patch: any subset of the editable Service fields (name excluded).
 type ServicePatch = Partial<Pick<Service,
   "repo" | "branch" | "rootDir" | "image" | "dockerfilePath" | "startCommand" |
-  "port" | "healthcheckPath" | "publicPort" | "autoDeploy" | "waitForCi">>;
+  "port" | "healthcheckPath" | "publicPort" | "cpuLimit" | "memoryLimit" |
+  "autoDeploy" | "waitForCi">>;
 
 type Deployment = {
   id: string; serviceId: string; status: DeploymentStatus;
@@ -864,11 +869,14 @@ replay split oversized unterminated lines into bounded chunks (approximately
 
 ### Workload resource ceilings
 
-Every newly created app and database container has a 1 GiB memory limit with no
-additional swap, a one-CPU quota, and a 512-process limit. Docker JSON logs rotate
-at 10 MiB with at most three files per container. Existing containers receive
-these ceilings when redeployed; host capacity must still account for the total
-number of workloads and build overhead.
+Each service sets its own CPU quota (`cpuLimit`, in cores) and memory limit
+(`memoryLimit`, in bytes, with no additional swap); 0 means unlimited. New
+services start at one CPU and 1 GiB. The CPU limit must be at least 0.01 and at
+most the host's CPU count, and the memory limit at least 64 MiB. Like other
+settings, changed limits apply from the service's next deployment. Every app and
+database container also has a 512-process limit, and Docker JSON logs rotate at
+10 MiB with at most three files per container. Host capacity must still account
+for the total number of workloads and build overhead.
 
 The shared build runner allows one active build across all services. A 30-minute
 build deadline includes queueing, cloning, Railpack preparation, and image

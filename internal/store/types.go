@@ -42,8 +42,13 @@ type Service struct {
 	HealthcheckPath string
 	// PublicPort is the host TCP port to publish; zero means none.
 	PublicPort int
-	AutoDeploy bool
-	WaitForCI  bool
+	// CPULimit is the container's CPU quota in cores; zero means unlimited.
+	CPULimit float64
+	// MemoryLimit is the container's memory limit in bytes, with no extra
+	// swap; zero means unlimited.
+	MemoryLimit int64
+	AutoDeploy  bool
+	WaitForCI   bool
 	// Stopped reports whether the user stopped the service. Its active
 	// deployment is kept, but its container is not run until it is started or
 	// a new deployment goes live.

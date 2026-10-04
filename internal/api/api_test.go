@@ -256,6 +256,37 @@ func TestCreateProjectAndDatabase(t *testing.T) {
 	}
 }
 
+func TestServiceLimits(t *testing.T) {
+	f := newFixture(t)
+	project := f.decode(f.do("POST", "/api/projects", `{"name":"p"}`), http.StatusCreated)
+	svc := f.decode(f.do("POST", "/api/projects/"+project["id"].(string)+"/services", `{"name":"cache","kind":"redis"}`), http.StatusCreated)
+	if svc["cpuLimit"] != 1.0 || svc["memoryLimit"] != float64(1<<30) {
+		t.Errorf("new service limits = %v cores, %v bytes; want 1, 1 GiB", svc["cpuLimit"], svc["memoryLimit"])
+	}
+	path := "/api/services/" + svc["id"].(string)
+
+	tests := []struct {
+		name, body string
+		want       int
+	}{
+		{"set", `{"cpuLimit":0.5,"memoryLimit":268435456}`, http.StatusOK},
+		{"unlimited", `{"cpuLimit":0,"memoryLimit":0}`, http.StatusOK},
+		{"negative CPU", `{"cpuLimit":-1}`, http.StatusBadRequest},
+		{"tiny CPU", `{"cpuLimit":0.001}`, http.StatusBadRequest},
+		{"more CPUs than host", `{"cpuLimit":100000}`, http.StatusBadRequest},
+		{"tiny memory", `{"memoryLimit":1048576}`, http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		if rec := f.do("PATCH", path, tt.body); rec.Code != tt.want {
+			t.Errorf("%s: status = %d, want %d; body: %s", tt.name, rec.Code, tt.want, rec.Body)
+		}
+	}
+	got := f.decode(f.do("GET", path, ""), http.StatusOK)
+	if got["cpuLimit"] != 0.0 || got["memoryLimit"] != 0.0 {
+		t.Errorf("limits = %v cores, %v bytes; want unlimited", got["cpuLimit"], got["memoryLimit"])
+	}
+}
+
 func TestValidation(t *testing.T) {
 	f := newFixture(t)
 	project := f.decode(f.do("POST", "/api/projects", `{"name":"p"}`), http.StatusCreated)

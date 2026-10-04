@@ -39,15 +39,22 @@ func TestRunEnforcesLimits(t *testing.T) {
 	}
 	defer api.Close()
 	c := &Client{api: api}
-	if _, err := c.Run(context.Background(), RunSpec{Name: "test", Image: "app"}); err != nil {
+	if _, err := c.Run(context.Background(), RunSpec{Name: "test", Image: "app", CPUs: 1.5, Memory: 512 << 20}); err != nil {
 		t.Fatal(err)
 	}
 	h := config.HostConfig
-	if h.Memory != 1<<30 || h.MemorySwap != h.Memory || h.NanoCPUs != 1_000_000_000 || h.PidsLimit == nil || *h.PidsLimit != 512 {
+	if h.Memory != 512<<20 || h.MemorySwap != h.Memory || h.NanoCPUs != 1_500_000_000 || h.PidsLimit == nil || *h.PidsLimit != 512 {
 		t.Fatalf("unbounded resources: %+v", h.Resources)
 	}
 	if h.LogConfig.Type != "json-file" || h.LogConfig.Config["max-size"] != "10m" || h.LogConfig.Config["max-file"] != "3" {
 		t.Fatalf("unbounded logs: %+v", h.LogConfig)
+	}
+}
+
+func TestWorkloadResourcesUnlimited(t *testing.T) {
+	r := workloadResources(RunSpec{})
+	if r.Memory != 0 || r.MemorySwap != 0 || r.NanoCPUs != 0 || r.PidsLimit == nil || *r.PidsLimit != 512 {
+		t.Fatalf("workloadResources(no limits) = %+v", r)
 	}
 }
 

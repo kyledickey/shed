@@ -49,6 +49,10 @@ export type Service = {
   port: number;
   healthcheckPath: string;
   publicPort: number;
+  /** Cores; 0 = unlimited. */
+  cpuLimit: number;
+  /** Bytes; 0 = unlimited. */
+  memoryLimit: number;
   autoDeploy: boolean;
   waitForCi: boolean;
   status: ServiceStatus;
@@ -79,6 +83,8 @@ export type ServicePatch = Partial<
     | "port"
     | "healthcheckPath"
     | "publicPort"
+    | "cpuLimit"
+    | "memoryLimit"
     | "autoDeploy"
     | "waitForCi"
   >
