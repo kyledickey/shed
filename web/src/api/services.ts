@@ -44,10 +44,9 @@ export function useDeleteService(service: Service) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.delete(`/services/${service.id}`),
-    onSuccess: () => {
-      qc.removeQueries({ queryKey: keys.service(service.id) });
-      return qc.invalidateQueries({ queryKey: keys.projects });
-    },
+    // The service query stays cached: removing it would refetch the deleted
+    // service from the page that is still mounted.
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects }),
   });
 }
 
