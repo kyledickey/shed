@@ -942,9 +942,17 @@ changing variables cannot retroactively remove secrets from older saved logs.
 A deployment that needs exclusive volumes or a published host port must confirm
 that the previous container is stopped before starting its replacement. Docker
 inspection and stop failures abort deployment and preserve the active container.
+Before stopping it, every other container labeled with the service (such as a
+failed candidate whose removal failed) is stopped and removed; then every
+container of the service must be listed as stopped. Any failure fails the
+deployment before its container is created.
 
 If removing a failed replacement cannot be confirmed, recovery leaves the
 predecessor stopped rather than risking concurrent use of its persistent volume.
+Starting the active container of such a service (on boot, `start`, or the end
+of a backup hold) likewise first removes every container of the service from
+another deployment; if that fails, the service stays down and the error is
+returned or logged.
 
 ### Routing activation safety
 

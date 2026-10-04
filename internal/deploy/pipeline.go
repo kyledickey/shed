@@ -204,16 +204,16 @@ func (j *job) detectPort(ctx context.Context) (bool, error) {
 }
 
 // start runs the new container. Services with volumes or a published port
-// cannot run two containers at once, so their previous container is stopped
-// first.
+// cannot run two containers at once, so every other container of the
+// service is stopped first.
 func (j *job) start(ctx context.Context, env map[string]string) error {
 	j.setStatus(store.StatusDeploying)
 	vols, err := j.store.Volumes(ctx, j.svc.ID)
 	if err != nil {
 		return err
 	}
-	if len(vols) > 0 || j.svc.PublicPort > 0 {
-		if err := j.stopPrevious(ctx); err != nil {
+	if exclusive(j.svc, vols) {
+		if err := j.takeOver(ctx); err != nil {
 			return err
 		}
 	}
@@ -232,16 +232,47 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	return nil
 }
 
-// stopPrevious stops the running container of the active deployment, so fail
-// can start it again.
-func (j *job) stopPrevious(ctx context.Context) error {
+// takeOver gives the new container sole use of the service's volumes and
+// published port. Containers left over from other deployments, such as a
+// failed candidate whose removal failed, are removed, and the active
+// deployment's container is stopped. The deployment fails, before the new
+// container starts, unless every container of the service is then
+// confirmed stopped.
+func (j *job) takeOver(ctx context.Context) error {
 	prev, err := j.store.ActiveDeployment(ctx, j.svc.ID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && prev.ContainerID == "") {
-		return nil
-	}
-	if err != nil {
+	hasPrev := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	keep := ""
+	if hasPrev {
+		keep = prev.ID
+	}
+	if err := j.clearStrays(ctx, j.svc.ID, keep); err != nil {
+		return err
+	}
+	if hasPrev && prev.ContainerID != "" {
+		if err := j.stopPrevious(ctx, prev); err != nil {
+			return err
+		}
+	}
+	containers, err := j.docker.List(ctx, map[string]string{labelService: j.svc.ID})
+	if err != nil {
+		return fmt.Errorf("list containers of the service: %w", err)
+	}
+	for _, c := range containers {
+		if !idle(c) {
+			// Starting the previous container again could share storage too.
+			j.stoppedPrev = ""
+			return fmt.Errorf("container %s of the service is still %s, so its storage is not free", c.Name, c.State)
+		}
+	}
+	return nil
+}
+
+// stopPrevious stops the running container of the active deployment prev, so
+// fail can start it again.
+func (j *job) stopPrevious(ctx context.Context, prev store.Deployment) error {
 	c, err := j.docker.Inspect(ctx, prev.ContainerID)
 	if docker.IsNotFound(err) {
 		return nil

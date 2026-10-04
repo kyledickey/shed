@@ -295,6 +295,46 @@ func (d *Deployer) removeOthers(ctx context.Context, serviceID, keep string) {
 	}
 }
 
+// exclusive reports whether a service's containers cannot run side by side,
+// because they share its volumes or its published host port.
+func exclusive(svc store.Service, vols []store.Volume) bool {
+	return len(vols) > 0 || svc.PublicPort > 0
+}
+
+// idle reports whether a container is not running, in any form.
+func idle(c docker.Container) bool {
+	switch c.State {
+	case "created", "exited", "dead":
+		return true
+	}
+	return false
+}
+
+// clearStrays stops and removes every container of a service that does not
+// belong to deployment keep ("" for none). Unlike removeOthers it stops at
+// the first failure, since a stray container may still use the service's
+// storage and nothing else may start until it is gone.
+func (d *Deployer) clearStrays(ctx context.Context, serviceID, keep string) error {
+	containers, err := d.docker.List(ctx, map[string]string{labelService: serviceID})
+	if err != nil {
+		return fmt.Errorf("list containers of the service: %w", err)
+	}
+	for _, c := range containers {
+		if keep != "" && c.Labels[labelDeployment] == keep {
+			continue
+		}
+		if !idle(c) {
+			if err := d.docker.Stop(ctx, c.ID, d.stopTimeout); err != nil && !docker.IsNotFound(err) {
+				return fmt.Errorf("stop leftover container %s: %w", c.Name, err)
+			}
+		}
+		if err := d.docker.Remove(ctx, c.ID); err != nil {
+			return fmt.Errorf("remove leftover container %s: %w", c.Name, err)
+		}
+	}
+	return nil
+}
+
 // pruneImages removes the built images of a service beyond the newest few,
 // always keeping active.
 func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
@@ -383,8 +423,23 @@ func (d *Deployer) removeDeploymentContainers(ctx context.Context, deploymentID 
 }
 
 // ensureRunning starts the container of an active deployment, recreating it
-// from the deployment's image if it no longer exists, and returns its ID.
+// from the deployment's image if it no longer exists, and returns its ID. For
+// a service whose containers cannot run side by side, every container of
+// another deployment must be removed first, or nothing is started.
 func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (string, error) {
+	svc, err := d.store.Service(ctx, dep.ServiceID)
+	if err != nil {
+		return "", err
+	}
+	vols, err := d.store.Volumes(ctx, svc.ID)
+	if err != nil {
+		return "", err
+	}
+	if exclusive(svc, vols) {
+		if err := d.clearStrays(ctx, svc.ID, dep.ID); err != nil {
+			return "", fmt.Errorf("not starting %s while another of its containers may use its storage: %w", svc.Name, err)
+		}
+	}
 	containers, err := d.docker.List(ctx, map[string]string{labelDeployment: dep.ID})
 	if err != nil {
 		return "", err
@@ -404,19 +459,11 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return c.ID, nil
 	}
 
-	svc, err := d.store.Service(ctx, dep.ServiceID)
-	if err != nil {
-		return "", err
-	}
 	project, err := d.store.Project(ctx, svc.ProjectID)
 	if err != nil {
 		return "", err
 	}
 	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
-	if err != nil {
-		return "", err
-	}
-	vols, err := d.store.Volumes(ctx, svc.ID)
 	if err != nil {
 		return "", err
 	}
