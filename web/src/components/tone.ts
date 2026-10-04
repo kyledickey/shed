@@ -45,6 +45,7 @@ const serviceLooks: Record<ServiceStatus, StatusLook> = {
   active: { tone: "grass", label: "Online" },
   failed: { tone: "tomato", label: "Failed" },
   crashed: { tone: "tomato", label: "Crashed" },
+  stopped: { tone: "neutral", label: "Stopped" },
 };
 
 export function deploymentLook(status: DeploymentStatus): StatusLook {

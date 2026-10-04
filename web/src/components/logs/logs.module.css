@@ -545,8 +545,19 @@
   font-size: var(--text-sm);
   text-align: left;
 
-  &:hover {
+  &:hover:enabled {
     background: var(--hover);
+  }
+
+  /* A step with no output has nothing to expand. */
+  &:disabled {
+    cursor: default;
+    color: inherit;
+    opacity: 1;
+
+    & .stepChevron {
+      visibility: hidden;
+    }
   }
 }
 

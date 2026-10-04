@@ -4,14 +4,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { isApiError } from "./api/client";
 import { keys } from "./api/keys";
+import { RouteError, RoutePending } from "./features/shell/RouteStates";
 import { routeTree } from "./routeTree.gen";
 import "./styles/global.css";
 
 function onUnauthorized(err: unknown, queryKey?: readonly unknown[]) {
   if (isApiError(err, 401) && queryKey?.[0] !== keys.me[0]) {
     queryClient.clear();
-    // TODO: send to /login once the auth pages are rebuilt.
-    void router.navigate({ to: "/" });
+    void router.navigate({ to: "/login" });
   }
 }
 
@@ -32,6 +32,8 @@ const router = createRouter({
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
+  defaultPendingComponent: RoutePending,
+  defaultErrorComponent: RouteError,
 });
 
 declare module "@tanstack/react-router" {

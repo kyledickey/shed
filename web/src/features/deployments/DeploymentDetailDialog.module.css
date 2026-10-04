@@ -1,0 +1,21 @@
+.title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px var(--space-2);
+}
+
+.titleText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.error {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.quiet {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}

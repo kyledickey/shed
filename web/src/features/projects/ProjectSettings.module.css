@@ -1,0 +1,48 @@
+.row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.danger {
+  border-color: var(--tomato-line);
+
+  & > header > span:first-child {
+    color: var(--tomato);
+  }
+
+  & > div {
+    border-color: var(--tomato-line);
+  }
+}
+
+.dangerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+
+  @media (max-width: 520px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.dangerTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.dangerText {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}

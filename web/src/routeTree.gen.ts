@@ -9,12 +9,33 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
+import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
+import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
+import { Route as AppProjectsProjectIdServicesServiceIdRouteImport } from './routes/_app/projects/$projectId/services/$serviceId'
+import { Route as AppProjectsProjectIdServicesServiceIdIndexRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/index'
+import { Route as AppProjectsProjectIdServicesServiceIdLogsRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/logs'
+import { Route as AppProjectsProjectIdServicesServiceIdMetricsRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/metrics'
+import { Route as AppProjectsProjectIdServicesServiceIdSettingsRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/settings'
+import { Route as AppProjectsProjectIdServicesServiceIdVariablesRouteImport } from './routes/_app/projects/$projectId/services/$serviceId/variables'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -22,40 +43,185 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
   path: '/showcase',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
+  id: '/projects/$projectId',
+  path: '/projects/$projectId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProjectsProjectIdIndexRoute =
+  AppProjectsProjectIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppProjectsProjectIdRoute,
+  } as any)
+const AppProjectsProjectIdSettingsRoute =
+  AppProjectsProjectIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppProjectsProjectIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdRoute =
+  AppProjectsProjectIdServicesServiceIdRouteImport.update({
+    id: '/services/$serviceId',
+    path: '/services/$serviceId',
+    getParentRoute: () => AppProjectsProjectIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdIndexRoute =
+  AppProjectsProjectIdServicesServiceIdIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdLogsRoute =
+  AppProjectsProjectIdServicesServiceIdLogsRouteImport.update({
+    id: '/logs',
+    path: '/logs',
+    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdMetricsRoute =
+  AppProjectsProjectIdServicesServiceIdMetricsRouteImport.update({
+    id: '/metrics',
+    path: '/metrics',
+    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdSettingsRoute =
+  AppProjectsProjectIdServicesServiceIdSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
+  } as any)
+const AppProjectsProjectIdServicesServiceIdVariablesRoute =
+  AppProjectsProjectIdServicesServiceIdVariablesRouteImport.update({
+    id: '/variables',
+    path: '/variables',
+    getParentRoute: () => AppProjectsProjectIdServicesServiceIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
+  '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
+  '/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
+  '/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
+  '/projects/$projectId/services/$serviceId/metrics': typeof AppProjectsProjectIdServicesServiceIdMetricsRoute
+  '/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
+  '/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
+  '/projects/$projectId/services/$serviceId/': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/': typeof AppIndexRoute
+  '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
+  '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
+  '/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
+  '/projects/$projectId/services/$serviceId/metrics': typeof AppProjectsProjectIdServicesServiceIdMetricsRoute
+  '/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
+  '/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
+  '/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
+  '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
+  '/_app/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
+  '/_app/projects/$projectId/services/$serviceId/logs': typeof AppProjectsProjectIdServicesServiceIdLogsRoute
+  '/_app/projects/$projectId/services/$serviceId/metrics': typeof AppProjectsProjectIdServicesServiceIdMetricsRoute
+  '/_app/projects/$projectId/services/$serviceId/settings': typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
+  '/_app/projects/$projectId/services/$serviceId/variables': typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
+  '/_app/projects/$projectId/services/$serviceId/': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/showcase'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/showcase'
+    | '/projects/$projectId'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/'
+    | '/projects/$projectId/services/$serviceId'
+    | '/projects/$projectId/services/$serviceId/logs'
+    | '/projects/$projectId/services/$serviceId/metrics'
+    | '/projects/$projectId/services/$serviceId/settings'
+    | '/projects/$projectId/services/$serviceId/variables'
+    | '/projects/$projectId/services/$serviceId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/showcase'
-  id: '__root__' | '/' | '/showcase'
+  to:
+    | '/login'
+    | '/setup'
+    | '/showcase'
+    | '/'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId'
+    | '/projects/$projectId/services/$serviceId/logs'
+    | '/projects/$projectId/services/$serviceId/metrics'
+    | '/projects/$projectId/services/$serviceId/settings'
+    | '/projects/$projectId/services/$serviceId/variables'
+    | '/projects/$projectId/services/$serviceId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/setup'
+    | '/showcase'
+    | '/_app/'
+    | '/_app/projects/$projectId'
+    | '/_app/projects/$projectId/settings'
+    | '/_app/projects/$projectId/'
+    | '/_app/projects/$projectId/services/$serviceId'
+    | '/_app/projects/$projectId/services/$serviceId/logs'
+    | '/_app/projects/$projectId/services/$serviceId/metrics'
+    | '/_app/projects/$projectId/services/$serviceId/settings'
+    | '/_app/projects/$projectId/services/$serviceId/variables'
+    | '/_app/projects/$projectId/services/$serviceId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  SetupRoute: typeof SetupRoute
   ShowcaseRoute: typeof ShowcaseRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -65,11 +231,138 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShowcaseRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/$projectId': {
+      id: '/_app/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof AppProjectsProjectIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/projects/$projectId/': {
+      id: '/_app/projects/$projectId/'
+      path: '/'
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof AppProjectsProjectIdIndexRouteImport
+      parentRoute: typeof AppProjectsProjectIdRoute
+    }
+    '/_app/projects/$projectId/settings': {
+      id: '/_app/projects/$projectId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdSettingsRouteImport
+      parentRoute: typeof AppProjectsProjectIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId': {
+      id: '/_app/projects/$projectId/services/$serviceId'
+      path: '/services/$serviceId'
+      fullPath: '/projects/$projectId/services/$serviceId'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdRouteImport
+      parentRoute: typeof AppProjectsProjectIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId/': {
+      id: '/_app/projects/$projectId/services/$serviceId/'
+      path: '/'
+      fullPath: '/projects/$projectId/services/$serviceId/'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdIndexRouteImport
+      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId/logs': {
+      id: '/_app/projects/$projectId/services/$serviceId/logs'
+      path: '/logs'
+      fullPath: '/projects/$projectId/services/$serviceId/logs'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRouteImport
+      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId/metrics': {
+      id: '/_app/projects/$projectId/services/$serviceId/metrics'
+      path: '/metrics'
+      fullPath: '/projects/$projectId/services/$serviceId/metrics'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdMetricsRouteImport
+      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId/settings': {
+      id: '/_app/projects/$projectId/services/$serviceId/settings'
+      path: '/settings'
+      fullPath: '/projects/$projectId/services/$serviceId/settings'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdSettingsRouteImport
+      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    }
+    '/_app/projects/$projectId/services/$serviceId/variables': {
+      id: '/_app/projects/$projectId/services/$serviceId/variables'
+      path: '/variables'
+      fullPath: '/projects/$projectId/services/$serviceId/variables'
+      preLoaderRoute: typeof AppProjectsProjectIdServicesServiceIdVariablesRouteImport
+      parentRoute: typeof AppProjectsProjectIdServicesServiceIdRoute
+    }
   }
 }
 
+interface AppProjectsProjectIdServicesServiceIdRouteChildren {
+  AppProjectsProjectIdServicesServiceIdLogsRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRoute
+  AppProjectsProjectIdServicesServiceIdMetricsRoute: typeof AppProjectsProjectIdServicesServiceIdMetricsRoute
+  AppProjectsProjectIdServicesServiceIdSettingsRoute: typeof AppProjectsProjectIdServicesServiceIdSettingsRoute
+  AppProjectsProjectIdServicesServiceIdVariablesRoute: typeof AppProjectsProjectIdServicesServiceIdVariablesRoute
+  AppProjectsProjectIdServicesServiceIdIndexRoute: typeof AppProjectsProjectIdServicesServiceIdIndexRoute
+}
+
+const AppProjectsProjectIdServicesServiceIdRouteChildren: AppProjectsProjectIdServicesServiceIdRouteChildren =
+  {
+    AppProjectsProjectIdServicesServiceIdLogsRoute:
+      AppProjectsProjectIdServicesServiceIdLogsRoute,
+    AppProjectsProjectIdServicesServiceIdMetricsRoute:
+      AppProjectsProjectIdServicesServiceIdMetricsRoute,
+    AppProjectsProjectIdServicesServiceIdSettingsRoute:
+      AppProjectsProjectIdServicesServiceIdSettingsRoute,
+    AppProjectsProjectIdServicesServiceIdVariablesRoute:
+      AppProjectsProjectIdServicesServiceIdVariablesRoute,
+    AppProjectsProjectIdServicesServiceIdIndexRoute:
+      AppProjectsProjectIdServicesServiceIdIndexRoute,
+  }
+
+const AppProjectsProjectIdServicesServiceIdRouteWithChildren =
+  AppProjectsProjectIdServicesServiceIdRoute._addFileChildren(
+    AppProjectsProjectIdServicesServiceIdRouteChildren,
+  )
+
+interface AppProjectsProjectIdRouteChildren {
+  AppProjectsProjectIdSettingsRoute: typeof AppProjectsProjectIdSettingsRoute
+  AppProjectsProjectIdIndexRoute: typeof AppProjectsProjectIdIndexRoute
+  AppProjectsProjectIdServicesServiceIdRoute: typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
+}
+
+const AppProjectsProjectIdRouteChildren: AppProjectsProjectIdRouteChildren = {
+  AppProjectsProjectIdSettingsRoute: AppProjectsProjectIdSettingsRoute,
+  AppProjectsProjectIdIndexRoute: AppProjectsProjectIdIndexRoute,
+  AppProjectsProjectIdServicesServiceIdRoute:
+    AppProjectsProjectIdServicesServiceIdRouteWithChildren,
+}
+
+const AppProjectsProjectIdRouteWithChildren =
+  AppProjectsProjectIdRoute._addFileChildren(AppProjectsProjectIdRouteChildren)
+
+interface AppRouteChildren {
+  AppIndexRoute: typeof AppIndexRoute
+  AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRouteWithChildren
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppIndexRoute: AppIndexRoute,
+  AppProjectsProjectIdRoute: AppProjectsProjectIdRouteWithChildren,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
+  SetupRoute: SetupRoute,
   ShowcaseRoute: ShowcaseRoute,
 }
 export const routeTree = rootRouteImport

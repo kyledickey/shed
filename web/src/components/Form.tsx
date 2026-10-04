@@ -13,7 +13,7 @@ import {
 import { cx } from "../lib/cx";
 import styles from "./Form.module.css";
 
-type InputProps = ComponentProps<"input"> & {
+type InputProps = Omit<ComponentProps<"input">, "prefix"> & {
   mono?: boolean;
   prefix?: ReactNode;
   suffix?: ReactNode;

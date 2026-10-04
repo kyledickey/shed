@@ -70,8 +70,11 @@ export function AreaChart({
     hour: "numeric",
     minute: "2-digit",
   });
+  const tickCount = width < 480 ? 3 : 5;
   const xTicks =
-    width > 0 ? Array.from({ length: 5 }, (_, k) => Math.round((k / 4) * (n - 1))) : [];
+    width > 0
+      ? Array.from({ length: tickCount }, (_, k) => Math.round((k / (tickCount - 1)) * (n - 1)))
+      : [];
 
   const onMove = (e: PointerEvent) => {
     const rect = ref.current!.getBoundingClientRect();
@@ -129,7 +132,7 @@ export function AreaChart({
                 x={x(i)}
                 y={height - 6}
                 className={styles.xLabel}
-                textAnchor={k === 0 ? "start" : k === 4 ? "end" : "middle"}
+                textAnchor={k === 0 ? "start" : k === tickCount - 1 ? "end" : "middle"}
               >
                 {tickFmt.format(timeAt(i))}
               </text>

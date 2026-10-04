@@ -1,5 +1,6 @@
 import { ChevronsUpDown } from "lucide-react";
 import type { ReactNode } from "react";
+import { Menu } from "./Overlay";
 import styles from "./Shell.module.css";
 
 type ShellProps = {
@@ -28,32 +29,52 @@ export function Shell({ brand, nav, actions, children }: ShellProps) {
   );
 }
 
-/** Logo is the shed mark: a little crayon house. */
+/** Logo is the shed mark: a barn-door shed on an accent tile. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" className={styles.logo} aria-label="shed">
       <rect x="1" y="1" width="30" height="30" rx="9" className={styles.logoTile} />
-      <path
-        d="M8.5 15.2 16 9l7.5 6.2V23a1.5 1.5 0 0 1-1.5 1.5H10A1.5 1.5 0 0 1 8.5 23z"
-        className={styles.logoHouse}
-      />
-      <rect x="13.5" y="17.5" width="5" height="7" rx="1.4" className={styles.logoDoor} />
+      <path d="M6.5 14.5 16 8.5l9.5 6v10h-19z" className={styles.logoShed} />
+      <path d="M11.5 24.5v-8h9v8" className={styles.logoDoor} />
+      <path d="M11.5 16.5l9 8m0-8-9 8" className={styles.logoBrace} />
     </svg>
   );
 }
 
+export type Crumb = {
+  label: ReactNode;
+  icon?: ReactNode;
+  onClick?: () => void;
+  /** Menu items; turns the crumb into a switcher. */
+  menu?: ReactNode;
+};
+
 /** Crumbs is a project / service switcher trail for the shell bar. */
-export function Crumbs({ items }: { items: { label: ReactNode; icon?: ReactNode }[] }) {
+export function Crumbs({ items }: { items: Crumb[] }) {
   return (
     <div className={styles.crumbs}>
       {items.map((item, i) => (
         <span key={i} className={styles.crumbGroup}>
           {i > 0 && <span className={styles.slash}>/</span>}
-          <button type="button" className={styles.crumb}>
-            {item.icon}
-            <span>{item.label}</span>
-            <ChevronsUpDown size={12} className={styles.crumbChevron} />
-          </button>
+          {item.menu ? (
+            <Menu
+              align="start"
+              trigger={
+                <button type="button" className={styles.crumb}>
+                  {item.icon}
+                  <span>{item.label}</span>
+                  <ChevronsUpDown size={12} className={styles.crumbChevron} />
+                </button>
+              }
+            >
+              {item.menu}
+            </Menu>
+          ) : (
+            <button type="button" className={styles.crumb} onClick={item.onClick}>
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          )}
         </span>
       ))}
     </div>

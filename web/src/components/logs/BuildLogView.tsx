@@ -11,12 +11,19 @@ type Step = {
   failed: boolean;
 };
 
+const EXPAND_ALL_MAX = 400;
+
 function group(lines: LogLine[]): Step[] {
   const steps: Step[] = [];
   lines.forEach((l, i) => {
     const line = parseBuildLine(l.text);
     if (line.kind === "step") {
-      steps.push({ title: line.text, lines: [], failed: false });
+      // The pipeline closes a failed run with "==> Deployment failed: …".
+      steps.push({
+        title: line.text,
+        lines: [],
+        failed: /^Deployment (failed|canceled)/.test(line.text),
+      });
       return;
     }
     if (steps.length === 0) steps.push({ title: "Preparing", lines: [], failed: false });
@@ -50,6 +57,8 @@ export function BuildLogView({
   const [toggled, setToggled] = useState<ReadonlySet<number>>(new Set());
   const { ref, onScroll, following, unseen, jump } = useFollow(lines.length);
   const live = state === "open" || state === "connecting";
+  // A finished, short log reads best fully expanded.
+  const expandAll = !live && lines.length <= EXPAND_ALL_MAX;
 
   return (
     <div className={styles.viewer}>
@@ -76,7 +85,8 @@ export function BuildLogView({
             const last = i === steps.length - 1;
             const running = last && live && !step.failed;
             // Open by default: the running step and failed steps.
-            const defaultOpen = running || step.failed || (last && !live);
+            const defaultOpen = expandAll || running || step.failed || (last && !live);
+            const empty = step.lines.length === 0;
             const open = toggled.has(i) ? !defaultOpen : defaultOpen;
             const q = query.toLowerCase();
             const rows = q
@@ -84,10 +94,15 @@ export function BuildLogView({
               : step.lines;
             if (q && rows.length === 0) return null;
             return (
-              <section key={i} className={styles.step} data-open={open || q ? true : undefined}>
+              <section
+                key={i}
+                className={styles.step}
+                data-open={(!empty && (open || q)) || undefined}
+              >
                 <button
                   type="button"
                   className={styles.stepHead}
+                  disabled={empty}
                   onClick={() =>
                     setToggled((prev) => {
                       const next = new Set(prev);
@@ -106,9 +121,9 @@ export function BuildLogView({
                     <CircleCheck size={15} className={styles.stepDone} />
                   )}
                   <span className={styles.stepTitle}>{step.title}</span>
-                  <span className={styles.stepLines}>{step.lines.length}</span>
+                  {!empty && <span className={styles.stepLines}>{step.lines.length}</span>}
                 </button>
-                {(open || q) && (
+                {!empty && (open || q) && (
                   <div className={styles.stepBody}>
                     {rows.map(({ n, line }) => (
                       <BuildRow key={n} n={n} line={line} query={query} />
