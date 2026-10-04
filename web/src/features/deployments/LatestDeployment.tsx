@@ -1,4 +1,4 @@
-import { Ban, CircleX, ScrollText, Square } from "lucide-react";
+import { Ban, CircleX, ScrollText } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Deployment, Service } from "../../api/types";
 import { StatusBadge } from "../../components/Badge";
@@ -8,7 +8,6 @@ import { DeploySteps } from "../../components/deploy/Deploy";
 import { Callout } from "../../components/Misc";
 import { shortSha } from "../../lib/names";
 import { formatDuration } from "../../lib/time";
-import type { DeploymentActions } from "./actions";
 import { CommitMeta, deploymentTitle } from "./CommitMeta";
 import styles from "./LatestDeployment.module.css";
 
@@ -37,12 +36,10 @@ export function WaitingForCi({ deployment: d }: { deployment: Deployment }) {
 export function InProgressCard({
   service,
   deployment: d,
-  actions,
   onViewLogs,
 }: {
   service: Service;
   deployment: Deployment;
-  actions: DeploymentActions;
   onViewLogs: () => void;
 }) {
   useTick();
@@ -52,21 +49,10 @@ export function InProgressCard({
       title="In progress"
       meta={<StatusBadge kind="deployment" status={d.status} size="sm" />}
       actions={
-        <>
-          <Button size="sm" onClick={onViewLogs} aria-label="View logs">
-            <ScrollText size={13} />
-            <span className={styles.hideNarrow}>View logs</span>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => actions.cancel(d)}
-            loading={actions.isCanceling(d)}
-          >
-            {!actions.isCanceling(d) && <Square size={13} />}
-            Cancel
-          </Button>
-        </>
+        <Button size="sm" onClick={onViewLogs} aria-label="View logs">
+          <ScrollText size={13} />
+          <span className={styles.hideNarrow}>View logs</span>
+        </Button>
       }
       padded
     >

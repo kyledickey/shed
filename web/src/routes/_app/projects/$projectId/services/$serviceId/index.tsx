@@ -1,15 +1,12 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { History, Pause, Rocket } from "lucide-react";
-import { errorMessage } from "../../../../../../api/client";
-import { deploymentsQuery, useDeploy } from "../../../../../../api/deployments";
+import { History } from "lucide-react";
+import { deploymentsQuery } from "../../../../../../api/deployments";
 import { serviceQuery } from "../../../../../../api/services";
 import { isPending, type Service } from "../../../../../../api/types";
-import { Button } from "../../../../../../components/Button";
 import { Card } from "../../../../../../components/Card";
 import { Stack } from "../../../../../../components/Layout";
-import { Callout, EmptyState } from "../../../../../../components/Misc";
-import { useToast } from "../../../../../../components/Overlay";
+import { EmptyState } from "../../../../../../components/Misc";
 import { useDeploymentActions } from "../../../../../../features/deployments/actions";
 import { DeploymentDetailDialog } from "../../../../../../features/deployments/DeploymentDetailDialog";
 import { DeploymentHistory } from "../../../../../../features/deployments/DeploymentHistory";
@@ -17,8 +14,6 @@ import {
   InProgressCard,
   LatestProblem,
 } from "../../../../../../features/deployments/LatestDeployment";
-import { useRedeployHint } from "../../../../../../features/services/redeploy";
-import { ServiceControls } from "../../../../../../features/services/ServiceControls";
 
 type DeploymentsSearch = { deployment?: string };
 
@@ -54,7 +49,6 @@ function DeploymentsPage() {
             <InProgressCard
               service={service}
               deployment={latest}
-              actions={actions}
               onViewLogs={() => open(latest.id)}
             />
           ) : (
@@ -64,17 +58,10 @@ function DeploymentsPage() {
               onViewLogs={() => open(latest.id)}
             />
           )}
-          {service.status === "stopped" && (
-            <Callout tone="neutral" icon={<Pause size={16} />} title="Stopped">
-              The container isn't running and its domains aren't serving traffic. Start it, or
-              deploy to bring it back with a new deployment.
-            </Callout>
-          )}
           <DeploymentHistory
             service={service}
             deployments={deployments}
             actions={actions}
-            toolbar={<ServiceControls service={service} />}
             onOpen={open}
           />
         </Stack>
@@ -93,10 +80,6 @@ function DeploymentsPage() {
 }
 
 function NoDeployments({ service }: { service: Service }) {
-  const deploy = useDeploy(service.id);
-  const hint = useRedeployHint();
-  const toast = useToast();
-
   const description = service.repo
     ? `Deploy to build ${service.repo} from ${service.branch}.` +
       (service.autoDeploy ? ` Pushes to ${service.branch} deploy automatically.` : "")
@@ -106,38 +89,7 @@ function NoDeployments({ service }: { service: Service }) {
 
   return (
     <Card>
-      <EmptyState
-        icon={<History />}
-        title="No deployments yet"
-        description={description}
-        actions={
-          <Button
-            variant="primary"
-            loading={deploy.isPending}
-            onClick={() =>
-              deploy.mutate(undefined, {
-                onSuccess: () => {
-                  hint.clear();
-                  toast.add({
-                    title: "Deployment queued",
-                    description: service.name,
-                    type: "info",
-                  });
-                },
-                onError: (err) =>
-                  toast.add({
-                    title: "Couldn't deploy",
-                    description: errorMessage(err),
-                    type: "error",
-                  }),
-              })
-            }
-          >
-            {!deploy.isPending && <Rocket size={14} />}
-            Deploy
-          </Button>
-        }
-      />
+      <EmptyState icon={<History />} title="No deployments yet" description={description} />
     </Card>
   );
 }

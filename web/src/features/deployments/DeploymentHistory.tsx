@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { Deployment, Service } from "../../api/types";
 import { Count } from "../../components/Badge";
 import { LayerCard } from "../../components/Card";
@@ -17,12 +16,9 @@ export function DeploymentHistory({
   service,
   deployments,
   actions,
-  toolbar,
   onOpen,
 }: {
   service: Service;
-  /** Service-level controls for the card header. */
-  toolbar?: ReactNode;
   deployments: Deployment[];
   actions: DeploymentActions;
   onOpen: (id: string) => void;
@@ -31,7 +27,6 @@ export function DeploymentHistory({
     <LayerCard
       title="History"
       meta={<Count>{deployments.length}</Count>}
-      actions={toolbar}
       sheetClassName={styles.sheet}
       footer={
         deployments.length >= HISTORY_LIMIT && (

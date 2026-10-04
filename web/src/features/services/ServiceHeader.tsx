@@ -7,6 +7,7 @@ import { Button } from "../../components/Button";
 import { Callout, GitHubIcon, ServiceIcon } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { useRedeployHint } from "./redeploy";
+import { ServiceControls } from "./ServiceControls";
 import styles from "./ServiceHeader.module.css";
 
 /** serviceIcon picks the tile for a service: GitHub for repo apps, a box for image apps. */
@@ -19,7 +20,7 @@ export function serviceIcon(service: Pick<Service, "kind" | "repo">, size = 32) 
   );
 }
 
-/** ServiceHeader titles every service page and offers a deploy after unapplied changes. */
+/** ServiceHeader titles every service page and holds its run controls. */
 export function ServiceHeader({ service }: { service: Service }) {
   const deploy = useDeploy(service.id);
   const hint = useRedeployHint();
@@ -72,6 +73,9 @@ export function ServiceHeader({ service }: { service: Service }) {
               {service.port > 0 && `:${service.port}`}
             </span>
           </div>
+        </div>
+        <div className={styles.actions}>
+          <ServiceControls service={service} />
         </div>
       </header>
       {hint.pending && (
