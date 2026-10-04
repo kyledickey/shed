@@ -41,25 +41,31 @@ export function useSectionForm<T extends ServicePatch>(service: Service, pick: (
 type Form = Pick<
   ReturnType<typeof useSectionForm>,
   "dirty" | "pending" | "error" | "reset" | "save"
->;
+> & {
+  /** Disables Save while the draft can't be submitted. */
+  invalid?: boolean;
+};
 
 /** SettingsCard is a LayerCard wrapped in a form with its own Save button. */
 export function SettingsCard({
   title,
   meta,
   form,
+  footerStart,
   children,
 }: {
   title: string;
   meta?: ReactNode;
   form: Form;
+  /** Extra footer content on the left, e.g. a secondary action. */
+  footerStart?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (form.dirty) form.save();
+        if (form.dirty && !form.invalid) form.save();
       }}
     >
       <LayerCard
@@ -68,7 +74,12 @@ export function SettingsCard({
         padded
         footer={
           <div className={styles.footer}>
-            {form.error && <span className={styles.error}>{errorMessage(form.error)}</span>}
+            {footerStart}
+            {form.error ? (
+              <span className={styles.error}>{errorMessage(form.error)}</span>
+            ) : (
+              <span className={styles.spacer} />
+            )}
             {form.dirty && (
               <Button size="sm" disabled={form.pending} onClick={form.reset}>
                 Discard
@@ -78,7 +89,7 @@ export function SettingsCard({
               type="submit"
               size="sm"
               variant="primary"
-              disabled={!form.dirty}
+              disabled={!form.dirty || form.invalid}
               loading={form.pending}
             >
               Save

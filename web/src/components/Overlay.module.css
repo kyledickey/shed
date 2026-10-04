@@ -134,7 +134,9 @@
   height: 32px;
   padding: 0 9px;
   border-radius: var(--r-xs);
+  color: inherit;
   font-size: var(--text-sm);
+  text-decoration: none;
   cursor: default;
   outline: none;
 

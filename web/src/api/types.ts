@@ -128,3 +128,84 @@ export function isPending(status: DeploymentStatus): boolean {
 }
 
 export const databaseKinds = ["postgres", "mysql", "mongo", "redis"] as const;
+
+export type BackupCompression = "fastest" | "default" | "better" | "best";
+
+/** A backup schedule and retention policy; nextRunAt is null while disabled. */
+export type BackupPolicy = {
+  enabled: boolean;
+  /** Cron, UTC unless it starts with "CRON_TZ=<zone> ". */
+  schedule: string;
+  compression: BackupCompression;
+  /** Local archives to keep; 0 only together with upload. */
+  keepLocal: number;
+  /** Ignored while S3 is not configured. */
+  upload: boolean;
+  keepRemote: number;
+  nextRunAt: string | null;
+};
+export type BackupPolicyInput = Omit<BackupPolicy, "nextRunAt">;
+
+export type BackupStatus = "queued" | "running" | "succeeded" | "failed";
+export type BackupTrigger = "schedule" | "manual" | "pre-restore";
+export type BackupMethod = "dump" | "volume" | "sqlite";
+
+export type Backup = {
+  id: string;
+  /** Null for shed's own database. */
+  serviceId: string | null;
+  trigger: BackupTrigger;
+  method: BackupMethod;
+  status: BackupStatus;
+  /** Download name, e.g. "postgres-20261004-030000.sql.zst". */
+  fileName: string;
+  /** Archive size in bytes. */
+  size: number;
+  encrypted: boolean;
+  local: boolean;
+  remote: boolean;
+  remoteError: string;
+  error: string;
+  createdAt: string;
+  finishedAt: string | null;
+};
+
+export type Restore = {
+  id: string;
+  serviceId: string;
+  backupId: string;
+  status: "running" | "succeeded" | "failed";
+  error: string;
+  createdAt: string;
+  finishedAt: string | null;
+};
+
+/** The latest restore is null when the service never had one. */
+export type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; restore: Restore | null };
+export type SystemBackups = { policy: BackupPolicy; backups: Backup[] };
+
+export type S3Settings = {
+  /** URL, e.g. "https://s3.us-east-1.amazonaws.com". */
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  accessKeyId: string;
+  pathStyle: boolean;
+  hasSecret: boolean;
+};
+
+export type BackupSettings = {
+  s3: S3Settings | null;
+  /** The recipient is "" until a key exists. */
+  encryption: { enabled: boolean; recipient: string };
+};
+
+/** An omitted or empty secretAccessKey keeps the stored secret. A null s3 removes the destination. */
+export type BackupSettingsInput = {
+  s3: (Omit<S3Settings, "hasSecret"> & { secretAccessKey?: string }) | null;
+  encryption: { enabled: boolean };
+};
+
+export const isBackupActive = (b: Pick<Backup, "status">): boolean =>
+  b.status === "queued" || b.status === "running";

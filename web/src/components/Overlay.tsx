@@ -91,10 +91,43 @@ type MenuItemProps = {
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
+  /** Renders the item as a link, e.g. a file download. */
+  href?: string;
+  /** Makes the link download rather than navigate. Needs `href`. */
+  download?: boolean;
   children: ReactNode;
 };
 
-export function MenuItem({ onClick, icon, shortcut, danger, disabled, children }: MenuItemProps) {
+export function MenuItem({
+  onClick,
+  icon,
+  shortcut,
+  danger,
+  disabled,
+  href,
+  download,
+  children,
+}: MenuItemProps) {
+  const content = (
+    <>
+      {icon && <span className={styles.menuIcon}>{icon}</span>}
+      <span className={styles.menuLabel}>{children}</span>
+      {shortcut && <kbd className={styles.menuShortcut}>{shortcut}</kbd>}
+    </>
+  );
+  if (href) {
+    return (
+      <BaseMenu.LinkItem
+        className={styles.menuItem}
+        data-danger={danger || undefined}
+        href={href}
+        download={download}
+        onClick={onClick}
+      >
+        {content}
+      </BaseMenu.LinkItem>
+    );
+  }
   return (
     <BaseMenu.Item
       className={styles.menuItem}
@@ -102,9 +135,7 @@ export function MenuItem({ onClick, icon, shortcut, danger, disabled, children }
       disabled={disabled}
       onClick={onClick}
     >
-      {icon && <span className={styles.menuIcon}>{icon}</span>}
-      <span className={styles.menuLabel}>{children}</span>
-      {shortcut && <kbd className={styles.menuShortcut}>{shortcut}</kbd>}
+      {content}
     </BaseMenu.Item>
   );
 }

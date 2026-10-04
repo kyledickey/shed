@@ -33,3 +33,15 @@ export function formatDuration(from: string, to: string | null): string {
   if (minutes < 60) return `${minutes}m ${seconds}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
+
+const utcFormat = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+  timeZoneName: "short",
+});
+
+/** Formats an instant in UTC, e.g. "Oct 5, 2026, 3:00 AM UTC". */
+export function formatDateUTC(iso: string): string {
+  return utcFormat.format(new Date(iso));
+}

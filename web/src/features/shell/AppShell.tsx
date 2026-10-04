@@ -1,6 +1,7 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
+  Archive,
   ChartArea,
   Command as CommandIcon,
   FolderPlus,
@@ -22,6 +23,7 @@ import { errorMessage } from "../../api/client";
 import { useDeploy } from "../../api/deployments";
 import { projectQuery, projectsQuery } from "../../api/projects";
 import { serviceQuery } from "../../api/services";
+import type { Service } from "../../api/types";
 import { Button } from "../../components/Button";
 import { CommandPalette, type Command } from "../../components/CommandPalette";
 import { Avatar, Kbd, ServiceIcon } from "../../components/Misc";
@@ -38,14 +40,16 @@ import { Tabs } from "../../components/Tabs";
 import { useTheme, type Theme } from "../../lib/theme";
 import styles from "./AppShell.module.css";
 
-export type ServiceTab = "deployments" | "logs" | "metrics" | "variables" | "settings";
+export type ServiceTab = "deployments" | "logs" | "metrics" | "variables" | "backups" | "settings";
 type ProjectTab = "services" | "settings";
+type RootTab = "projects" | "settings";
 
 const serviceTabs: { value: ServiceTab; label: string; icon: ReactNode }[] = [
   { value: "deployments", label: "Deployments", icon: <Rocket size={15} /> },
   { value: "logs", label: "Logs", icon: <ScrollText size={15} /> },
   { value: "metrics", label: "Metrics", icon: <ChartArea size={15} /> },
   { value: "variables", label: "Variables", icon: <SlidersHorizontal size={15} /> },
+  { value: "backups", label: "Backups", icon: <Archive size={15} /> },
   { value: "settings", label: "Settings", icon: <Settings size={15} /> },
 ];
 
@@ -53,6 +57,16 @@ const projectTabs: { value: ProjectTab; label: string; icon: ReactNode }[] = [
   { value: "services", label: "Services", icon: <Layers size={15} /> },
   { value: "settings", label: "Settings", icon: <Settings size={15} /> },
 ];
+
+const rootTabs: { value: RootTab; label: string; icon: ReactNode }[] = [
+  { value: "projects", label: "Projects", icon: <Layers size={15} /> },
+  { value: "settings", label: "Settings", icon: <Settings size={15} /> },
+];
+
+/** visibleServiceTabs hides Backups from services that have no volume to back up. */
+function visibleServiceTabs(service?: Service) {
+  return serviceTabs.filter((t) => t.value !== "backups" || (service?.volumes.length ?? 0) > 0);
+}
 
 /** AppShell frames every signed-in page: switcher crumbs, section tabs and account actions. */
 export function AppShell() {
@@ -178,6 +192,7 @@ function activeTab<T extends string>(pathname: string, base: string, tabs: T[], 
 function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const service = useQuery({ ...serviceQuery(serviceId ?? ""), enabled: !!serviceId });
 
   if (projectId && serviceId) {
     const base = `/projects/${projectId}/services/${serviceId}`;
@@ -191,7 +206,7 @@ function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string 
       <Tabs
         label="Service sections"
         value={tab}
-        items={serviceTabs}
+        items={visibleServiceTabs(service.data)}
         onChange={(next) =>
           void navigate({ to: next === "deployments" ? base : `${base}/${next}` })
         }
@@ -213,9 +228,9 @@ function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string 
   return (
     <Tabs
       label="Sections"
-      value="projects"
-      items={[{ value: "projects", label: "Projects", icon: <Layers size={15} /> }]}
-      onChange={() => void navigate({ to: "/" })}
+      value={activeTab(pathname, "", ["settings"] as RootTab[], "projects")}
+      items={rootTabs}
+      onChange={(next) => void navigate({ to: next === "projects" ? "/" : "/settings" })}
     />
   );
 }
@@ -257,6 +272,9 @@ function UserMenu() {
           <span className={styles.userLogin}>@{me.login}</span>
         </div>
       </div>
+      <MenuItem icon={<Settings size={14} />} onClick={() => void navigate({ to: "/settings" })}>
+        Settings
+      </MenuItem>
       <MenuItem
         icon={<LogOut size={14} />}
         onClick={() => logout.mutate(undefined, { onSuccess: () => navigate({ to: "/login" }) })}
@@ -301,7 +319,7 @@ function Palette({
             toast.add({ title: "Deploy failed", description: errorMessage(err), type: "error" }),
         }),
     });
-    for (const t of serviceTabs) {
+    for (const t of visibleServiceTabs(s)) {
       commands.push({
         id: `tab-${t.value}`,
         group: s.name,
@@ -322,6 +340,13 @@ function Palette({
     });
   }
   commands.push(
+    {
+      id: "settings",
+      group: "Actions",
+      label: "Settings",
+      icon: <Settings size={15} />,
+      run: () => void navigate({ to: "/settings" }),
+    },
     {
       id: "new-project",
       group: "Actions",
