@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -259,6 +260,13 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) error {
 	}
 	if !validHost(host) {
 		return errorf(http.StatusBadRequest, "%q is not a valid host name", host)
+	}
+	dashboard, err := url.Parse(s.baseURL)
+	if err != nil {
+		return err
+	}
+	if strings.EqualFold(host, strings.TrimSuffix(dashboard.Hostname(), ".")) {
+		return errorf(http.StatusConflict, "the dashboard hostname is reserved")
 	}
 	d, err := s.store.CreateDomain(ctx, svc.ID, host, generated)
 	if errors.Is(err, store.ErrConflict) {

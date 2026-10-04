@@ -528,3 +528,10 @@ updates are serialized through activation to prevent stale route publication.
 
 Once routing succeeds, activation and cleanup finish even if the deployment is
 canceled concurrently, so a routed candidate is not removed mid-activation.
+
+### Dashboard hostname reservation
+
+Service domain creation rejects the hostname from `server.url` with HTTP
+409, including generated names. Proxy configuration rejects duplicate normalized
+hostnames, preserving the existing configuration instead of selecting a workload
+route over the dashboard route.

@@ -22,7 +22,7 @@ func buildConfig(cfg Config, routes []Route) ([]byte, error) {
 
 	routes = slices.Clone(routes)
 	for i := range routes {
-		routes[i].Host = strings.ToLower(strings.TrimSpace(routes[i].Host))
+		routes[i].Host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(routes[i].Host)), ".")
 		if routes[i].Host == "" || routes[i].Upstream == "" {
 			return nil, fmt.Errorf("invalid route %+v: host and upstream are required", routes[i])
 		}
@@ -33,8 +33,12 @@ func buildConfig(cfg Config, routes []Route) ([]byte, error) {
 		}
 		return strings.Compare(a.Upstream, b.Upstream)
 	})
-	// Caddy uses the first matching route, so drop later duplicates.
-	routes = slices.CompactFunc(routes, func(a, b Route) bool { return a.Host == b.Host })
+	// Ambiguous hosts must never change routing based on upstream sort order.
+	for i := 1; i < len(routes); i++ {
+		if routes[i-1].Host == routes[i].Host {
+			return nil, fmt.Errorf("duplicate route host %q", routes[i].Host)
+		}
+	}
 
 	handlers := make([]obj, 0, len(routes)+1)
 	var public, internal []string

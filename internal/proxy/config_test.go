@@ -43,7 +43,6 @@ func TestBuildConfigRoutes(t *testing.T) {
 	routes := []Route{
 		{Host: "b.example.com", Upstream: "10.0.0.2:3000"},
 		{Host: "A.example.com ", Upstream: "10.0.0.1:3000"},
-		{Host: "b.example.com", Upstream: "10.0.0.9:1"}, // Duplicate host; sorts after the first.
 	}
 	got, err := buildConfig(baseCfg, routes)
 	if err != nil {
@@ -217,5 +216,14 @@ func TestBuildConfigTLSPolicies(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDuplicateRoutesRejected(t *testing.T) {
+	for _, host := range []string{"dashboard.example.com", "DASHBOARD.example.com.", " dashboard.example.com "} {
+		_, err := buildConfig(baseCfg, []Route{{Host: "dashboard.example.com", Upstream: "127.0.0.1:3000"}, {Host: host, Upstream: "10.0.0.2:8080"}})
+		if err == nil {
+			t.Errorf("duplicate %q accepted", host)
+		}
 	}
 }
