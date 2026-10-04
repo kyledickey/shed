@@ -71,13 +71,27 @@ func (m *Manager) runBackup(ctx context.Context, b store.Backup) error {
 		return errors.New(b.Error)
 	}
 	b.Status, b.Local = store.BackupSucceeded, true
+	var r Remote
+	var dest *store.BackupDestination
+	if p.Upload {
+		if r, dest, err = m.remote(ctx); err != nil {
+			b.RemoteError = err.Error()
+			m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
+		} else if r != nil {
+			// The backup stays in progress until the upload's outcome is
+			// recorded.
+			b.Status, b.FinishedAt = store.BackupUploading, nil
+		}
+	}
 	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
-	m.log.Info("backup succeeded", "backup", b.ID, "service", b.ServiceID, "method", b.Method, "size", b.Size)
+	m.log.Info("backup written", "backup", b.ID, "service", b.ServiceID, "method", b.Method, "size", b.Size)
 
-	if p.Upload {
-		m.upload(ctx, b, p)
+	if r != nil {
+		if err := m.upload(ctx, b, p, r, *dest); err != nil {
+			return err
+		}
 	}
 	if b.Trigger == store.BackupSchedule {
 		if err := m.prune(ctx, b.ServiceID, p); err != nil {
@@ -305,34 +319,30 @@ func (m *Manager) readVolumes(ctx context.Context, backupID, image string, vols 
 	return nil
 }
 
-// upload stores the archive of the successful backup b in S3 if a
-// destination is configured, and records the outcome. With keep_local 0,
-// a successful upload removes the local file.
-func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput) {
-	r, s, err := m.remote(ctx)
-	if r == nil && err == nil {
-		return
-	}
-	if err == nil {
-		key := objectKey(*s, b.ServiceID, b.File)
-		if err = m.put(ctx, r, key, m.localPath(b)); err == nil {
-			b.RemoteKey, b.DestinationID, b.RemoteError = key, s.ID, ""
-			if p.KeepLocal == 0 {
-				if err := os.Remove(m.localPath(b)); err != nil {
-					m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
-				} else {
-					b.Local = false
-				}
+// upload stores the archive of the uploading backup b in the destination d,
+// reached through r, and records b as succeeded with the outcome. With
+// keep_local 0, a successful upload removes the local file.
+func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput, r Remote, d store.BackupDestination) error {
+	key := objectKey(d, b.ServiceID, b.File)
+	if err := m.put(ctx, r, key, m.localPath(b)); err != nil {
+		b.RemoteError = err.Error()
+		m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
+	} else {
+		b.RemoteKey, b.DestinationID, b.RemoteError = key, d.ID, ""
+		if p.KeepLocal == 0 {
+			if err := os.Remove(m.localPath(b)); err != nil {
+				m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
+			} else {
+				b.Local = false
 			}
 		}
 	}
-	if err != nil {
-		b.RemoteError = err.Error()
-		m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
-	}
+	finished := m.now()
+	b.Status, b.FinishedAt = store.BackupSucceeded, &finished
 	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
-		m.log.Error("backup: record upload", "backup", b.ID, "err", err)
+		return fmt.Errorf("backup: record upload: %w", err)
 	}
+	return nil
 }
 
 // put uploads the file at path as key.

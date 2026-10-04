@@ -230,7 +230,7 @@ CREATE TABLE backups (
   service_id TEXT REFERENCES services(id) ON DELETE CASCADE, -- NULL = shed.db
   trigger TEXT NOT NULL,                 -- schedule | manual | pre-restore
   method TEXT NOT NULL,                  -- dump | volume | sqlite
-  status TEXT NOT NULL,                  -- queued | running | succeeded | failed
+  status TEXT NOT NULL,                  -- queued | running | uploading | succeeded | failed
   file TEXT NOT NULL DEFAULT '',         -- archive file name, e.g. <id>.sql.zst.age
   size INTEGER NOT NULL DEFAULT 0,       -- archive bytes
   encrypted INTEGER NOT NULL DEFAULT 0,
@@ -508,9 +508,12 @@ runs at a time across shed, and the others wait in order. A service may have
 only one job queued or running, except that a restore may be queued behind
 its backup; conflicting requests return 409. While running, the archive is written to
 `<data>/backups/<serviceID or "system">/<file>.partial`, synced, and then
-renamed. After that the backup is `succeeded` with `local` set. If the
-policy uploads and S3 is configured, the local file is then uploaded. Upload
-failure keeps the backup `succeeded` but records `remote_error`.
+renamed, and `local` is set. If the policy uploads and S3 is configured, the
+backup is then `uploading` while the local file is uploaded; it is still the
+service's running job, so it cannot be deleted and another backup cannot
+start. Once the upload's outcome is recorded, or right away when there is
+nothing to upload, the backup is `succeeded` and `finished_at` is set. Upload
+failure still ends `succeeded` but records `remote_error`.
 `keep_local = 0` (allowed only when uploading) deletes the local file only
 after a successful upload: without S3, or when the upload fails, the local
 file is kept, so a backup is never left without a copy. Removing the S3
@@ -630,7 +633,10 @@ manual steps below.
 
 **Boot, shutdown, and deletion.** On boot, before the deployer reconciles,
 `queued` and `running` backups and `running` restores are marked `failed`
-("interrupted by restart"). Leftover `.partial` files (archives, snapshots,
+("interrupted by restart"), and `uploading` backups, whose archive is
+complete, are marked `succeeded` with that message as their `remote_error`.
+A backup that shutdown interrupts while `uploading` likewise ends `succeeded`
+with the upload error. Leftover `.partial` files (archives, snapshots,
 downloads) and `shed.backup` helper containers are removed. Then each
 restore fence is resolved: in phase `retaining` the volumes are unchanged,
 so the fence is lifted and the pre-restore volumes are removed; in phase
@@ -781,13 +787,13 @@ GET    /api/logs                                SSE shed's own log (last 1000 li
 
 GET    /api/services/{id}/backups               → ServiceBackups  (newest first, 100)
 PUT    /api/services/{id}/backups/policy  BackupPolicyInput → BackupPolicy
-POST   /api/services/{id}/backups               202 → Backup  (run now; 409 if one is queued/running; 400 if no volumes or never deployed)
+POST   /api/services/{id}/backups               202 → Backup  (run now; 409 if one is queued/running/uploading; 400 if no volumes or never deployed)
 GET    /api/backups/system                      → SystemBackups
 PUT    /api/backups/system/policy  BackupPolicyInput → BackupPolicy
 POST   /api/backups/system                      202 → Backup
 GET    /api/backups/{id}/download               archive, decrypted, still zstd-compressed (Content-Disposition)
 POST   /api/backups/{id}/restore                202 → Restore  (409 if busy; 400 for shed.db, unsuccessful, or vanished backups)
-DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running or being restored)
+DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running/uploading or being restored)
 GET    /api/backups/settings                    → BackupSettings
 PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
 POST   /api/backups/settings/test  BackupSettingsInput → 204  (400 {error} with the S3 failure; blank secret = stored)
@@ -904,7 +910,7 @@ type BackupPolicy = {
   nextRunAt: string | null;            // null when disabled
 };
 type BackupPolicyInput = Omit<BackupPolicy, "nextRunAt">;
-type BackupStatus = "queued" | "running" | "succeeded" | "failed";
+type BackupStatus = "queued" | "running" | "uploading" | "succeeded" | "failed"; // uploading: archive written, S3 upload in progress; poll until succeeded
 type Backup = {
   id: string; serviceId: string | null;  // null = shed.db
   trigger: "schedule" | "manual" | "pre-restore";

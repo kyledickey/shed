@@ -474,6 +474,47 @@ func TestUpload(t *testing.T) {
 	}
 }
 
+func TestUploadingStatus(t *testing.T) {
+	e := newEnv(t)
+	e.setS3("")
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	e.remote.putting, e.remote.proceed = make(chan struct{}), make(chan struct{})
+	b, err := e.m.BackUp(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.drain()
+	}()
+	<-e.remote.putting
+	got := e.backup(b.ID)
+	if got.Status != store.BackupUploading || !got.Local || got.Size == 0 || got.FinishedAt != nil {
+		t.Errorf("backup during upload = %+v, want uploading", got)
+	}
+	if err := e.m.Delete(e.ctx, b.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("Delete during upload = %v, want ErrBusy", err)
+	}
+	if _, err := e.m.BackUp(e.ctx, sv.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("BackUp during upload = %v, want ErrBusy", err)
+	}
+	close(e.remote.proceed)
+	<-done
+	got = e.backup(b.ID)
+	if got.Status != store.BackupSucceeded || got.RemoteKey == "" || got.FinishedAt == nil {
+		t.Errorf("backup after upload = %+v, want succeeded and uploaded", got)
+	}
+
+	// Without a destination, a backup never shows as uploading.
+	if _, err := e.m.SetSettings(e.ctx, SettingsInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if b := e.backUp(sv.ID); b.RemoteKey != "" || b.RemoteError != "" {
+		t.Errorf("backup without S3 = %+v", b)
+	}
+}
+
 func TestRemoteBackupsKeepTheirDestination(t *testing.T) {
 	e := newEnv(t)
 	e.setS3("old")

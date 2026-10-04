@@ -15,7 +15,7 @@ import {
 
 const POLL_MS = 2000;
 
-/** Polls only while something is queued or running; otherwise the data stays put. */
+/** Polls only while something is queued, running, uploading, or restoring; otherwise the data stays put. */
 function pollWhileActive(data: SystemBackups | ServiceBackups | undefined): number | false {
   const restoring = data && "restore" in data && data.restore?.status === "running";
   return restoring || data?.backups.some(isBackupActive) ? POLL_MS : false;

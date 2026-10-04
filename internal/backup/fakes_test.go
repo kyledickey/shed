@@ -439,9 +439,16 @@ type fakeRemote struct {
 	objects map[string][]byte
 	putErr  error
 	checked []string
+	// putting, if set, receives a value when Put starts and then Put waits
+	// for proceed.
+	putting, proceed chan struct{}
 }
 
 func (r *fakeRemote) Put(_ context.Context, key string, rd io.Reader, size int64) error {
+	if r.putting != nil {
+		r.putting <- struct{}{}
+		<-r.proceed
+	}
 	b, err := io.ReadAll(rd)
 	if err != nil {
 		return err

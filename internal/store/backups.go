@@ -187,11 +187,20 @@ func (s *Store) BackupDestination(ctx context.Context, id string) (BackupDestina
 }
 
 // FailInterruptedBackups marks every queued or running backup as failed with
-// the error msg, and returns how many it changed.
+// the error msg, and every uploading one, whose archive is complete, as
+// succeeded with the upload error msg. It returns how many it changed.
 func (s *Store) FailInterruptedBackups(ctx context.Context, msg string) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE backups SET status = ?, error = ?, finished_at = ?
-		WHERE status IN (?, ?)`,
-		BackupFailed, msg, formatTime(now()), BackupQueued, BackupRunning)
+	t := formatTime(now())
+	res, err := s.db.ExecContext(ctx, `UPDATE backups SET
+		status = CASE status WHEN ? THEN ? ELSE ? END,
+		error = CASE status WHEN ? THEN error ELSE ? END,
+		remote_error = CASE status WHEN ? THEN ? ELSE remote_error END,
+		finished_at = ?
+		WHERE status IN (?, ?, ?)`,
+		BackupUploading, BackupSucceeded, BackupFailed,
+		BackupUploading, msg,
+		BackupUploading, msg,
+		t, BackupQueued, BackupRunning, BackupUploading)
 	if err != nil {
 		return 0, fmt.Errorf("store: fail interrupted backups: %w", err)
 	}

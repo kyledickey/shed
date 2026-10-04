@@ -50,6 +50,7 @@ const methodLabels: Record<BackupMethod, string> = {
 const statusLooks: Record<BackupStatus, { tone: Tone; label: string; live: boolean }> = {
   queued: { tone: "neutral", label: "Queued", live: true },
   running: { tone: "sky", label: "Running", live: true },
+  uploading: { tone: "sky", label: "Uploading", live: true },
   succeeded: { tone: "grass", label: "Succeeded", live: false },
   failed: { tone: "tomato", label: "Failed", live: false },
 };
@@ -165,7 +166,9 @@ function BackupRow({
               {triggerLabels[b.trigger]}
             </Badge>
             <span>{methodLabels[b.method]}</span>
-            {b.status === "succeeded" && <span>{formatBytes(b.size)}</span>}
+            {(b.status === "succeeded" || b.status === "uploading") && (
+              <span>{formatBytes(b.size)}</span>
+            )}
             {b.finishedAt && <span>{formatDuration(b.createdAt, b.finishedAt)}</span>}
             {b.fileName && <span className={styles.file}>{b.fileName}</span>}
           </span>
@@ -249,6 +252,7 @@ function StatusGlyph({ status }: { status: BackupStatus }) {
     case "failed":
       return <X size={13} strokeWidth={2.5} />;
     case "running":
+    case "uploading":
       return <Spinner tone="sky" size={12} />;
     default:
       return <Hourglass size={12} />;

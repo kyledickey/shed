@@ -251,13 +251,13 @@ func (m *Manager) checkService(ctx context.Context, serviceID string) error {
 }
 
 // Recover cleans up after an unclean stop: it marks queued and running
-// backups and running restores failed, removes partial files and leftover
-// helper containers, and finishes the restores that were interrupted while
-// their service was fenced. Those services get their previous data back if
-// their volumes may hold partial data; a service whose data cannot be put
-// back stays stopped and fenced, and the error is logged. Call Recover before
-// anything starts services, in particular before the deployer reconciles,
-// and before Run.
+// backups and running restores failed, uploading backups succeeded with an
+// upload error, removes partial files and leftover helper containers, and
+// finishes the restores that were interrupted while their service was
+// fenced. Those services get their previous data back if their volumes may
+// hold partial data; a service whose data cannot be put back stays stopped
+// and fenced, and the error is logged. Call Recover before anything starts
+// services, in particular before the deployer reconciles, and before Run.
 func (m *Manager) Recover(ctx context.Context) error {
 	if _, err := m.store.FailInterruptedBackups(ctx, errRestart); err != nil {
 		return fmt.Errorf("backup: recover: %w", err)
@@ -607,7 +607,8 @@ func (m *Manager) Delete(ctx context.Context, backupID string) error {
 	if err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
-	if b.Status == store.BackupQueued || b.Status == store.BackupRunning {
+	switch b.Status {
+	case store.BackupQueued, store.BackupRunning, store.BackupUploading:
 		return ErrBusy
 	}
 	if b.Local {

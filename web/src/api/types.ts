@@ -177,7 +177,8 @@ export type BackupPolicy = {
 };
 export type BackupPolicyInput = Omit<BackupPolicy, "nextRunAt">;
 
-export type BackupStatus = "queued" | "running" | "succeeded" | "failed";
+/** "uploading": the archive is written and its S3 upload is in progress. */
+export type BackupStatus = "queued" | "running" | "uploading" | "succeeded" | "failed";
 export type BackupTrigger = "schedule" | "manual" | "pre-restore";
 export type BackupMethod = "dump" | "volume" | "sqlite";
 
@@ -239,4 +240,4 @@ export type BackupSettingsInput = {
 };
 
 export const isBackupActive = (b: Pick<Backup, "status">): boolean =>
-  b.status === "queued" || b.status === "running";
+  b.status === "queued" || b.status === "running" || b.status === "uploading";

@@ -183,7 +183,7 @@ func TestFailInterrupted(t *testing.T) {
 	s := newStore(t)
 	sv := mustService(t, s, Service{ProjectID: mustProject(t, s, "p").ID, Name: "a", Kind: "postgres"})
 
-	statuses := []BackupStatus{BackupQueued, BackupRunning, BackupSucceeded, BackupFailed}
+	statuses := []BackupStatus{BackupQueued, BackupRunning, BackupUploading, BackupSucceeded, BackupFailed}
 	backups := make([]Backup, len(statuses))
 	for i, st := range statuses {
 		b, err := s.CreateBackup(ctx, Backup{
@@ -194,8 +194,8 @@ func TestFailInterrupted(t *testing.T) {
 		}
 		backups[i] = b
 	}
-	if n, err := s.FailInterruptedBackups(ctx, "interrupted by restart"); err != nil || n != 2 {
-		t.Fatalf("FailInterruptedBackups() = %d, %v; want 2", n, err)
+	if n, err := s.FailInterruptedBackups(ctx, "interrupted by restart"); err != nil || n != 3 {
+		t.Fatalf("FailInterruptedBackups() = %d, %v; want 3", n, err)
 	}
 	for i, st := range statuses {
 		got, err := s.Backup(ctx, backups[i].ID)
@@ -204,6 +204,11 @@ func TestFailInterrupted(t *testing.T) {
 		}
 		interrupted := st == BackupQueued || st == BackupRunning
 		switch {
+		case st == BackupUploading:
+			// The archive is complete; only the upload was interrupted.
+			if got.Status != BackupSucceeded || got.Error != "orig" || got.RemoteError != "interrupted by restart" || got.FinishedAt == nil {
+				t.Errorf("uploading backup after = %+v, want succeeded with the upload interrupted", got)
+			}
 		case interrupted && (got.Status != BackupFailed || got.Error != "interrupted by restart" || got.FinishedAt == nil):
 			t.Errorf("%s backup after = %+v, want interrupted failure", st, got)
 		case !interrupted && (got.Status != st || got.Error != "orig" || got.FinishedAt != nil):
@@ -214,10 +219,10 @@ func TestFailInterrupted(t *testing.T) {
 		t.Errorf("second FailInterruptedBackups() = %d, %v; want 0", n, err)
 	}
 
-	if _, err := s.CreateRestore(ctx, Restore{ServiceID: sv.ID, BackupID: backups[2].ID, Status: RestoreRunning}); err != nil {
+	if _, err := s.CreateRestore(ctx, Restore{ServiceID: sv.ID, BackupID: backups[3].ID, Status: RestoreRunning}); err != nil {
 		t.Fatal(err)
 	}
-	done, err := s.CreateRestore(ctx, Restore{ServiceID: sv.ID, BackupID: backups[2].ID, Status: RestoreSucceeded})
+	done, err := s.CreateRestore(ctx, Restore{ServiceID: sv.ID, BackupID: backups[3].ID, Status: RestoreSucceeded})
 	if err != nil {
 		t.Fatal(err)
 	}

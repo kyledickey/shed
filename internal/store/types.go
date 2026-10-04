@@ -229,6 +229,7 @@ type BackupStatus string
 const (
 	BackupQueued    BackupStatus = "queued"
 	BackupRunning   BackupStatus = "running"
+	BackupUploading BackupStatus = "uploading" // archive written, upload to S3 in progress
 	BackupSucceeded BackupStatus = "succeeded"
 	BackupFailed    BackupStatus = "failed"
 )
