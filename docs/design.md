@@ -551,3 +551,16 @@ before appending expanded content. Build redaction streams chunks while retainin
 only enough overlap to mask secrets split across writes. Runtime SSE and build-log
 replay split oversized unterminated lines into bounded chunks (approximately
 64 KiB), preserving their content without accumulating arbitrary-length lines.
+
+### Workload resource ceilings
+
+Every newly created app and database container has a 1 GiB memory limit with no
+additional swap, a one-CPU quota, and a 512-process limit. Docker JSON logs rotate
+at 10 MiB with at most three files per container. Existing containers receive
+these ceilings when redeployed; host capacity must still account for the total
+number of workloads and build overhead.
+
+The shared build runner allows one active build across all services. A 30-minute
+build deadline includes queueing, cloning, Railpack preparation, and image
+construction. Cancellation terminates the subprocess group, including child
+processes, before releasing the build slot.

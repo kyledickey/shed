@@ -19,6 +19,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,6 +52,9 @@ type Request struct {
 type Builder struct {
 	// WorkDir is the parent directory of the per-build workspaces.
 	WorkDir string
+
+	once sync.Once
+	slot chan struct{}
 }
 
 // Build clones req.Commit and builds req.Image, streaming progress and command
@@ -59,6 +64,13 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	if err := req.validate(id); err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
+	ctx, cancel := context.WithTimeout(ctx, buildTimeout)
+	defer cancel()
+	release, err := b.acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("build: wait for build slot: %w", err)
+	}
+	defer release()
 	workspace, err := filepath.Abs(filepath.Join(b.WorkDir, id))
 	if err != nil {
 		return fmt.Errorf("build: resolve workspace: %w", err)
@@ -277,15 +289,21 @@ func sortedKeys(m map[string]string) []string {
 }
 
 // run runs a command in dir with extra environment variables, streaming its
-// stdout and stderr to out. On cancellation the command is interrupted, then
-// killed if it does not exit promptly.
+// stdout and stderr to out. Cancellation kills its entire process group.
 func run(ctx context.Context, dir string, env []string, out io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = out
 	cmd.Stderr = out
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
 	cmd.WaitDelay = 10 * time.Second
 	return cmd.Run()
 }

@@ -257,6 +257,8 @@ func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
 			PortBindings:  bindings,
 			Mounts:        mounts,
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+			Resources:     workloadResources(),
+			LogConfig:     container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
 		},
 	}
 	if spec.Network != "" {
@@ -521,4 +523,10 @@ func statsFrom(r container.StatsResponse) Stats {
 		}
 	}
 	return s
+}
+
+// workloadResources caps each workload, including database containers.
+func workloadResources() container.Resources {
+	pids := int64(512)
+	return container.Resources{Memory: 1 << 30, MemorySwap: 1 << 30, NanoCPUs: 1_000_000_000, PidsLimit: &pids}
 }
