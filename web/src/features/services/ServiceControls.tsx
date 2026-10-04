@@ -18,7 +18,7 @@ type Run = (
 
 /**
  * ServiceControls are the run actions for the service's current state:
- * Stop and Restart while running, Start and Redeploy while stopped, Cancel
+ * Restart and Stop while running, Start and Redeploy while stopped, Cancel
  * while a deployment is in progress, and Deploy when nothing is running.
  */
 export function ServiceControls({ service }: { service: Service }) {
@@ -96,10 +96,6 @@ export function ServiceControls({ service }: { service: Service }) {
   if (service.status === "active" || service.status === "crashed") {
     return (
       <>
-        <Button onClick={() => setConfirmStop(true)}>
-          <Square size={13} />
-          Stop
-        </Button>
         <Button
           loading={restart.isPending}
           onClick={() =>
@@ -108,6 +104,10 @@ export function ServiceControls({ service }: { service: Service }) {
         >
           {!restart.isPending && <RotateCw size={14} />}
           Restart
+        </Button>
+        <Button onClick={() => setConfirmStop(true)}>
+          <Square size={13} />
+          Stop
         </Button>
         <ConfirmDialog
           open={confirmStop}
