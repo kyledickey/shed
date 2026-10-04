@@ -312,3 +312,38 @@ esac
 		})
 	}
 }
+
+func TestRailpackOutputsOutsideCheckout(t *testing.T) {
+	work, bin := t.TempDir(), t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "sentinel")
+	if err := os.WriteFile(sentinel, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SENTINEL", sentinel)
+	scripts := map[string]string{
+		"git": "#!/bin/sh\nln -sf \"$SENTINEL\" railpack-plan.json\nln -sf \"$SENTINEL\" railpack-info.json\n",
+		"railpack": `#!/bin/sh
+set -eu
+test "$1" = prepare
+test "$(dirname "$4")" != "$2"
+test "$(dirname "$6")" != "$2"
+printf '{}' > "$4"
+printf '{}' > "$6"
+`,
+		"docker": "#!/bin/sh\nexit 0\n",
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	b := Builder{WorkDir: work}
+	if err := b.Build(context.Background(), "safe", Request{RepoURL: "https://example.com/r.git", Commit: "abc", Image: "x"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil || string(got) != "untouched" {
+		t.Fatalf("external file changed: %q, %v", got, err)
+	}
+}

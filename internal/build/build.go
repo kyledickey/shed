@@ -65,7 +65,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 		return fmt.Errorf("build: reset workspace: %w", err)
 	}
 	repo := filepath.Join(workspace, "src")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
+	if err := os.MkdirAll(repo, 0o700); err != nil {
 		return fmt.Errorf("build: create workspace: %w", err)
 	}
 	defer os.RemoveAll(workspace)
@@ -97,8 +97,8 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	}
 
 	fmt.Fprintln(w, "==> Building with Railpack")
-	plan := filepath.Join(contextDir, "railpack-plan.json")
-	info := filepath.Join(contextDir, "railpack-info.json")
+	plan := filepath.Join(workspace, "railpack-plan.json")
+	info := filepath.Join(workspace, "railpack-info.json")
 	err = run(ctx, contextDir, nil, w, "railpack", railpackPrepareArgs(req, contextDir, plan, info)...)
 	if err != nil {
 		return fmt.Errorf("build: railpack prepare: %w", err)
