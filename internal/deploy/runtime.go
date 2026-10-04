@@ -317,7 +317,8 @@ func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
 // Reconcile brings Docker in line with the store after a restart: deployments
 // that were in progress are marked failed, the active deployment's container
 // of every service that is not stopped is started (or recreated if it is
-// gone), and routes are applied.
+// gone), and routes are applied. It does not respect holds, so it must finish
+// before anything calls Hold.
 func (d *Deployer) Reconcile(ctx context.Context) error {
 	stale, err := d.store.DeploymentsByStatus(ctx,
 		store.StatusQueued, store.StatusWaiting, store.StatusBuilding, store.StatusDeploying)
@@ -414,11 +415,16 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) erro
 }
 
 // DeleteService stops a service's deployments, removes its containers,
-// volumes, images, and build logs, and deletes it from the store.
+// volumes, images, and build logs, and deletes it from the store. It returns
+// ErrServiceBusy while the service is held.
 func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
 	d.mu.Lock()
+	if _, ok := d.held[serviceID]; ok {
+		d.mu.Unlock()
+		return ErrServiceBusy
+	}
 	d.deletingServices[serviceID] = true
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); delete(d.deletingServices, serviceID); d.mu.Unlock() }()
@@ -443,11 +449,18 @@ func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 }
 
 // DeleteProject deletes every service of a project as DeleteService does,
-// then its network, then the project itself.
+// then its network, then the project itself. It returns ErrServiceBusy while
+// any of its services is held.
 func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
 	d.mu.Lock()
+	for _, p := range d.held {
+		if p == projectID {
+			d.mu.Unlock()
+			return ErrServiceBusy
+		}
+	}
 	d.deletingProjects[projectID] = true
 	d.mu.Unlock()
 	defer func() { d.mu.Lock(); delete(d.deletingProjects, projectID); d.mu.Unlock() }()
@@ -519,10 +532,15 @@ func (d *Deployer) teardown(ctx context.Context, svc store.Service) error {
 
 // DeleteVolume deletes a volume and its data. A volume still mounted by the
 // running container is detached by the service's next deployment, which then
-// removes its data.
+// removes its data. It returns ErrServiceBusy while the service is held.
 func (d *Deployer) DeleteVolume(ctx context.Context, volumeID string) error {
+	d.controlMu.Lock()
+	defer d.controlMu.Unlock()
 	v, err := d.store.Volume(ctx, volumeID)
 	if err != nil {
+		return err
+	}
+	if err := d.checkHeld(v.ServiceID); err != nil {
 		return err
 	}
 	if err := d.docker.RemoveVolume(ctx, volumeName(v.ID)); err != nil {

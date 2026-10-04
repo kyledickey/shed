@@ -106,6 +106,9 @@ var (
 	ErrNoContainer = errors.New("deploy: service has no active container")
 	// ErrServiceStopped is returned when restarting a stopped service.
 	ErrServiceStopped = errors.New("deploy: service is stopped")
+	// ErrServiceBusy is returned while a service is held for a backup or
+	// restore.
+	ErrServiceBusy = errors.New("deploy: service is busy with a backup or restore")
 )
 
 // Cancellation causes, which decide how an interrupted deployment is
@@ -115,6 +118,7 @@ var (
 	errSuperseded = errors.New("superseded by a newer deployment")
 	errDeleted    = errors.New("service deleted")
 	errHalted     = errors.New("service stopped")
+	errHeld       = errors.New("service held for a backup or restore")
 	errShutdown   = errors.New("interrupted by shutdown")
 )
 
@@ -141,17 +145,20 @@ type Deployer struct {
 	logPoll        time.Duration
 	probe          func(ctx context.Context, addr, path string) error
 
-	ctx       context.Context // parent of every job; canceled by Stop
-	shutdown  context.CancelCauseFunc
-	wg        sync.WaitGroup
-	routesMu  sync.Mutex // serializes computing and applying routes
-	controlMu sync.Mutex // serializes stopping, starting, and restarting services
+	ctx      context.Context // parent of every job; canceled by Stop
+	shutdown context.CancelCauseFunc
+	wg       sync.WaitGroup
+	routesMu sync.Mutex // serializes computing and applying routes
+	// controlMu serializes stopping, starting, restarting, holding, and
+	// deleting services. It is taken before mu, never while holding it.
+	controlMu sync.Mutex
 
 	mu               sync.Mutex
 	stopped          bool
 	workers          map[string]*worker // by service ID
 	deletingServices map[string]bool
 	deletingProjects map[string]bool
+	held             map[string]string // project ID by held service ID; changes under controlMu
 }
 
 // worker runs the deployments of one service, one at a time.
@@ -191,6 +198,7 @@ func New(cfg Config) *Deployer {
 		workers:          make(map[string]*worker),
 		deletingServices: make(map[string]bool),
 		deletingProjects: make(map[string]bool),
+		held:             make(map[string]string),
 	}
 }
 
@@ -247,8 +255,8 @@ func (d *Deployer) enqueue(ctx context.Context, dep store.Deployment) (store.Dep
 	if err != nil {
 		return store.Deployment{}, err
 	}
-	if d.deletingServices[svc.ID] || d.deletingProjects[svc.ProjectID] {
-		return store.Deployment{}, ErrDeleting
+	if err := d.admission(svc); err != nil {
+		return store.Deployment{}, err
 	}
 	dep.Status = store.StatusQueued
 	dep, err = d.store.CreateDeployment(ctx, dep)

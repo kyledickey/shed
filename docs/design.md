@@ -766,6 +766,12 @@ queue lock before canceling workers. New deploys and redeploys targeting them ar
 rejected throughout teardown. Runtime start, stop, restart, and deletion are
 serialized. Failed deletion clears the admission guard so deletion can be retried.
 
+A service held for a backup or restore (`Deployer.Hold`) rejects deploys,
+redeploys, runtime controls, its own deletion, its project's deletion, and
+deletion of its volumes with `ErrServiceBusy` (409) until released. Pushes that
+arrive during a hold return 503 to GitHub and must be redelivered or deployed
+manually. Volume deletion is serialized with the other runtime operations.
+
 ### Expansion and log memory limits
 
 Variable resolution rejects raw or expanded values over 64 KiB, cumulative

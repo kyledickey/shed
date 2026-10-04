@@ -57,6 +57,8 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status, msg = http.StatusConflict, "nothing to run; deploy the service first"
 	case errors.Is(err, deploy.ErrServiceStopped):
 		status, msg = http.StatusConflict, "service is stopped; start it instead"
+	case errors.Is(err, deploy.ErrServiceBusy):
+		status, msg = http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"
 	case errors.Is(err, deploy.ErrStopped):
 		status, msg = http.StatusServiceUnavailable, "shutting down"
 	default:
