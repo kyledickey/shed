@@ -965,6 +965,12 @@ is recorded active or its predecessor is retired. Failed reloads fail the candid
 remove its container, and retain the previous active deployment and route. Route
 updates are serialized through activation to prevent stale route publication.
 
+A service loses its routes only when its absence is confirmed: it is stopped,
+has no active deployment, or Docker reports its container not found. Any
+other store or Docker error while computing routes fails the update, so the
+proxy keeps its last applied configuration (and a deployment switching over
+fails instead of publishing routes without the other services).
+
 Once routing succeeds, activation and cleanup finish even if the deployment is
 canceled concurrently, so a routed candidate is not removed mid-activation.
 

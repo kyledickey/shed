@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
+
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
@@ -110,7 +112,7 @@ func (f *fakeDocker) setRunning(id string, running bool) error {
 	defer f.mu.Unlock()
 	c, ok := f.containers[id]
 	if !ok {
-		return errors.New("no such container")
+		return errNoContainer(id)
 	}
 	c.Running, c.State = running, "running"
 	if !running {
@@ -131,9 +133,14 @@ func (f *fakeDocker) Inspect(_ context.Context, id string) (docker.Container, er
 	defer f.mu.Unlock()
 	c, ok := f.containers[id]
 	if !ok {
-		return docker.Container{}, errors.New("no such container")
+		return docker.Container{}, errNoContainer(id)
 	}
 	return *c, nil
+}
+
+// errNoContainer is the error Docker returns for a missing container.
+func errNoContainer(id string) error {
+	return fmt.Errorf("no such container %s: %w", id, cerrdefs.ErrNotFound)
 }
 
 func (f *fakeDocker) List(_ context.Context, labels map[string]string) ([]docker.Container, error) {

@@ -220,8 +220,8 @@ func (d *Deployer) routesFor(ctx context.Context, candidate *store.Deployment) (
 					}
 					up = upstreamAddr(ip, candidate.Port)
 				}
-			} else {
-				up = d.upstream(ctx, dom.ServiceID)
+			} else if up, err = d.upstream(ctx, dom.ServiceID); err != nil {
+				return nil, fmt.Errorf("deploy: routes: %w", err)
 			}
 			upstreams[dom.ServiceID] = up
 		}
@@ -235,26 +235,42 @@ func (d *Deployer) routesFor(ctx context.Context, candidate *store.Deployment) (
 // upstream returns the address of a service's active container, or "" if it
 // has none or the service is stopped. The port is the one the active
 // deployment was started with: an edited port applies from the next
-// deployment.
-func (d *Deployer) upstream(ctx context.Context, serviceID string) string {
+// deployment. Only a confirmed absence yields ""; failing to find out is an
+// error, so that the proxy keeps its last routes rather than dropping the
+// service.
+func (d *Deployer) upstream(ctx context.Context, serviceID string) (string, error) {
 	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil || svc.Stopped {
-		return ""
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if svc.Stopped {
+		return "", nil
 	}
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
-	if err != nil || dep.ContainerID == "" || dep.Port <= 0 {
-		return ""
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if dep.ContainerID == "" || dep.Port <= 0 {
+		return "", nil
 	}
 	c, err := d.docker.Inspect(ctx, dep.ContainerID)
+	if docker.IsNotFound(err) {
+		return "", nil
+	}
 	if err != nil {
-		d.log.Warn("inspect active container", "service", svc.Name, "err", err)
-		return ""
+		return "", fmt.Errorf("inspect active container of %s: %w", svc.Name, err)
 	}
 	ip := c.IPs[networkName(svc.ProjectID)]
 	if ip == "" {
-		return ""
+		return "", nil
 	}
-	return upstreamAddr(ip, dep.Port)
+	return upstreamAddr(ip, dep.Port), nil
 }
 
 // removeOthers stops and removes every container of a service except keep,
