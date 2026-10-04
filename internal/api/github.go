@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
@@ -22,8 +24,8 @@ import (
 // githubAppKey is the settings key holding the GitHub App credentials.
 const githubAppKey = "github_app"
 
-// maxWebhookBody is GitHub's maximum webhook payload size.
-const maxWebhookBody = 25 << 20
+// maxWebhookBody bounds the push payload accepted by shed.
+const maxWebhookBody = 1 << 20
 
 // GitHubHolder holds the GitHub client, which exists only once the GitHub App
 // is configured. It is safe for concurrent use; the zero value holds nothing.
@@ -238,12 +240,36 @@ func (s *Server) createApp(ctx context.Context, code string) (github.App, *githu
 // webhook handles GitHub deliveries: a push to a branch deploys every app
 // service that tracks it.
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
+	// Keep the deadline through net/http's post-handler body drain. The server
+	// resets deadlines before reading the next request on this connection.
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
 	gh, err := s.requireGitHub()
 	if err != nil {
 		return err
 	}
+	signature := r.Header.Get("X-Hub-Signature-256")
+	if !strings.HasPrefix(signature, "sha256=") || len(signature) != 71 {
+		return errorf(http.StatusUnauthorized, "invalid signature")
+	}
+	if _, err := hex.DecodeString(signature[7:]); err != nil {
+		return errorf(http.StatusUnauthorized, "invalid signature")
+	}
+	if !s.webhooks.acquire(time.Now()) {
+		return errorf(http.StatusTooManyRequests, "webhook capacity exceeded")
+	}
+	defer s.webhooks.release()
+	if r.ContentLength > maxWebhookBody {
+		return errorf(http.StatusRequestEntityTooLarge, "webhook body too large")
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return errorf(http.StatusRequestEntityTooLarge, "webhook body too large")
+		}
 		return errorf(http.StatusBadRequest, "read body: %v", err)
 	}
 	if !github.VerifySignature(gh.App().WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {

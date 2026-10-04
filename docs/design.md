@@ -565,3 +565,12 @@ The shared build runner allows one active build across all services. A 30-minute
 build deadline includes queueing, cloning, Railpack preparation, and image
 construction. Cancellation terminates the subprocess group, including child
 processes, before releasing the build slot.
+
+### Webhook resource budget
+
+The public webhook endpoint rejects missing or malformed signatures before reading
+bodies. Validly shaped requests share a four-request concurrency cap and a token
+bucket (eight-request burst, one request per second). Payloads are limited to
+1 MiB and body reads to ten seconds. Excess traffic receives 429; oversized
+payloads receive 413. Large GitHub push events above this budget require a manual
+deployment.
