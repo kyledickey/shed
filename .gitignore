@@ -1,0 +1,7 @@
+.env
+.DS_Store
+/shed
+/bin/
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
