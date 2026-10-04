@@ -184,6 +184,11 @@ func (d *Deployer) ApplyRoutes(ctx context.Context) error {
 }
 
 func (d *Deployer) routes(ctx context.Context) ([]proxy.Route, error) {
+	return d.routesFor(ctx, nil)
+}
+
+// routesFor optionally previews a candidate deployment before activation.
+func (d *Deployer) routesFor(ctx context.Context, candidate *store.Deployment) ([]proxy.Route, error) {
 	var routes []proxy.Route
 	if d.dashboard.Host != "" {
 		routes = append(routes, d.dashboard)
@@ -196,7 +201,25 @@ func (d *Deployer) routes(ctx context.Context) ([]proxy.Route, error) {
 	for _, dom := range domains {
 		up, ok := upstreams[dom.ServiceID]
 		if !ok {
-			up = d.upstream(ctx, dom.ServiceID)
+			if candidate != nil && candidate.ServiceID == dom.ServiceID {
+				svc, err := d.store.Service(ctx, dom.ServiceID)
+				if err != nil {
+					return nil, err
+				}
+				c, err := d.docker.Inspect(ctx, candidate.ContainerID)
+				if err != nil {
+					return nil, err
+				}
+				if svc.Port > 0 {
+					ip := c.IPs[networkName(svc.ProjectID)]
+					if ip == "" {
+						return nil, errors.New("candidate container has no address")
+					}
+					up = upstreamAddr(ip, svc.Port)
+				}
+			} else {
+				up = d.upstream(ctx, dom.ServiceID)
+			}
 			upstreams[dom.ServiceID] = up
 		}
 		if up != "" {

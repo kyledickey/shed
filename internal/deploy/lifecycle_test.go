@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -50,6 +51,32 @@ func TestReplacementRequiresPreviousStop(t *testing.T) {
 	}
 }
 
+type failingProxy struct{}
+
+func (failingProxy) Apply([]proxy.Route) error { return errors.New("reload rejected") }
+
+func TestProxyFailurePreservesPreviousDeployment(t *testing.T) {
+	f := newFixture(t)
+	old := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	f.d.proxy = failingProxy{}
+	dep := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	if dep.Status != store.StatusFailed {
+		t.Fatalf("status = %s", dep.Status)
+	}
+	active, err := f.st.ActiveDeployment(context.Background(), f.svc.ID)
+	if err != nil || active.ID != old.ID {
+		t.Fatalf("active = %v, %v", active, err)
+	}
+	if c, ok := f.docker.container(old.ContainerID); !ok || !c.Running {
+		t.Fatal("old container not preserved")
+	}
+	if _, ok := f.docker.container(dep.ContainerID); ok {
+		t.Fatal("failed candidate remains")
+	}
+}
+
 type failedRemovalDocker struct{ *fakeDocker }
 
 func (d failedRemovalDocker) Remove(context.Context, string) error {
@@ -75,5 +102,48 @@ func TestFailedReplacementRemovalDoesNotShareStorage(t *testing.T) {
 	}
 	if c, ok := f.docker.container(dep.ContainerID); !ok || !c.Running {
 		t.Fatal("test did not retain running candidate")
+	}
+}
+
+type cancelAfterRouteProxy struct {
+	*fakeProxy
+	cancel func()
+}
+
+func (p cancelAfterRouteProxy) Apply(routes []proxy.Route) error {
+	if err := p.fakeProxy.Apply(routes); err != nil {
+		return err
+	}
+	p.cancel()
+	return nil
+}
+
+func TestCancellationAfterRoutingCompletesActivation(t *testing.T) {
+	f := newFixture(t)
+	old := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	f.d.proxy = cancelAfterRouteProxy{f.proxy, func() {
+		f.d.mu.Lock()
+		defer f.d.mu.Unlock()
+		if w := f.d.workers[f.svc.ID]; w != nil && w.cancel != nil {
+			w.cancel(errCanceled)
+		}
+	}}
+	dep := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	if dep.Status != store.StatusActive {
+		t.Fatalf("status = %s, error = %s", dep.Status, dep.Error)
+	}
+	c, ok := f.docker.container(dep.ContainerID)
+	if !ok || !c.Running {
+		t.Fatal("routed candidate was removed")
+	}
+	if _, ok := f.docker.container(old.ContainerID); ok {
+		t.Fatal("previous deployment not retired")
+	}
+	f.proxy.mu.Lock()
+	defer f.proxy.mu.Unlock()
+	if len(f.proxy.routes) != 1 || f.proxy.routes[0].Upstream != upstreamAddr(c.IPs[networkName(f.svc.ProjectID)], f.svc.Port) {
+		t.Fatalf("routes = %v", f.proxy.routes)
 	}
 }

@@ -416,21 +416,41 @@ func (j *job) switchOver(ctx context.Context) error {
 		}
 	}
 
+	// Keep route computation serialized through persistence so another update
+	// cannot restore the old target between routing and activation.
+	j.routesMu.Lock()
+	defer j.routesMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	if j.proxy != nil {
+		routes, err := j.routesFor(ctx, &j.dep)
+		if err != nil {
+			return err
+		}
+		if err := j.proxy.Apply(routes); err != nil {
+			return fmt.Errorf("switch traffic: %w", err)
+		}
+	}
+	// Once routing succeeds, complete activation even if cancellation arrives.
+	// Otherwise cleanup could remove the container now receiving traffic.
+	ctx = context.WithoutCancel(ctx)
 	now := time.Now()
 	j.dep.Status, j.dep.FinishedAt = store.StatusActive, &now
-	j.save()
+	if err := j.store.UpdateDeployment(ctx, j.dep); err != nil {
+		if j.proxy != nil {
+			if routes, routeErr := j.routes(ctx); routeErr == nil {
+				_ = j.proxy.Apply(routes)
+			}
+		}
+		return fmt.Errorf("activate deployment: %w", err)
+	}
 	j.log.Info("deployment active", "deployment", j.dep.ID, "service", j.svc.Name)
 
-	// The new deployment is live; the rest is cleanup that must not be
-	// interrupted by a cancellation.
-	ctx = context.WithoutCancel(ctx)
 	if svc.Stopped {
 		if err := j.store.SetServiceStopped(ctx, j.svc.ID, false); err != nil {
 			j.log.Error("clear stopped flag", "service", j.svc.Name, "err", err)
 		}
-	}
-	if err := j.ApplyRoutes(ctx); err != nil {
-		j.log.Error("apply routes", "err", err)
 	}
 	if hasPrev {
 		prev.Status = store.StatusRemoved

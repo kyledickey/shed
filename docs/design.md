@@ -253,9 +253,9 @@ the same service.
    on `healthcheck_path` if set, at the container's IP on the project network.
    A service without a port is watched for 3s instead. Either way the
    deployment fails if the container exits meanwhile.
-5. **Switch**: new deployment → `active`, clear the service's `stopped` flag,
-   rebuild proxy routes, then stop/remove the previous container and mark its
-   deployment `removed`.
+5. **Switch**: apply proxy routes to the healthy candidate, then mark the new
+   deployment `active` and clear the service's `stopped` flag. Only after routing
+   succeeds, stop/remove the previous container and mark its deployment `removed`.
 6. On failure at any step: mark `failed`, record `error`, remove the new
    container, and restart the previous container if step 3 stopped it and
    removal of the replacement is confirmed.
@@ -518,3 +518,13 @@ inspection and stop failures abort deployment and preserve the active container.
 
 If removing a failed replacement cannot be confirmed, recovery leaves the
 predecessor stopped rather than risking concurrent use of its persistent volume.
+
+### Routing activation safety
+
+The proxy must accept routes targeting a healthy candidate before that deployment
+is recorded active or its predecessor is retired. Failed reloads fail the candidate,
+remove its container, and retain the previous active deployment and route. Route
+updates are serialized through activation to prevent stale route publication.
+
+Once routing succeeds, activation and cleanup finish even if the deployment is
+canceled concurrently, so a routed candidate is not removed mid-activation.
