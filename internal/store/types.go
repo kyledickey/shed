@@ -152,3 +152,99 @@ type MetricBucket struct {
 	NetRx, NetTx        float64
 	DiskRead, DiskWrite float64
 }
+
+// BackupPolicy configures a service's scheduled backups.
+type BackupPolicy struct {
+	ServiceID string
+	Enabled   bool
+	// Schedule is a cron expression, in UTC unless it starts with CRON_TZ=.
+	Schedule string
+	// Compression is fastest, default, better, or best.
+	Compression string
+	// KeepLocal is how many scheduled backups keep their archive on disk.
+	KeepLocal int
+	// Upload reports whether archives are also stored in S3.
+	Upload bool
+	// KeepRemote is how many scheduled backups keep their object in S3.
+	KeepRemote int
+}
+
+// BackupTrigger records what caused a backup.
+type BackupTrigger string
+
+// Backup triggers.
+const (
+	BackupSchedule   BackupTrigger = "schedule"
+	BackupManual     BackupTrigger = "manual"
+	BackupPreRestore BackupTrigger = "pre-restore"
+)
+
+// BackupMethod is how a backup captures data.
+type BackupMethod string
+
+// Backup methods.
+const (
+	MethodDump   BackupMethod = "dump"   // database dump
+	MethodVolume BackupMethod = "volume" // archive of the service's volumes
+	MethodSQLite BackupMethod = "sqlite" // snapshot of shed's own database
+)
+
+// BackupStatus is the lifecycle state of a backup.
+type BackupStatus string
+
+// Backup statuses.
+const (
+	BackupQueued    BackupStatus = "queued"
+	BackupRunning   BackupStatus = "running"
+	BackupSucceeded BackupStatus = "succeeded"
+	BackupFailed    BackupStatus = "failed"
+)
+
+// Backup is one archive of a service's data, or of shed's own database.
+type Backup struct {
+	ID string
+	// ServiceID is empty for a backup of shed.db.
+	ServiceID string
+	Trigger   BackupTrigger
+	Method    BackupMethod
+	Status    BackupStatus
+	// File is the archive's file name.
+	File string
+	// Size is the archive size in bytes.
+	Size      int64
+	Encrypted bool
+	// Local reports whether the archive is present on disk.
+	Local bool
+	// RemoteKey is the S3 object key, or empty if the archive was not uploaded.
+	RemoteKey string
+	// RemoteError is the last upload failure.
+	RemoteError string
+	// Error describes why the backup failed.
+	Error      string
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	FinishedAt *time.Time
+}
+
+// RestoreStatus is the lifecycle state of a restore.
+type RestoreStatus string
+
+// Restore statuses.
+const (
+	RestoreRunning   RestoreStatus = "running"
+	RestoreSucceeded RestoreStatus = "succeeded"
+	RestoreFailed    RestoreStatus = "failed"
+)
+
+// Restore is one attempt to put a backup's data back into a service.
+type Restore struct {
+	ID        string
+	ServiceID string
+	// BackupID is not a foreign key, since the backup may be pruned later.
+	BackupID string
+	Status   RestoreStatus
+	// Error describes why the restore failed.
+	Error      string
+	CreatedAt  time.Time
+	FinishedAt *time.Time
+}
