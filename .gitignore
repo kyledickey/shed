@@ -7,3 +7,4 @@ web/dist/*
 !web/dist/.gitkeep
 /shed.dev.toml
 *.log
+.dev/
