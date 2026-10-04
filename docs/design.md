@@ -577,3 +577,10 @@ bucket (eight-request burst, one request per second). Payloads are limited to
 1 MiB and body reads to ten seconds. Excess traffic receives 429; oversized
 payloads receive 413. Large GitHub push events above this budget require a manual
 deployment.
+
+### Volume deletion failures
+
+Deleting a volume tolerates a missing Docker volume and defers removal only when
+Docker reports that the volume is still in use. Other Docker errors fail the
+request and preserve the volume record for retry; they are not reported as a
+successful deferred deletion.

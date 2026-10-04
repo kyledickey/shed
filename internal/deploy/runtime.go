@@ -525,14 +525,16 @@ func (d *Deployer) DeleteVolume(ctx context.Context, volumeID string) error {
 	if err != nil {
 		return err
 	}
-	if err := d.store.DeleteVolume(ctx, volumeID); err != nil {
-		return err
-	}
 	if err := d.docker.RemoveVolume(ctx, volumeName(v.ID)); err != nil {
-		d.log.Info("volume in use; it will be removed after the next deployment",
-			"volume", volumeName(v.ID), "err", err)
+		if !docker.IsConflict(err) && !docker.IsNotFound(err) {
+			return fmt.Errorf("deploy: remove volume %s: %w", volumeID, err)
+		}
+		if docker.IsConflict(err) {
+			d.log.Info("volume in use; it will be removed after the next deployment",
+				"volume", volumeName(v.ID), "err", err)
+		}
 	}
-	return nil
+	return d.store.DeleteVolume(ctx, volumeID)
 }
 
 func (d *Deployer) removeLogs(deps []store.Deployment) {
