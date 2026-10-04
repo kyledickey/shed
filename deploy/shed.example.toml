@@ -1,0 +1,25 @@
+# Copy to /etc/shed/shed.toml. Every key can also be set with an environment
+# variable, e.g. SHED_SERVER_URL or SHED_PROXY_ACME_EMAIL.
+
+[server]
+listen = "127.0.0.1:3000"
+url = "https://shed.example.com"
+
+[data]
+dir = "/var/lib/shed"
+
+[proxy]
+enabled = true
+http_port = 80
+https_port = 443
+acme_email = "you@example.com"
+# Services get <service>-<project>.<base_domain>. Needs a wildcard DNS record.
+base_domain = "apps.example.com"
+
+[auth]
+# GitHub logins allowed to sign in. Leave empty to let the first sign-in
+# become the owner.
+allowed_users = []
+
+[log]
+level = "info"
