@@ -91,6 +91,8 @@ type Commit struct {
 }
 
 var (
+	// ErrDeleting is returned while a service or its project is being deleted.
+	ErrDeleting = errors.New("deploy: service is being deleted")
 	// ErrStopped is returned for deployments requested after Stop.
 	ErrStopped = errors.New("deploy: deployer is stopped")
 	// ErrNotInProgress is returned when canceling a finished deployment.
@@ -144,9 +146,11 @@ type Deployer struct {
 	routesMu  sync.Mutex // serializes computing and applying routes
 	controlMu sync.Mutex // serializes stopping, starting, and restarting services
 
-	mu      sync.Mutex
-	stopped bool
-	workers map[string]*worker // by service ID
+	mu               sync.Mutex
+	stopped          bool
+	workers          map[string]*worker // by service ID
+	deletingServices map[string]bool
+	deletingProjects map[string]bool
 }
 
 // worker runs the deployments of one service, one at a time.
@@ -163,28 +167,30 @@ type worker struct {
 func New(cfg Config) *Deployer {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	return &Deployer{
-		store:          cfg.Store,
-		docker:         cfg.Docker,
-		builder:        cfg.Builder,
-		proxy:          cfg.Proxy,
-		github:         cfg.GitHub,
-		logDir:         cfg.LogDir,
-		dashboard:      cfg.Dashboard,
-		log:            cfg.Log,
-		ciInterval:     10 * time.Second,
-		ciGrace:        2 * time.Minute,
-		ciTimeout:      60 * time.Minute,
-		healthInterval: time.Second,
-		healthTimeout:  120 * time.Second,
-		healthReport:   5 * time.Second,
-		startupWatch:   3 * time.Second,
-		logDrain:       2 * time.Second,
-		stopTimeout:    30 * time.Second,
-		logPoll:        500 * time.Millisecond,
-		probe:          probe,
-		ctx:            ctx,
-		shutdown:       cancel,
-		workers:        make(map[string]*worker),
+		store:            cfg.Store,
+		docker:           cfg.Docker,
+		builder:          cfg.Builder,
+		proxy:            cfg.Proxy,
+		github:           cfg.GitHub,
+		logDir:           cfg.LogDir,
+		dashboard:        cfg.Dashboard,
+		log:              cfg.Log,
+		ciInterval:       10 * time.Second,
+		ciGrace:          2 * time.Minute,
+		ciTimeout:        60 * time.Minute,
+		healthInterval:   time.Second,
+		healthTimeout:    120 * time.Second,
+		healthReport:     5 * time.Second,
+		startupWatch:     3 * time.Second,
+		logDrain:         2 * time.Second,
+		stopTimeout:      30 * time.Second,
+		logPoll:          500 * time.Millisecond,
+		probe:            probe,
+		ctx:              ctx,
+		shutdown:         cancel,
+		workers:          make(map[string]*worker),
+		deletingServices: make(map[string]bool),
+		deletingProjects: make(map[string]bool),
 	}
 }
 
@@ -237,8 +243,15 @@ func (d *Deployer) enqueue(ctx context.Context, dep store.Deployment) (store.Dep
 	if d.stopped {
 		return store.Deployment{}, ErrStopped
 	}
+	svc, err := d.store.Service(ctx, dep.ServiceID)
+	if err != nil {
+		return store.Deployment{}, err
+	}
+	if d.deletingServices[svc.ID] || d.deletingProjects[svc.ProjectID] {
+		return store.Deployment{}, ErrDeleting
+	}
 	dep.Status = store.StatusQueued
-	dep, err := d.store.CreateDeployment(ctx, dep)
+	dep, err = d.store.CreateDeployment(ctx, dep)
 	if err != nil {
 		return store.Deployment{}, fmt.Errorf("deploy: %w", err)
 	}

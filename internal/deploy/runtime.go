@@ -416,6 +416,12 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) erro
 // DeleteService stops a service's deployments, removes its containers,
 // volumes, images, and build logs, and deletes it from the store.
 func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
+	d.controlMu.Lock()
+	defer d.controlMu.Unlock()
+	d.mu.Lock()
+	d.deletingServices[serviceID] = true
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); delete(d.deletingServices, serviceID); d.mu.Unlock() }()
 	svc, err := d.store.Service(ctx, serviceID)
 	if err != nil {
 		return err
@@ -439,6 +445,12 @@ func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 // DeleteProject deletes every service of a project as DeleteService does,
 // then its network, then the project itself.
 func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
+	d.controlMu.Lock()
+	defer d.controlMu.Unlock()
+	d.mu.Lock()
+	d.deletingProjects[projectID] = true
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); delete(d.deletingProjects, projectID); d.mu.Unlock() }()
 	if _, err := d.store.Project(ctx, projectID); err != nil {
 		return err
 	}

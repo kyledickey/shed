@@ -535,3 +535,10 @@ Service domain creation rejects the hostname from `server.url` with HTTP
 409, including generated names. Proxy configuration rejects duplicate normalized
 hostnames, preserving the existing configuration instead of selecting a workload
 route over the dashboard route.
+
+### Deletion and deployment admission
+
+Service and project deletion mark their targets as deleting under the deployment
+queue lock before canceling workers. New deploys and redeploys targeting them are
+rejected throughout teardown. Runtime start, stop, restart, and deletion are
+serialized. Failed deletion clears the admission guard so deletion can be retried.

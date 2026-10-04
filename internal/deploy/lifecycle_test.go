@@ -147,3 +147,46 @@ func TestCancellationAfterRoutingCompletesActivation(t *testing.T) {
 		t.Fatalf("routes = %v", f.proxy.routes)
 	}
 }
+
+type blockedRemovalDocker struct {
+	*fakeDocker
+	entered, release chan struct{}
+}
+
+func (d blockedRemovalDocker) Remove(ctx context.Context, id string) error {
+	close(d.entered)
+	<-d.release
+	return d.fakeDocker.Remove(ctx, id)
+}
+
+func TestDeletionRejectsConcurrentDeployment(t *testing.T) {
+	for _, project := range []bool{false, true} {
+		t.Run(map[bool]string{false: "service", true: "project"}[project], func(t *testing.T) {
+			f := newFixture(t)
+			f.wait(t, f.deploy(t).ID, terminal)
+			f.settle(t)
+			entered, release := make(chan struct{}), make(chan struct{})
+			f.d.docker = blockedRemovalDocker{f.docker, entered, release}
+			done := make(chan error, 1)
+			go func() {
+				if project {
+					done <- f.d.DeleteProject(context.Background(), f.svc.ProjectID)
+				} else {
+					done <- f.d.DeleteService(context.Background(), f.svc.ID)
+				}
+			}()
+			<-entered
+			_, err := f.d.Deploy(context.Background(), f.svc.ID, store.TriggerManual, Commit{SHA: "next"})
+			close(release)
+			if !errors.Is(err, ErrDeleting) {
+				t.Errorf("enqueue error = %v", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if len(f.docker.containers) != 0 {
+				t.Fatal("orphan container remains")
+			}
+		})
+	}
+}
