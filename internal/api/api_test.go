@@ -131,6 +131,14 @@ func (f *fakeMetrics) QueryHost(_ context.Context, r metrics.Range) (metrics.Hos
 	}, nil
 }
 
+// fakeLogs replays two lines and returns.
+type fakeLogs struct{}
+
+func (fakeLogs) Follow(_ context.Context, emit func(string)) {
+	emit("time=x level=INFO msg=one")
+	emit("time=x level=WARN msg=two")
+}
+
 type fixture struct {
 	t        *testing.T
 	st       *store.Store
@@ -160,6 +168,7 @@ func newFixture(t *testing.T) *fixture {
 		Deployer:   f.deployer,
 		Backups:    f.backups,
 		Metrics:    f.metrics,
+		Logs:       fakeLogs{},
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    "http://localhost",
@@ -382,6 +391,18 @@ func TestHostMetrics(t *testing.T) {
 		t.Errorf("body = %s, want %s", rec.Body, want)
 	}
 	f.decode(f.do("GET", "/api/host/metrics?range=2h", ""), http.StatusBadRequest)
+}
+
+func TestShedLogs(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do("GET", "/api/logs", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", rec.Code, rec.Body)
+	}
+	want := "event: log\ndata: time=x level=INFO msg=one\n\nevent: log\ndata: time=x level=WARN msg=two\n\n"
+	if rec.Body.String() != want {
+		t.Errorf("body = %q, want %q", rec.Body, want)
+	}
 }
 
 func TestServiceControls(t *testing.T) {

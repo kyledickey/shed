@@ -187,7 +187,10 @@ function Brand({ projectId, serviceId }: { projectId?: string; serviceId?: strin
 
 /** activeTab is the last path segment after `base`, or `fallback` at the base itself. */
 function activeTab<T extends string>(pathname: string, base: string, tabs: T[], fallback: T): T {
-  const rest = pathname.slice(base.length).replace(/^\/|\/$/g, "");
+  const rest = pathname
+    .slice(base.length)
+    .replace(/^\/|\/$/g, "")
+    .split("/")[0];
   return tabs.find((t) => t === rest) ?? fallback;
 }
 

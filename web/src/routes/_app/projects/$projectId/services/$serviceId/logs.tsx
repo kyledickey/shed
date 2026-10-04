@@ -1,12 +1,13 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useLogStream } from "../../../../../../api/events";
 import { serviceQuery } from "../../../../../../api/services";
 import type { Service } from "../../../../../../api/types";
 import { Button, buttonClass } from "../../../../../../components/Button";
 import { Card } from "../../../../../../components/Card";
+import { FillHeight } from "../../../../../../components/logs/FillHeight";
 import { RuntimeLogView } from "../../../../../../components/logs/RuntimeLogView";
 import { EmptyState } from "../../../../../../components/Misc";
 
@@ -109,38 +110,4 @@ function NotRunning({ service, onReconnect }: { service: Service; onReconnect: (
         />
       );
   }
-}
-
-const MIN_HEIGHT = 320;
-// Space left below the viewer: the page's bottom padding plus the shell frame.
-const BOTTOM_GAP = 56;
-
-/**
- * FillHeight gives its log viewer a list height that reaches the bottom of
- * the window, net of the viewer's toolbar.
- */
-function FillHeight({ children }: { children: (height: number) => ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState(440);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      const list = el.querySelector<HTMLElement>('[role="log"]')?.parentElement;
-      const chrome = el.offsetHeight - (list?.offsetHeight ?? 0);
-      const available = window.innerHeight - el.getBoundingClientRect().top - BOTTOM_GAP;
-      setHeight(Math.max(MIN_HEIGHT, Math.round(available - chrome)));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener("resize", measure);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, []);
-
-  return <div ref={ref}>{children(height)}</div>;
 }

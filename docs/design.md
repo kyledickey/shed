@@ -34,7 +34,9 @@ prefix, lowercases, and replaces the first `_` with `.`:
 `SHED_SERVER_URL` → `server.url`, `SHED_PROXY_ACME_EMAIL` → `proxy.acme_email`.
 
 The application log is written next to the config file (`shed.log`) through
-lumberjack and also mirrored to stderr.
+lumberjack and also mirrored to stderr. Its last 1000 lines are also kept in
+memory (`internal/logtail`), and `GET /api/logs` replays them and then follows
+new lines; the dashboard shows them under Server → Logs.
 
 ```toml
 [server]
@@ -81,6 +83,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
+| `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
@@ -668,6 +671,7 @@ GET    /api/deployments/{id}/logs               SSE build log (replays file, fol
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
 GET    /api/services/{id}/metrics?range=        → Metrics  (range: 1h | 6h | 24h | 7d; default 1h)
 GET    /api/host/metrics?range=                 → HostMetrics  (same ranges)
+GET    /api/logs                                SSE shed's own log (last 1000 lines, follow)
 
 GET    /api/services/{id}/backups               → ServiceBackups  (newest first, 100)
 PUT    /api/services/{id}/backups/policy  BackupPolicyInput → BackupPolicy

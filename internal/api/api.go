@@ -68,7 +68,9 @@ type Config struct {
 	Deployer Deployer
 	Backups  Backups
 	Metrics  Metrics
-	Auth     *auth.Auth
+	// Logs is shed's own log, streamed to the dashboard.
+	Logs Logs
+	Auth *auth.Auth
 	// GitHub holds the GitHub client. New fills it from the stored App
 	// credentials, and the setup flow fills it once the App is created.
 	GitHub *GitHubHolder
@@ -90,6 +92,7 @@ type Server struct {
 	deployer   Deployer
 	backups    Backups
 	metrics    Metrics
+	logs       Logs
 	auth       *auth.Auth
 	github     *GitHubHolder
 	baseURL    string
@@ -113,6 +116,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		deployer:   cfg.Deployer,
 		backups:    cfg.Backups,
 		metrics:    cfg.Metrics,
+		logs:       cfg.Logs,
 		auth:       cfg.Auth,
 		github:     cfg.GitHub,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -177,6 +181,7 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
 	authed("GET /api/host/metrics", s.hostMetrics)
+	authed("GET /api/logs", s.shedLogs)
 
 	authed("GET /api/services/{id}/backups", s.serviceBackups)
 	authed("PUT /api/services/{id}/backups/policy", s.putServiceBackupPolicy)

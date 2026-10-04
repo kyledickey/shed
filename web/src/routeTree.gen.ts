@@ -17,6 +17,9 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppServerRouteImport } from './routes/_app/server'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
+import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
+import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
+import { Route as AppServerLogsRouteImport } from './routes/_app/server/logs'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdServicesServiceIdRouteImport } from './routes/_app/projects/$projectId/services/$serviceId'
@@ -65,6 +68,21 @@ const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
   id: '/projects/$projectId',
   path: '/projects/$projectId',
   getParentRoute: () => AppRoute,
+} as any)
+const AppServerIndexRoute = AppServerIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppServerRoute,
+} as any)
+const AppServerBackupsRoute = AppServerBackupsRouteImport.update({
+  id: '/backups',
+  path: '/backups',
+  getParentRoute: () => AppServerRoute,
+} as any)
+const AppServerLogsRoute = AppServerLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => AppServerRoute,
 } as any)
 const AppProjectsProjectIdIndexRoute =
   AppProjectsProjectIdIndexRouteImport.update({
@@ -126,9 +144,12 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
-  '/server': typeof AppServerRoute
+  '/server': typeof AppServerRouteWithChildren
   '/settings': typeof AppSettingsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/server/backups': typeof AppServerBackupsRoute
+  '/server/logs': typeof AppServerLogsRoute
+  '/server/': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
@@ -143,9 +164,11 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
-  '/server': typeof AppServerRoute
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
+  '/server/backups': typeof AppServerBackupsRoute
+  '/server/logs': typeof AppServerLogsRoute
+  '/server': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
   '/projects/$projectId/services/$serviceId/backups': typeof AppProjectsProjectIdServicesServiceIdBackupsRoute
@@ -161,10 +184,13 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
-  '/_app/server': typeof AppServerRoute
+  '/_app/server': typeof AppServerRouteWithChildren
   '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/_app/server/backups': typeof AppServerBackupsRoute
+  '/_app/server/logs': typeof AppServerLogsRoute
+  '/_app/server/': typeof AppServerIndexRoute
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
   '/_app/projects/$projectId/services/$serviceId': typeof AppProjectsProjectIdServicesServiceIdRouteWithChildren
@@ -185,6 +211,9 @@ export interface FileRouteTypes {
     | '/server'
     | '/settings'
     | '/projects/$projectId'
+    | '/server/backups'
+    | '/server/logs'
+    | '/server/'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
     | '/projects/$projectId/services/$serviceId'
@@ -199,9 +228,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
-    | '/server'
     | '/settings'
     | '/'
+    | '/server/backups'
+    | '/server/logs'
+    | '/server'
     | '/projects/$projectId/settings'
     | '/projects/$projectId'
     | '/projects/$projectId/services/$serviceId/backups'
@@ -220,6 +251,9 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/'
     | '/_app/projects/$projectId'
+    | '/_app/server/backups'
+    | '/_app/server/logs'
+    | '/_app/server/'
     | '/_app/projects/$projectId/settings'
     | '/_app/projects/$projectId/'
     | '/_app/projects/$projectId/services/$serviceId'
@@ -296,6 +330,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/server/': {
+      id: '/_app/server/'
+      path: '/'
+      fullPath: '/server/'
+      preLoaderRoute: typeof AppServerIndexRouteImport
+      parentRoute: typeof AppServerRoute
+    }
+    '/_app/server/backups': {
+      id: '/_app/server/backups'
+      path: '/backups'
+      fullPath: '/server/backups'
+      preLoaderRoute: typeof AppServerBackupsRouteImport
+      parentRoute: typeof AppServerRoute
+    }
+    '/_app/server/logs': {
+      id: '/_app/server/logs'
+      path: '/logs'
+      fullPath: '/server/logs'
+      preLoaderRoute: typeof AppServerLogsRouteImport
+      parentRoute: typeof AppServerRoute
+    }
     '/_app/projects/$projectId/': {
       id: '/_app/projects/$projectId/'
       path: '/'
@@ -362,6 +417,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppServerRouteChildren {
+  AppServerBackupsRoute: typeof AppServerBackupsRoute
+  AppServerLogsRoute: typeof AppServerLogsRoute
+  AppServerIndexRoute: typeof AppServerIndexRoute
+}
+
+const AppServerRouteChildren: AppServerRouteChildren = {
+  AppServerBackupsRoute: AppServerBackupsRoute,
+  AppServerLogsRoute: AppServerLogsRoute,
+  AppServerIndexRoute: AppServerIndexRoute,
+}
+
+const AppServerRouteWithChildren = AppServerRoute._addFileChildren(
+  AppServerRouteChildren,
+)
+
 interface AppProjectsProjectIdServicesServiceIdRouteChildren {
   AppProjectsProjectIdServicesServiceIdBackupsRoute: typeof AppProjectsProjectIdServicesServiceIdBackupsRoute
   AppProjectsProjectIdServicesServiceIdLogsRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRoute
@@ -409,14 +480,14 @@ const AppProjectsProjectIdRouteWithChildren =
   AppProjectsProjectIdRoute._addFileChildren(AppProjectsProjectIdRouteChildren)
 
 interface AppRouteChildren {
-  AppServerRoute: typeof AppServerRoute
+  AppServerRoute: typeof AppServerRouteWithChildren
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRouteWithChildren
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppServerRoute: AppServerRoute,
+  AppServerRoute: AppServerRouteWithChildren,
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppProjectsProjectIdRoute: AppProjectsProjectIdRouteWithChildren,

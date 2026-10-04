@@ -29,6 +29,7 @@ import (
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/host"
+	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
@@ -59,7 +60,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	log, err := newLogger(cfg.Log, config.LogFile(*configPath))
+	tail := logtail.New(shedLogTail)
+	log, err := newLogger(cfg.Log, config.LogFile(*configPath), tail)
 	if err != nil {
 		return err
 	}
@@ -164,6 +166,7 @@ func run() error {
 		Deployer:   deployer,
 		Backups:    backups,
 		Metrics:    collector,
+		Logs:       tail,
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    cfg.Server.URL,
@@ -204,8 +207,12 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 	return h, nil
 }
 
-// newLogger returns a text logger writing to stderr and to a rotated file.
-func newLogger(cfg config.Log, file string) (*slog.Logger, error) {
+// shedLogTail is how many lines of shed's log the dashboard can replay.
+const shedLogTail = 1000
+
+// newLogger returns a text logger writing to stderr, to a rotated file, and
+// to tail.
+func newLogger(cfg config.Log, file string, tail *logtail.Tail) (*slog.Logger, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
 		return nil, fmt.Errorf("log level: %w", err)
@@ -217,7 +224,7 @@ func newLogger(cfg config.Log, file string) (*slog.Logger, error) {
 		MaxAge:     cfg.MaxAgeDays,
 	}
 	// Stderr first: MultiWriter stops at the first failing writer.
-	w := io.MultiWriter(os.Stderr, rotated)
+	w := io.MultiWriter(os.Stderr, tail, rotated)
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})), nil
 }
 
