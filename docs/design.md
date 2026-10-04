@@ -262,7 +262,7 @@ POSTs an app manifest to `https://github.com/settings/apps/new`:
 - `redirect_url`: `<server.url>/api/setup/github/callback`
 - `callback_urls`: [`<server.url>/api/auth/callback`]
 - `setup_url`: `<server.url>/`
-- `public`: false
+- `public`: true (so the app can be installed on organizations, not just the owner's account)
 - `default_permissions`: contents read, metadata read, checks read, statuses read
 - `default_events`: push
 

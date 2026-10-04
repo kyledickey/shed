@@ -98,7 +98,7 @@ func TestManifest(t *testing.T) {
 		"url":          "https://shed.example.com",
 		"redirect_url": "https://shed.example.com/api/setup/github/callback",
 		"setup_url":    "https://shed.example.com/",
-		"public":       false,
+		"public":       true,
 	}
 	for k, want := range checks {
 		if m[k] != want {

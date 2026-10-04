@@ -36,7 +36,9 @@ func Manifest(baseURL, name string) ([]byte, error) {
 		RedirectURL:    base + "/api/setup/github/callback",
 		CallbackURLs:   []string{base + "/api/auth/callback"},
 		SetupURL:       base + "/",
-		Public:         false,
+		// Private apps can only be installed on the owner's account; public
+		// lets the owner install it on their organizations too.
+		Public: true,
 		DefaultPermissions: map[string]string{
 			"contents": "read", "metadata": "read", "checks": "read", "statuses": "read",
 		},
