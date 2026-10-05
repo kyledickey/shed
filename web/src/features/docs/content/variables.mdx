@@ -34,6 +34,8 @@ PUBLIC_URL=https://${{ SHED_PUBLIC_DOMAIN }}
 
 References resolve when a deployment starts, and the result is written into the new container's environment. Editing a variable does not change containers that are already running; deploy again to apply it. Builds get the resolved variables too, see [build secrets](/docs/builds#build-secrets). Saving only checks key names (`[A-Za-z_][A-Za-z0-9_]*`), so a bad reference shows up as a failed deployment, not as a save error.
 
+The variables table hides every value; use the eye button to reveal one, or edit the row or switch to raw mode to see them all. Copying a saved value with references copies it resolved, as the next deployment would see it, with `SHED_GIT_COMMIT_SHA` taken from the active deployment. An unsaved value is copied as typed.
+
 ## Injected variables
 
 shed adds a few variables to every service. You can reference them like any other, from the same service or another one (`${{ postgres.SHED_PRIVATE_DOMAIN }}`).

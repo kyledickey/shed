@@ -968,6 +968,7 @@ POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed rest
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)

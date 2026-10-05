@@ -119,6 +119,12 @@ export const endpointGroups: EndpointGroup[] = [
         notes: "Replaces all variables.",
       },
       {
+        method: "GET",
+        path: "/api/services/{id}/variables/resolved",
+        response: "Record<string,string>",
+        notes: "References expanded, injected variables included.",
+      },
+      {
         method: "POST",
         path: "/api/services/{id}/domains",
         body: "{host?}",

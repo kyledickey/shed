@@ -40,6 +40,7 @@ type Deployer interface {
 	DeleteVolume(ctx context.Context, volumeID string) error
 	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
 	RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error
+	ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error)
 }
 
 var _ Deployer = (*deploy.Deployer)(nil)
@@ -187,6 +188,7 @@ func (s *Server) Handler() http.Handler {
 
 	authed("GET /api/services/{id}/variables", s.getVariables)
 	authed("PUT /api/services/{id}/variables", s.putVariables)
+	authed("GET /api/services/{id}/variables/resolved", s.getResolvedVariables)
 	authed("POST /api/services/{id}/domains", s.createDomain)
 	authed("DELETE /api/domains/{id}", s.deleteDomain)
 	authed("POST /api/services/{id}/volumes", s.createVolume)
