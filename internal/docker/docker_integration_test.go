@@ -283,22 +283,46 @@ func TestNetworkAliases(t *testing.T) {
 		t.Cleanup(func() { _ = c.Remove(context.Background(), id) })
 		return id
 	}
-	target, client := run("shed-test-target"), run("shed-test-client")
+	target, peer := run("shed-test-target"), run("shed-test-client")
+	lookup := func() (string, bool) {
+		var out bytes.Buffer
+		err := c.Exec(ctx, peer, []string{"getent", "hosts", alias}, nil, &out, io.Discard)
+		ip, _, _ := strings.Cut(strings.TrimSpace(out.String()), " ")
+		return ip, err == nil
+	}
 	resolves := func() bool {
-		return c.Exec(ctx, client, []string{"getent", "hosts", alias}, nil, io.Discard, io.Discard) == nil
+		_, ok := lookup()
+		return ok
+	}
+	ipOf := func(id string) string {
+		t.Helper()
+		ctr, err := c.Inspect(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ctr.IPs[net]
 	}
 
 	if resolves() {
 		t.Fatal("alias resolves before it was added")
 	}
-	if err := c.DisconnectNetwork(ctx, net, target); err != nil {
+	before := ipOf(target)
+	if err := c.ReconnectNetwork(ctx, net, target, []string{alias}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ConnectNetwork(ctx, net, target, []string{alias}); err != nil {
+	if after := ipOf(target); after != before {
+		t.Errorf("address changed from %s to %s on reconnect", before, after)
+	}
+	// The address must be requested, not just happen to be free again.
+	res, err := c.api.ContainerInspect(ctx, target, client.ContainerInspectOptions{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !resolves() {
-		t.Error("alias does not resolve after reconnecting with it")
+	if ep := res.Container.NetworkSettings.Networks[net]; ep == nil || ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address.String() != before {
+		t.Errorf("endpoint does not request address %s: %+v", before, ep)
+	}
+	if ip, ok := lookup(); !ok || ip != before {
+		t.Errorf("alias resolves to %q (%v), want %s", ip, ok, before)
 	}
 	if err := c.DisconnectNetwork(ctx, net, target); err != nil {
 		t.Fatal(err)

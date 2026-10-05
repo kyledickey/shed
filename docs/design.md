@@ -299,8 +299,9 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
   container has network alias `<service name>`, so services reach each other
   at `<name>:<port>` (the "private host"). A new deployment's container
   starts with no alias (only its container name resolves); once healthy, it
-  is disconnected and reconnected with the alias (its address may change),
-  and on activation the previous container is disconnected before it stops.
+  is disconnected and reconnected with the alias, requesting the address it
+  had so that it does not change, and must pass its health check again; on
+  activation the previous container is disconnected before it stops.
 - Container name: `shed-<serviceID>-<deploymentID>`. Labels:
   `shed.project`, `shed.service`, `shed.deployment`.
   Restart policy `unless-stopped`.
@@ -364,10 +365,13 @@ the same service.
    on `healthcheck_path` if set, at the container's IP on the project network.
    A service without a port is watched for 3s instead. Either way the
    deployment fails if the container exits meanwhile.
-5. **Switch**: give the healthy candidate the service's network alias, apply
-   proxy routes to it, then, in one transaction, mark the new deployment
-   `active` and the previous one `removed`; then clear the service's `stopped`
-   flag. Only after routing succeeds, disconnect the previous container from
+5. **Switch**: give the healthy candidate the service's network alias
+   (reconnecting it with its existing IPv4/IPv6 address reserved), then probe it
+   again as in step 4 for up to 10s (or, without a port, check it is still
+   running); if that fails, the deployment fails and the previous container
+   keeps the alias and routes. Then apply proxy routes to it and, in one
+   transaction, mark the new deployment `active` and the previous one
+   `removed`; then clear the service's `stopped` flag. Only after routing succeeds, disconnect the previous container from
    the network and stop/remove it.
 6. On failure at any step: mark `failed`, record `error`, remove the new
    container, and restart the previous container if step 3 stopped it and

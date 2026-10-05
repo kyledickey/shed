@@ -40,19 +40,17 @@ func newFakeDocker() *fakeDocker {
 	return &fakeDocker{containers: make(map[string]*docker.Container), aliases: make(map[string][]string)}
 }
 
-// ConnectNetwork gives the container its address back, the same one for
-// simplicity.
-func (f *fakeDocker) ConnectNetwork(_ context.Context, network, id string, aliases []string) error {
+// ReconnectNetwork replaces the container's aliases, keeping its address.
+func (f *fakeDocker) ReconnectNetwork(_ context.Context, network, id string, aliases []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c, ok := f.containers[id]
 	if !ok {
 		return errNoContainer(id)
 	}
-	if _, ok := c.IPs[network]; ok {
-		return fmt.Errorf("container %s is already connected to %s", id, network)
+	if _, ok := c.IPs[network]; !ok {
+		return fmt.Errorf("container %s is not connected to %s", id, network)
 	}
-	c.IPs[network] = "10.0.0." + strings.TrimPrefix(id, "c")
 	f.aliases[id] = aliases
 	return nil
 }

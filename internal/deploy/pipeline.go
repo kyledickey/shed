@@ -509,17 +509,55 @@ func (j *job) switchOver(ctx context.Context) error {
 
 // promote gives the healthy new container the service's private hostname.
 // Docker cannot change the aliases of a connected container, so it is
-// reconnected to the project network, which may change its address.
+// reconnected to the project network, keeping its address. Since reconnecting
+// could still disturb it, the container must pass its health check again.
 func (j *job) promote(ctx context.Context) error {
 	network := networkName(j.svc.ProjectID)
-	if err := j.docker.DisconnectNetwork(ctx, network, j.container); err != nil {
+	if err := j.docker.ReconnectNetwork(ctx, network, j.container, []string{j.svc.Name}); err != nil {
 		return fmt.Errorf("add private hostname: %w", err)
 	}
-	if err := j.docker.ConnectNetwork(ctx, network, j.container, []string{j.svc.Name}); err != nil {
-		return fmt.Errorf("add private hostname: %w", err)
+	if err := j.recheckHealth(ctx); err != nil {
+		return fmt.Errorf("after adding private hostname: %w", err)
 	}
 	j.printf("Private host %s resolves to the new container", j.svc.Name)
 	return nil
+}
+
+// recheckHealth probes the new container once more, retrying briefly, and
+// fails if it has exited. A service without a port need only be running.
+func (j *job) recheckHealth(ctx context.Context) error {
+	network := networkName(j.svc.ProjectID)
+	ctx, cancel := context.WithTimeoutCause(ctx, j.recheckTimeout,
+		fmt.Errorf("health check timed out after %s", j.recheckTimeout))
+	defer cancel()
+	var lastErr error
+	for {
+		c, err := j.docker.Inspect(ctx, j.container)
+		switch {
+		case err != nil:
+			lastErr = err
+		case c.State == "exited" || c.State == "dead" || c.State == "restarting":
+			return fmt.Errorf("container exited with code %d", c.ExitCode)
+		case j.svc.Port <= 0:
+			return nil
+		case c.IPs[network] == "":
+			lastErr = errors.New("container has no IP address")
+		default:
+			addr := upstreamAddr(c.IPs[network], j.svc.Port)
+			if lastErr = j.probe(ctx, addr, j.svc.HealthcheckPath); lastErr == nil {
+				j.printf("Still healthy at %s", addr)
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("%w (last error: %v)", context.Cause(ctx), lastErr)
+			}
+			return context.Cause(ctx)
+		case <-time.After(j.healthInterval):
+		}
+	}
 }
 
 // fail records that the deployment did not go live, removes its container,

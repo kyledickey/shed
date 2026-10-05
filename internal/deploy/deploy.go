@@ -34,7 +34,7 @@ import (
 type Docker interface {
 	EnsureNetwork(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
-	ConnectNetwork(ctx context.Context, name, id string, aliases []string) error
+	ReconnectNetwork(ctx context.Context, name, id string, aliases []string) error
 	DisconnectNetwork(ctx context.Context, name, id string) error
 	EnsureVolume(ctx context.Context, name string) error
 	RemoveVolume(ctx context.Context, name string) error
@@ -154,6 +154,7 @@ type Deployer struct {
 	healthInterval time.Duration
 	healthTimeout  time.Duration
 	healthReport   time.Duration // how often to report a pending health check
+	recheckTimeout time.Duration // how long the health check may take again after promotion
 	startupWatch   time.Duration // how long to watch a service without a port
 	logDrain       time.Duration // how long to wait for an exited container's output
 	stopTimeout    time.Duration
@@ -205,6 +206,7 @@ func New(cfg Config) *Deployer {
 		healthInterval:   time.Second,
 		healthTimeout:    120 * time.Second,
 		healthReport:     5 * time.Second,
+		recheckTimeout:   10 * time.Second,
 		startupWatch:     3 * time.Second,
 		logDrain:         2 * time.Second,
 		stopTimeout:      30 * time.Second,

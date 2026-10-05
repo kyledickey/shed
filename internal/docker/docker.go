@@ -80,12 +80,31 @@ func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
-// ConnectNetwork connects the container id to the network name, under the
-// given DNS aliases besides its name. The container may get a new address.
-func (c *Client) ConnectNetwork(ctx context.Context, name, id string, aliases []string) error {
-	_, err := c.api.NetworkConnect(ctx, name, client.NetworkConnectOptions{
+// ReconnectNetwork replaces the DNS aliases, besides its name, of the
+// container id on the network name, to which it must be connected. Docker
+// cannot change the aliases of a connected container, so it is disconnected
+// and connected again, asking for the addresses it had so that they do not
+// change.
+func (c *Client) ReconnectNetwork(ctx context.Context, name, id string, aliases []string) error {
+	res, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("docker: inspect container %s: %w", id, err)
+	}
+	var ep *network.EndpointSettings
+	if ns := res.Container.NetworkSettings; ns != nil {
+		ep = ns.Networks[name]
+	}
+	if ep == nil || !ep.IPAddress.IsValid() && !ep.GlobalIPv6Address.IsValid() {
+		return fmt.Errorf("docker: reconnect container %s: no address on network %s", id, name)
+	}
+	ipam := &network.EndpointIPAMConfig{IPv4Address: ep.IPAddress, IPv6Address: ep.GlobalIPv6Address}
+
+	if err := c.DisconnectNetwork(ctx, name, id); err != nil {
+		return err
+	}
+	_, err = c.api.NetworkConnect(ctx, name, client.NetworkConnectOptions{
 		Container:      id,
-		EndpointConfig: &network.EndpointSettings{Aliases: aliases},
+		EndpointConfig: &network.EndpointSettings{Aliases: aliases, IPAMConfig: ipam},
 	})
 	if err != nil {
 		return fmt.Errorf("docker: connect container %s to network %s: %w", id, name, err)
