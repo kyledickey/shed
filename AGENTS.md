@@ -36,6 +36,7 @@ internal/backup    backups and restores: dumps, archives, zstd, age, schedules, 
 internal/auth      sessions, GitHub sign-in, middleware
 internal/api       HTTP API, SSE logs, webhook, SPA serving
 web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)
+web/site/          public site: home page and docs, prerendered to static HTML
 deploy/            systemd unit and example config
 ```
 
@@ -92,6 +93,7 @@ and [Go doc comments](https://go.dev/doc/comment).
 ## In-app docs
 
 The dashboard's `/docs` pages are MDX files in `web/src/features/docs/content/`.
+The public site (`web/site/`) serves the same pages.
 Each page is one `<slug>.mdx` with frontmatter (`title`, `group`, `order`,
 `description`); its `##` headings become the sidebar sections and anchor ids.
 
@@ -114,6 +116,8 @@ make test                       # go test
 go vet ./...
 cd web && bun install           # first time
 cd web && bun run dev           # dashboard dev server, proxies /api to :3000
+cd web && bun run site:dev      # public site dev server
+make site                       # prerender the public site to web/site-dist/client
 cd web && bunx vp check          # format, lint, typecheck
 ```
 

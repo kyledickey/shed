@@ -26,7 +26,8 @@ embedded Caddy reverse proxy. Docker runs all workloads.
 Linux (amd64 or arm64), Docker Engine with the buildx plugin, `git`, and
 `railpack` on `PATH`. shed runs as root under systemd.
 
-`deploy/install.sh` sets up a host: `curl -fsSL <site>/install.sh | sudo bash`.
+`deploy/install.sh` sets up a host: `curl -fsSL https://shed.land/install.sh | sudo bash`.
+shed.land redirects that path to the latest release's `install.sh`.
 It installs missing requirements (Docker through get.docker.com, git through
 the package manager, railpack through its installer), asks for the dashboard
 domain, the apps base domain, the ACME email, and the allowed GitHub logins

@@ -1,16 +1,18 @@
 /// <reference types="node" />
 /**
- * Build support for the in-app docs: a remark plugin that gives headings
- * stable ids, and a Vite plugin that serves every page's frontmatter and
- * sections as the virtual module "virtual:docs".
+ * Build support for the docs, shared by the dashboard and the site: a remark
+ * plugin that gives headings stable ids, and a Vite plugin that serves every
+ * page's frontmatter and sections as the virtual module "virtual:docs".
  */
 import { createProcessor } from "@mdx-js/mdx";
+import mdx from "@mdx-js/rollup";
 import GithubSlugger from "github-slugger";
 import type { Heading, Nodes, Root } from "mdast";
 import { toString } from "mdast-util-to-string";
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
 import type { Plugin } from "vite";
 import { parse as parseYaml } from "yaml";
 
@@ -123,4 +125,15 @@ export function docsMeta(dir: string): Plugin {
       server.watcher.on("unlink", reload);
     },
   };
+}
+
+/** docsPlugins compiles the .mdx pages in dir and serves their metadata as "virtual:docs". */
+export function docsPlugins(dir: string): Plugin[] {
+  return [
+    docsMeta(dir),
+    {
+      enforce: "pre",
+      ...mdx({ remarkPlugins: [remarkFrontmatter, remarkGfm, remarkDocs] }),
+    },
+  ];
 }

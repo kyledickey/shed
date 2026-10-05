@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shed installer.
 #
-#   curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo bash
+#   curl -fsSL https://shed.land/install.sh | sudo bash
 #
 # Installs the requirements (Docker with buildx, git, railpack), downloads and
 # verifies the latest shed release, writes /etc/shed/shed.toml, and starts the
@@ -208,7 +208,7 @@ preflight() {
     *) die "Unsupported architecture $(uname -m); shed supports amd64 and arm64." ;;
   esac
   if [ "$(id -u)" -ne 0 ]; then
-    die "Run as root: curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sudo bash"
+    die "Run as root: curl -fsSL https://shed.land/install.sh | sudo bash"
   fi
   if ! have systemctl || [ ! -d /run/systemd/system ]; then
     die "systemd is required."
