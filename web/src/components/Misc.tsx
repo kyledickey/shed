@@ -111,7 +111,22 @@ export function EmptyState({
   );
 }
 
-export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+/** copy writes text to the clipboard. A pending value is handed over as a
+ * promise so the write stays within the click's user activation. */
+function copy(value: string | (() => Promise<string>)): Promise<void> {
+  if (typeof value === "string") return navigator.clipboard.writeText(value);
+  const blob = value().then((text) => new Blob([text], { type: "text/plain" }));
+  return navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+}
+
+/** CopyButton copies value, or the result of calling it, to the clipboard. */
+export function CopyButton({
+  value,
+  label = "Copy",
+}: {
+  value: string | (() => Promise<string>);
+  label?: string;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
@@ -121,9 +136,13 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
       aria-label={label}
       className={cx(copied && styles.copied)}
       onClick={() => {
-        void navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
+        copy(value).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          },
+          () => {},
+        );
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}

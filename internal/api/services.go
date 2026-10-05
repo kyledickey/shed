@@ -253,6 +253,14 @@ func (s *Server) getVariables(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, http.StatusOK, vars)
 }
 
+func (s *Server) getResolvedVariables(w http.ResponseWriter, r *http.Request) error {
+	vars, err := s.deployer.ResolveVariables(r.Context(), r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, vars)
+}
+
 func (s *Server) putVariables(w http.ResponseWriter, r *http.Request) error {
 	id := r.PathValue("id")
 	if _, err := s.store.Service(r.Context(), id); err != nil {

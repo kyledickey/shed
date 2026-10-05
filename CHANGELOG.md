@@ -3,6 +3,14 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.1.1 - 2026-10-05
+
+- Variable values are hidden in the table until revealed, and copying a value
+  with references copies it resolved.
+- Logs no longer mask variable values shorter than 8 characters, which
+  mangled timestamps and JSON in services with values like `1` or `true`.
+- The service header no longer shows an image's `@sha256:` digest.
+
 ## v0.1.0 - 2026-10-05
 
 The first release of shed.

@@ -142,7 +142,7 @@ Back in `job.buildImage`, repo apps are built as `shed/<serviceID>:<deploymentID
 
 ### The redactor
 
-`build.Redactor` (redact.go) is an `io.Writer` wrapper that masks literal secrets with `***`. It sorts secrets longest first and keeps a tail of the longest secret minus one byte in its buffer after every write. Only the bytes before that tail are emitted, so a secret split across two writes is still caught. It always takes the earliest match, and the longest at that position. `Flush` writes the remainder, so you must call it when the stream ends. Writes are processed in 32 KiB pieces. `Redact(s)` masks a whole string, which `job.fail` uses on error messages.
+`build.Redactor` (redact.go) is an `io.Writer` wrapper that masks literal secrets with `***`, ignoring values shorter than 8 bytes. It sorts secrets longest first and keeps a tail of the longest secret minus one byte in its buffer after every write. Only the bytes before that tail are emitted, so a secret split across two writes is still caught. It always takes the earliest match, and the longest at that position. `Flush` writes the remainder, so you must call it when the stream ends. Writes are processed in 32 KiB pieces. `Redact(s)` masks a whole string, which `job.fail` uses on error messages.
 
 Who supplies the secrets differs by stream. In `Builder.Build` they are the clone URL, its password or token, the base64 of its credentials, and every value of `Request.Env`. In `job.follow` and `Deployer.RuntimeLogs` they come from `logSecrets`: the resolved values of the service's own stored variables, without injected metadata such as ports.
 

@@ -61,7 +61,11 @@ export function ServiceHeader({ service }: { service: Service }) {
                 <span className={styles.branch}>{service.branch}</span>
               </a>
             ) : (
-              service.image && <span className={styles.metaItem}>{service.image}</span>
+              service.image && (
+                <span className={styles.metaItem} title={service.image}>
+                  {service.image.replace(/@sha256:[0-9a-f]+$/i, "")}
+                </span>
+              )
             )}
             {domain && (
               <a className={styles.metaLink} href={domain.url} target="_blank" rel="noreferrer">

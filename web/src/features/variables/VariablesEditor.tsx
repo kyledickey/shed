@@ -1,6 +1,6 @@
 import { Check, Eye, EyeOff, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
 import { useRef, useState } from "react";
-import { useSaveVariables } from "../../api/services";
+import { resolveVariables, useSaveVariables } from "../../api/services";
 import { errorMessage } from "../../api/client";
 import type { Variables } from "../../api/types";
 import { Button } from "../../components/Button";
@@ -16,8 +16,6 @@ import { HelpTip } from "../docs/HelpTip";
 
 type Mode = "table" | "raw";
 type Row = { id: number; key: string; value: string; editing: boolean };
-
-const SECRET = /SECRET|PASSWORD|TOKEN|KEY|PRIVATE/i;
 
 /** diff counts keys added, removed, or changed between two variable sets. */
 function diff(a: Variables, b: Variables): number {
@@ -101,6 +99,24 @@ export function VariablesEditor({
         toast.add({ type: "success", title: "Variables saved" });
       },
     });
+
+  // copyValue copies the value a deployment would see. A saved value with
+  // references is resolved by the server; an unsaved draft is copied as typed.
+  const copyValue = (r: Row) => {
+    if (!r.value.includes("${{") || variables[r.key] !== r.value) return r.value;
+    return async () => {
+      try {
+        return (await resolveVariables(serviceId))[r.key] ?? "";
+      } catch (err) {
+        toast.add({
+          type: "error",
+          title: "Could not resolve variable",
+          description: errorMessage(err),
+        });
+        throw err;
+      }
+    };
+  };
 
   const toggleReveal = (id: number) =>
     setRevealed((prev) => {
@@ -248,25 +264,23 @@ export function VariablesEditor({
               <div key={r.id} className={styles.row}>
                 <span className={styles.key}>{r.key}</span>
                 <span className={styles.value}>
-                  {SECRET.test(r.key) && !revealed.has(r.id) ? (
-                    <span className={styles.masked}>••••••••</span>
-                  ) : (
+                  {revealed.has(r.id) ? (
                     <VarValue value={r.value} />
+                  ) : (
+                    <span className={styles.masked}>••••••••</span>
                   )}
                 </span>
                 <span className={styles.actions}>
-                  {SECRET.test(r.key) && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon
-                      aria-label={revealed.has(r.id) ? "Hide" : "Reveal"}
-                      onClick={() => toggleReveal(r.id)}
-                    >
-                      {revealed.has(r.id) ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </Button>
-                  )}
-                  <CopyButton value={r.value} label={`Copy ${r.key}`} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon
+                    aria-label={revealed.has(r.id) ? "Hide" : "Reveal"}
+                    onClick={() => toggleReveal(r.id)}
+                  >
+                    {revealed.has(r.id) ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </Button>
+                  <CopyButton value={copyValue(r)} label={`Copy ${r.key}`} />
                   <Button
                     variant="ghost"
                     size="sm"

@@ -159,22 +159,23 @@ func TestArgs(t *testing.T) {
 }
 
 func TestRedactor(t *testing.T) {
-	const url = "https://x-access-token:s3cr3t@github.com/o/r.git"
+	const url = "https://x-access-token:" + "s3cr3t-t0ken" + "@github.com/o/r.git" // Split so secret scanners skip it.
 	tests := []struct {
 		name   string
 		writes []string
 		want   string
 	}{
 		{"full url", []string{"fetching " + url + "\n"}, "fetching ***\n"},
-		{"password only", []string{"bad token s3cr3t here\n"}, "bad token *** here\n"},
-		{"split across writes", []string{"token s3c", "r3t done\nnext\n"}, "token *** done\nnext\n"},
-		{"partial last line flushed", []string{"tail s3cr3t"}, "tail ***"},
+		{"password only", []string{"bad token s3cr3t-t0ken here\n"}, "bad token *** here\n"},
+		{"split across writes", []string{"token s3cr3t", "-t0ken done\nnext\n"}, "token *** done\nnext\n"},
+		{"partial last line flushed", []string{"tail s3cr3t-t0ken"}, "tail ***"},
 		{"untouched", []string{"hello\nworld\n"}, "hello\nworld\n"},
+		{"short values kept", []string{"2026-10-05 took 1s\n"}, "2026-10-05 took 1s\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			r := NewRedactor(&buf, secrets(url))
+			r := NewRedactor(&buf, append(secrets(url), "1", "true"))
 			for _, w := range tt.writes {
 				if _, err := r.Write([]byte(w)); err != nil {
 					t.Fatal(err)

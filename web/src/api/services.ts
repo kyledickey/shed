@@ -16,6 +16,10 @@ export const variablesQuery = (serviceId: string) =>
     queryFn: () => api.get<Variables>(`/services/${serviceId}/variables`),
   });
 
+/** resolveVariables fetches a service's variables with references expanded. */
+export const resolveVariables = (serviceId: string) =>
+  api.get<Variables>(`/services/${serviceId}/variables/resolved`);
+
 function refreshService(qc: QueryClient, service: Service) {
   qc.setQueryData(keys.service(service.id), service);
   return qc.invalidateQueries({ queryKey: keys.project(service.projectId) });

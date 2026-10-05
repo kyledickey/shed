@@ -57,6 +57,28 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 	return env, nil
 }
 
+// ResolveVariables returns the variables of a service with references
+// expanded, as its next deployment would see them. SHED_GIT_COMMIT_SHA is the
+// commit of the active deployment, if any.
+func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error) {
+	svc, err := d.store.Service(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	project, err := d.store.Project(ctx, svc.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	sha := ""
+	switch dep, err := d.store.ActiveDeployment(ctx, serviceID); {
+	case err == nil:
+		sha = dep.CommitSHA
+	case !errors.Is(err, store.ErrNotFound):
+		return nil, err
+	}
+	return d.environment(ctx, svc, project, sha)
+}
+
 // injected returns the variables shed provides to every service.
 func injected(project store.Project, svc store.Service, domains []store.Domain, sha string) map[string]string {
 	m := map[string]string{

@@ -968,6 +968,7 @@ POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed rest
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
@@ -1209,6 +1210,9 @@ as a service variable. Runtime redaction uses the active deployment's recorded
 values, so saving a new value does not unmask the one still running. Deployments
 without a runtime snapshot fall back to current variables. Changing variables
 cannot retroactively remove secrets from older saved logs.
+
+Redaction skips values shorter than 8 bytes: masking values like `1` or
+`true` would mangle timestamps, numbers, and JSON throughout the log.
 
 ### Replacement storage safety
 
