@@ -264,3 +264,46 @@ func TestRemoveDeletesAnonymousVolumes(t *testing.T) {
 		t.Errorf("named volume %s was removed by Remove", named)
 	}
 }
+
+func TestNetworkAliases(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	sfx := suffix(t)
+	net, alias := "shed-test-net-"+sfx, "shed-test-alias-"+sfx
+	if err := c.EnsureNetwork(ctx, net); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.RemoveNetwork(context.Background(), net) })
+	run := func(name string) string {
+		t.Helper()
+		id, err := c.Run(ctx, RunSpec{Name: name + "-" + sfx, Image: testImage, Cmd: []string{"sleep", "300"}, Network: net})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Remove(context.Background(), id) })
+		return id
+	}
+	target, client := run("shed-test-target"), run("shed-test-client")
+	resolves := func() bool {
+		return c.Exec(ctx, client, []string{"getent", "hosts", alias}, nil, io.Discard, io.Discard) == nil
+	}
+
+	if resolves() {
+		t.Fatal("alias resolves before it was added")
+	}
+	if err := c.DisconnectNetwork(ctx, net, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ConnectNetwork(ctx, net, target, []string{alias}); err != nil {
+		t.Fatal(err)
+	}
+	if !resolves() {
+		t.Error("alias does not resolve after reconnecting with it")
+	}
+	if err := c.DisconnectNetwork(ctx, net, target); err != nil {
+		t.Fatal(err)
+	}
+	if resolves() {
+		t.Error("alias still resolves after disconnecting")
+	}
+}

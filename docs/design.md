@@ -272,9 +272,12 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 
 ## Runtime model
 
-- Docker network per project: `shed-<projectID>`. Each container joins with
-  network alias `<service name>`, so services reach each other at
-  `<name>:<port>` (the "private host").
+- Docker network per project: `shed-<projectID>`. The active deployment's
+  container has network alias `<service name>`, so services reach each other
+  at `<name>:<port>` (the "private host"). A new deployment's container
+  starts with no alias (only its container name resolves); once healthy, it
+  is disconnected and reconnected with the alias (its address may change),
+  and on activation the previous container is disconnected before it stops.
 - Container name: `shed-<serviceID>-<deploymentID>`. Labels:
   `shed.project`, `shed.service`, `shed.deployment`.
   Restart policy `unless-stopped`.
@@ -325,17 +328,19 @@ the same service.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
 3. **Start**: resolve variables, record the service's port on the deployment,
-   and create and start the new container. Services with volumes or a public port stop the old container first if it
-   is running (volumes can't be shared safely, e.g. database data dirs); others
-   overlap for zero downtime.
+   and create and start the new container, without the service's network
+   alias. Services with volumes or a public port stop the old container first
+   if it is running (volumes can't be shared safely, e.g. database data dirs);
+   others overlap for zero downtime.
 4. **Health**: if `port > 0`, wait up to 120s for a TCP connect, or a 2xx/3xx
    on `healthcheck_path` if set, at the container's IP on the project network.
    A service without a port is watched for 3s instead. Either way the
    deployment fails if the container exits meanwhile.
-5. **Switch**: apply proxy routes to the healthy candidate, then, in one
-   transaction, mark the new deployment `active` and the previous one
-   `removed`; then clear the service's `stopped` flag. Only after routing
-   succeeds, stop/remove the previous container.
+5. **Switch**: give the healthy candidate the service's network alias, apply
+   proxy routes to it, then, in one transaction, mark the new deployment
+   `active` and the previous one `removed`; then clear the service's `stopped`
+   flag. Only after routing succeeds, disconnect the previous container from
+   the network and stop/remove it.
 6. On failure at any step: mark `failed`, record `error`, remove the new
    container, and restart the previous container if step 3 stopped it and
    removal of the replacement is confirmed.

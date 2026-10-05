@@ -221,6 +221,9 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	j.step("Starting container")
 	j.dep.Port = j.svc.Port
 	spec := containerSpec(j.svc, j.dep, env, vols)
+	// Private traffic must not reach the new container before it is healthy,
+	// so it gets the service's hostname only in switchOver.
+	spec.Aliases = nil
 	j.describe(spec)
 	id, err := j.runContainer(ctx, spec)
 	if err != nil {
@@ -300,9 +303,9 @@ func (j *job) describe(spec docker.RunSpec) {
 	j.printf("Name: %s", spec.Name)
 	j.printf("Image: %s", spec.Image)
 	if j.svc.Port > 0 {
-		j.printf("Network: %s, private address %s:%d", spec.Network, j.svc.Name, j.svc.Port)
+		j.printf("Network: %s, private address %s:%d once healthy", spec.Network, j.svc.Name, j.svc.Port)
 	} else {
-		j.printf("Network: %s, private host %s", spec.Network, j.svc.Name)
+		j.printf("Network: %s, private host %s once healthy", spec.Network, j.svc.Name)
 	}
 	for _, m := range spec.Mounts {
 		j.printf("Volume: %s → %s", m.Volume, m.Target)
@@ -427,6 +430,9 @@ func (j *job) switchOver(ctx context.Context) error {
 	}
 
 	j.step("Switching traffic")
+	if err := j.promote(ctx); err != nil {
+		return err
+	}
 	switch {
 	case len(domains) == 0:
 		j.printf("No public domains")
@@ -486,8 +492,31 @@ func (j *job) switchOver(ctx context.Context) error {
 			j.log.Error("clear stopped flag", "service", j.svc.Name, "err", err)
 		}
 	}
+	if hasPrev && prev.ContainerID != "" {
+		// Take the service's hostname from the previous container before its
+		// graceful stop, so private traffic reaches only the new one.
+		err := j.docker.DisconnectNetwork(ctx, networkName(j.svc.ProjectID), prev.ContainerID)
+		if err != nil && !docker.IsNotFound(err) {
+			j.log.Warn("disconnect previous container", "container", prev.ContainerID, "err", err)
+		}
+	}
 	j.removeOthers(ctx, j.svc.ID, j.container)
 	j.pruneImages(ctx, j.svc.ID, j.dep.Image)
+	return nil
+}
+
+// promote gives the healthy new container the service's private hostname.
+// Docker cannot change the aliases of a connected container, so it is
+// reconnected to the project network, which may change its address.
+func (j *job) promote(ctx context.Context) error {
+	network := networkName(j.svc.ProjectID)
+	if err := j.docker.DisconnectNetwork(ctx, network, j.container); err != nil {
+		return fmt.Errorf("add private hostname: %w", err)
+	}
+	if err := j.docker.ConnectNetwork(ctx, network, j.container, []string{j.svc.Name}); err != nil {
+		return fmt.Errorf("add private hostname: %w", err)
+	}
+	j.printf("Private host %s resolves to the new container", j.svc.Name)
 	return nil
 }
 

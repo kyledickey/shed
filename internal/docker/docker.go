@@ -79,6 +79,29 @@ func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
+// ConnectNetwork connects the container id to the network name, under the
+// given DNS aliases besides its name. The container may get a new address.
+func (c *Client) ConnectNetwork(ctx context.Context, name, id string, aliases []string) error {
+	_, err := c.api.NetworkConnect(ctx, name, client.NetworkConnectOptions{
+		Container:      id,
+		EndpointConfig: &network.EndpointSettings{Aliases: aliases},
+	})
+	if err != nil {
+		return fmt.Errorf("docker: connect container %s to network %s: %w", id, name, err)
+	}
+	return nil
+}
+
+// DisconnectNetwork disconnects the container id from the network name,
+// which also drops its DNS aliases there.
+func (c *Client) DisconnectNetwork(ctx context.Context, name, id string) error {
+	_, err := c.api.NetworkDisconnect(ctx, name, client.NetworkDisconnectOptions{Container: id})
+	if err != nil {
+		return fmt.Errorf("docker: disconnect container %s from network %s: %w", id, name, err)
+	}
+	return nil
+}
+
 // EnsureVolume creates the named volume if it does not exist.
 func (c *Client) EnsureVolume(ctx context.Context, name string) error {
 	if _, err := c.api.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name}); err != nil {

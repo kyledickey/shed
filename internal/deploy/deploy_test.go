@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,13 +30,60 @@ type fakeDocker struct {
 	containers map[string]*docker.Container
 	runs       []docker.RunSpec
 	restarts   []string
-	exposed    []int  // ports every image exposes
-	output     string // what every container prints
-	exitCode   int    // if set, new containers exit at once with it
+	aliases    map[string][]string // network aliases by container ID
+	exposed    []int               // ports every image exposes
+	output     string              // what every container prints
+	exitCode   int                 // if set, new containers exit at once with it
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{containers: make(map[string]*docker.Container)}
+	return &fakeDocker{containers: make(map[string]*docker.Container), aliases: make(map[string][]string)}
+}
+
+// ConnectNetwork gives the container its address back, the same one for
+// simplicity.
+func (f *fakeDocker) ConnectNetwork(_ context.Context, network, id string, aliases []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return errNoContainer(id)
+	}
+	if _, ok := c.IPs[network]; ok {
+		return fmt.Errorf("container %s is already connected to %s", id, network)
+	}
+	c.IPs[network] = "10.0.0." + strings.TrimPrefix(id, "c")
+	f.aliases[id] = aliases
+	return nil
+}
+
+func (f *fakeDocker) DisconnectNetwork(_ context.Context, network, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return errNoContainer(id)
+	}
+	if _, ok := c.IPs[network]; !ok {
+		return fmt.Errorf("container %s is not connected to %s", id, network)
+	}
+	delete(c.IPs, network)
+	delete(f.aliases, id)
+	return nil
+}
+
+// resolve returns the containers that the alias name resolves to.
+func (f *fakeDocker) resolve(name string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ids []string
+	for id, aliases := range f.aliases {
+		if slices.Contains(aliases, name) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 func (f *fakeDocker) EnsureNetwork(context.Context, string) error        { return nil }
@@ -84,6 +132,7 @@ func (f *fakeDocker) Run(_ context.Context, spec docker.RunSpec) (string, error)
 		IPs:    map[string]string{spec.Network: fmt.Sprintf("10.0.0.%d", f.next)},
 		Labels: spec.Labels,
 	}
+	f.aliases[id] = spec.Aliases
 	if f.exitCode != 0 {
 		c := f.containers[id]
 		c.State, c.Running, c.ExitCode = "exited", false, f.exitCode
@@ -125,6 +174,7 @@ func (f *fakeDocker) Remove(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.containers, id)
+	delete(f.aliases, id)
 	return nil
 }
 
@@ -340,8 +390,11 @@ func TestDeployHappyPath(t *testing.T) {
 			t.Errorf("env %v lacks %s", spec.Env, want)
 		}
 	}
-	if len(spec.Aliases) != 1 || spec.Aliases[0] != "web" {
-		t.Errorf("aliases = %v, want [web]", spec.Aliases)
+	if len(spec.Aliases) != 0 {
+		t.Errorf("started with aliases %v, want none until healthy", spec.Aliases)
+	}
+	if got := f.docker.resolve("web"); len(got) != 1 || got[0] != dep.ContainerID {
+		t.Errorf("web resolves to %v, want [%s]", got, dep.ContainerID)
 	}
 	f.proxy.mu.Lock()
 	routes := f.proxy.routes

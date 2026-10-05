@@ -34,6 +34,8 @@ import (
 type Docker interface {
 	EnsureNetwork(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
+	ConnectNetwork(ctx context.Context, name, id string, aliases []string) error
+	DisconnectNetwork(ctx context.Context, name, id string) error
 	EnsureVolume(ctx context.Context, name string) error
 	RemoveVolume(ctx context.Context, name string) error
 	PullImage(ctx context.Context, ref string, w io.Writer) error
