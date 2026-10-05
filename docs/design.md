@@ -59,7 +59,7 @@ allowed_users = []                 # Explicit GitHub logins; configure before fi
 [build]
 memory_mb = 2048                   # BuildKit builder container memory (no swap); 0 = unlimited
 cpus = 2                           # BuildKit builder container CPU quota in cores; 0 = unlimited
-min_free_mb = 2048                 # refuse builds below this free space on data dir / Docker root; 0 = off
+min_free_mb = 2048                 # refuse builds below this free space on data dir / Docker root, cancel running builds below half; 0 = off
 
 [deployments]
 log_max_mb = 10                    # per-deployment build log cap; 0 = unlimited
@@ -1138,7 +1138,12 @@ cache) and recreates it with `memory`/`memory-swap` set to `build.memory_mb` and
 a CFS quota of `build.cpus` cores, so configuration changes apply after a
 restart. A build fails before cloning when the filesystem of the build
 directory or Docker's root directory (`docker info`) has less than
-`build.min_free_mb` available.
+`build.min_free_mb` available. While a build runs, shed also polls free space on
+those paths every three seconds. If either drops below half of
+`build.min_free_mb`, it kills the build commands, removes the workspace, and
+fails the build with a low-disk error that the deploy log shows. This is
+best-effort monitoring, not a hard quota: a build can still write quickly
+between polls, and shed does not prune the builder's cache afterward.
 
 ### Webhook resource budget
 

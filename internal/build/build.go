@@ -64,9 +64,13 @@ type Builder struct {
 	// unlimited.
 	CPUs float64
 	// MinFree is the free space, in bytes, that the filesystems of WorkDir
-	// and Docker's root directory need for a build to start. Zero disables
-	// the check.
+	// and Docker's root directory need for a build to start. While a build
+	// runs it is canceled if either drops below half of this value. This is
+	// best-effort monitoring, not a quota. Zero disables both checks.
 	MinFree uint64
+
+	statfs   func(path string) (uint64, error) // free bytes; nil uses statfs(2)
+	diskPoll time.Duration                     // free-space poll interval; zero uses the default
 
 	once       sync.Once
 	slot       chan struct{}
@@ -77,7 +81,7 @@ type Builder struct {
 // Build clones req.Commit and builds req.Image, streaming progress and command
 // output to out. The workspace <WorkDir>/<id> is removed when Build returns.
 // Commands are killed if ctx is canceled.
-func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writer) error {
+func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writer) (err error) {
 	if err := req.validate(id); err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
@@ -95,7 +99,7 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	if err := b.setup(ctx); err != nil {
 		return err
 	}
-	if err := b.checkDisk(); err != nil {
+	if err := b.checkDisk(b.MinFree); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(workspace); err != nil {
@@ -106,6 +110,15 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 		return fmt.Errorf("build: create workspace: %w", err)
 	}
 	defer os.RemoveAll(workspace)
+
+	ctx, cancelCause := context.WithCancelCause(ctx)
+	defer cancelCause(nil)
+	go b.watchDisk(ctx, cancelCause)
+	defer func() {
+		if cause := context.Cause(ctx); err != nil && errors.Is(cause, ErrLowDisk) {
+			err = fmt.Errorf("%w: %w", cause, err)
+		}
+	}()
 
 	w := NewRedactor(out, append(secrets(req.RepoURL), slices.Collect(maps.Values(req.Env))...))
 	defer w.Flush()

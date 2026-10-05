@@ -55,7 +55,7 @@ func TestCheckDisk(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.b.checkDisk()
+			err := tt.b.checkDisk(tt.b.MinFree)
 			if got := errors.Is(err, ErrLowDisk); got != tt.wantErr {
 				t.Errorf("checkDisk() = %v, want ErrLowDisk: %v", err, tt.wantErr)
 			}
@@ -190,5 +190,45 @@ func TestQueuedBuildDeadlineDoesNotCreateWorkspace(t *testing.T) {
 	entries, err := os.ReadDir(b.WorkDir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("queued build created workspace: %v %v", entries, err)
+	}
+}
+
+func TestBuildCancelsWhenDiskFills(t *testing.T) {
+	bin := t.TempDir()
+	scripts := map[string]string{
+		"git":    "#!/bin/sh\ntouch Dockerfile\n",
+		"docker": "#!/bin/sh\n[ \"$1\" = info ] && exit 0\nexec sleep 30\n",
+	}
+	for name, script := range scripts {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var calls atomic.Int32
+	b := &Builder{
+		WorkDir:  t.TempDir(),
+		MinFree:  100 << 20,
+		diskPoll: 10 * time.Millisecond,
+		statfs: func(string) (uint64, error) {
+			// Plenty for the preflight check, then below half of MinFree.
+			if calls.Add(1) == 1 {
+				return 200 << 20, nil
+			}
+			return 10 << 20, nil
+		},
+	}
+	req := Request{RepoURL: "https://example.com/r.git", Commit: "abc", Image: "x"}
+	start := time.Now()
+	err := b.Build(context.Background(), "a", req, io.Discard)
+	if !errors.Is(err, ErrLowDisk) {
+		t.Fatalf("Build() = %v, want ErrLowDisk", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Errorf("build was not killed promptly: %v", time.Since(start))
+	}
+	if entries, _ := os.ReadDir(b.WorkDir); len(entries) != 0 {
+		t.Errorf("workspace left behind: %v", entries)
 	}
 }

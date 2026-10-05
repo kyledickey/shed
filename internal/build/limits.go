@@ -82,26 +82,69 @@ func createArgs(instance string, memory int64, cpus float64) []string {
 	return args
 }
 
+// diskPollInterval is how often a running build's free space is checked.
+const diskPollInterval = 3 * time.Second
+
+// freeBytes returns the bytes available to unprivileged writers on the
+// filesystem containing path.
+func freeBytes(path string) (uint64, error) {
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(path, &fs); err != nil {
+		return 0, err
+	}
+	return fs.Bavail * uint64(fs.Bsize), nil
+}
+
 // checkDisk returns ErrLowDisk if the work directory's or Docker's
-// filesystem has less than MinFree bytes available. Paths that do not exist
+// filesystem has less than min bytes available. Paths that do not exist
 // on this host, such as the root of a remote Docker daemon, are skipped.
-func (b *Builder) checkDisk() error {
+func (b *Builder) checkDisk(min uint64) error {
 	if b.MinFree == 0 {
 		return nil
+	}
+	statfs := b.statfs
+	if statfs == nil {
+		statfs = freeBytes
 	}
 	for _, path := range []string{b.WorkDir, b.dockerRoot} {
 		if path == "" {
 			continue
 		}
-		var fs syscall.Statfs_t
-		if err := syscall.Statfs(path, &fs); errors.Is(err, os.ErrNotExist) {
+		free, err := statfs(path)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
 			return fmt.Errorf("build: statfs %s: %w", path, err)
 		}
-		if free := fs.Bavail * uint64(fs.Bsize); free < b.MinFree {
-			return fmt.Errorf("%w: %d MiB free on %s, need %d MiB", ErrLowDisk, free>>20, path, b.MinFree>>20)
+		if free < min {
+			return fmt.Errorf("%w: %d MiB free on %s, need %d MiB", ErrLowDisk, free>>20, path, min>>20)
 		}
 	}
 	return nil
+}
+
+// watchDisk polls free space until ctx is done and calls cancel with an
+// ErrLowDisk error when it falls below half of MinFree. Statfs errors are
+// ignored, since the preflight check already ran.
+func (b *Builder) watchDisk(ctx context.Context, cancel context.CancelCauseFunc) {
+	if b.MinFree == 0 {
+		return
+	}
+	interval := b.diskPoll
+	if interval <= 0 {
+		interval = diskPollInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := b.checkDisk(b.MinFree / 2); errors.Is(err, ErrLowDisk) {
+				cancel(fmt.Errorf("%w (build canceled while running; limit is half of build.min_free_mb)", err))
+				return
+			}
+		}
+	}
 }
