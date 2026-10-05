@@ -1,0 +1,62 @@
+---
+title: Volumes and resources
+group: Running
+order: 80
+description: Volumes keep data across deployments, and every container runs under CPU, memory, and process ceilings. Both are plain Docker features that shed sets up for you.
+---
+
+import { LimitsDiagram, StorageDiagram, VolumeDiagram } from "../components/resources/diagrams";
+
+## Volumes
+
+A volume is a Docker named volume, `shed-vol-<volumeID>`, mounted into the service's container at the mount path you choose. Databases get one automatically at their template's data directory. Because every deployment mounts the same named volume, data survives deploys, restarts, and the removal of old containers.
+
+<Figure caption="Containers come and go with each deployment. The volume belongs to the service.">
+  <VolumeDiagram />
+</Figure>
+
+- **Creation.** The record exists as soon as you add the volume, but Docker creates the volume the first time a container that mounts it starts. A mount path must be a clean absolute path other than `/`, and a service can mount only one volume per path (409 otherwise).
+- **Deleting a volume** removes its Docker volume and its data. If the running container still has it mounted, Docker refuses, so shed deletes the record and removes the data after the service's next deployment detaches it. Any other Docker error fails the request and keeps the record so you can retry.
+- **Deleting a service or project** removes its containers, then every volume, image, and build log it had, and a project's network last.
+- **Deploys.** A service with a volume replaces its container stop-first, see [replacement storage safety](#replacement-storage-safety).
+- **Backups.** Services with volumes can be archived and restored, see [backups](/docs/backups).
+
+## CPU and memory limits
+
+Every app and database container is created with a CPU quota, a memory limit, a process cap, and log rotation. A new service starts with **1 core** and **1 GiB**. Changing a limit applies from the service's next deployment, like other settings.
+
+<Figure caption="What shed sets on each container, in Docker HostConfig terms.">
+  <LimitsDiagram />
+</Figure>
+
+| Setting       | Rule                                                                                                              |
+| ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `cpuLimit`    | cores as a decimal; 0 is unlimited; at least 0.01 and at most the host's CPU count                                |
+| `memoryLimit` | bytes; 0 is unlimited; at least 64 MiB                                                                            |
+| `swap`        | set equal to the memory limit, so the container gets no swap. With no memory limit it is left to Docker's default |
+| `pids`        | 512 per container, fixed                                                                                          |
+| `logs`        | json-file, 10 MiB per file, 3 files: at most about 30 MiB per container                                           |
+
+The CPU limit is a CFS quota, not a pinned core: a container with `1` may spread across several cores as long as it stays within one core's worth of time. A container that exceeds its memory limit is killed by the kernel, and Docker restarts it under the `unless-stopped` policy.
+
+<Callout tone="sky" title="Limits are ceilings, not reservations">
+  shed does not check that your limits add up to the host. You can give ten services 1 GiB each on a
+  4 GiB server; it only becomes a problem if they all use it at once. Also leave room for builds,
+  which run in their own capped builder (`build.memory_mb`, `build.cpus`), and for the short overlap
+  of old and new containers during a zero-downtime deploy.
+</Callout>
+
+## Replacement storage safety
+
+Two containers writing to one database directory corrupt it, and two containers cannot bind the same host port. So a service with a volume, or with a [public port](/docs/networking#public-tcp-ports), never overlaps its old and new containers. shed switches it stop-first and treats uncertainty as a reason to stay down.
+
+<Figure caption="Top: a stop-first deployment. Bottom: how a failure is unwound.">
+  <StorageDiagram />
+</Figure>
+
+1. Every _other_ container labeled with the service, for example a failed candidate whose removal failed, is stopped and removed.
+2. The active deployment's container is stopped, with a 30 second grace period.
+3. Every container of the service must now be listed as stopped. If Docker inspection or stop fails, the deployment fails _before_ the new container exists, and the active container is left alone.
+4. The new container starts, passes its health check, and takes the alias and routes. The old container stays stopped until activation, then is removed.
+
+If the candidate fails, shed removes it and restarts the previous container, but only once every other container of the service is confirmed gone, even if the deployment was cancelled. A failed container start counts as ambiguous, since Docker may have started it anyway. If removal cannot be confirmed, the previous deployment stays stopped and the error says so. The same rule applies to starting a service after a reboot or a backup. The downtime is the time from stopping the old container to the new one passing its health check.

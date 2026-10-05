@@ -1,0 +1,122 @@
+---
+title: Logs
+group: Running
+order: 100
+description: "shed keeps three kinds of logs: a file per deployment build, Docker's own log of each running container, and its own application log. All three reach the dashboard as server-sent events."
+---
+
+import { SourcesDiagram, SseDiagram } from "../components/logs/diagrams";
+import { RedactionLab } from "../components/logs/RedactionLab";
+
+## Build logs
+
+Every deployment writes a build log to `<data>/logs/<deploymentID>.log` (mode `0600`). It holds shed's own `==> ` step headings and the detail lines under them, the output of the build (BuildKit progress for Dockerfile and Railpack builds, or the image pull), and, from container start until the health check ends, the new container's own stdout and stderr, without Docker's timestamps. A line the container prints that begins with `==> ` gets a leading space, so it can never pass for a step heading.
+
+<Figure caption="Where each kind of log lives and how it gets to your browser.">
+  <SourcesDiagram />
+</Figure>
+
+- **Size cap.** `deployments.log_max_mb` (default 10, 0 for unlimited) bounds each file. At the cap shed writes up to the limit, then `==> Log truncated: size limit reached, further output is discarded`, and silently drops everything after. That includes the final `==> Deployment failed` line, so on a truncated log trust the deployment's status and error, not the end of the file.
+- **Lifetime.** A log is deleted with its deployment when history is pruned past `deployments.keep` (default 50 per service), or with its service.
+- **Replay.** Opening the log reads the file from the start, then follows it every 500 ms while the deployment is in progress. Followers stop reading at activation, so everything about the switchover is written before the deployment turns active.
+
+For what the lines mean, see [reading a build log](/docs/deployments#reading-a-build-log).
+
+## Runtime logs
+
+Once a container is running, its output belongs to Docker. shed streams the log of a service's _active_ container: the last 500 lines, then new ones as they arrive, with stdout and stderr merged. Every line starts with the RFC 3339 timestamp Docker adds, which the dashboard parses and shows as a time column.
+
+```log title="runtime log lines as streamed"
+2026-10-04T12:00:03.481920113Z {"level":"info","msg":"listening","port":8080}
+2026-10-04T12:00:09.220118742Z GET /health 200 2ms
+2026-10-04T12:00:11.907356001Z Error: connect ECONNREFUSED 172.18.0.2:5432
+```
+
+- **Rotation.** Containers use Docker's `json-file` driver with 10 MiB per file and 3 files. A chatty service keeps roughly its last 30 MiB, which is the most the 500-line replay can draw on.
+- **One container per deployment.** A new deployment is a new container with a fresh log. When the old container is removed after a switchover, its logs go with it.
+- **When it ends.** The stream ends when the container stops. With no active container it ends immediately with an `end` event.
+- **Redaction** applies to this stream and not to Docker's own copy. `docker logs` shows the raw output.
+
+<Demo title="Read it with Docker">
+
+```sh title="on the server"
+# the active container, raw and unredacted
+docker logs --timestamps --tail 500 --follow \
+  $(docker ps -q --filter label=shed.service=<serviceID>)
+
+# every container of the project, including a candidate mid-deploy
+docker ps --filter label=shed.project=<projectID> --format '{{.Names}}'
+```
+
+</Demo>
+
+## shed's own log
+
+shed's own log is structured text (`time=... level=INFO msg=...`), written to three places: standard error (so it is in `journalctl -u shed` under systemd), `shed.log` next to the config file, and an in-memory ring of the last **1000 lines**. The file is rotated by shed: `log.max_size_mb` 20, `log.max_backups` 5, `log.max_age_days` 30 by default, and `log.level` filters what is written at all. Caddy logs separately to `caddy.log` in the same directory, which Caddy rotates itself.
+
+`GET /api/logs` replays the ring and then follows. A follower may fall 256 lines behind; after that lines are dropped for it rather than slowing the logger. The stream never ends on its own. The same view is in the dashboard under Server, Logs. For how the ring and the fan-out work, see the [logging internals](/docs/internals#logs-and-redaction).
+
+## Streaming over SSE
+
+The log endpoints are plain [server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html). The response is `text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`, flushed after every event. An idle stream sends a `: ping` comment every 15 seconds so proxies keep it open. Authentication is the `shed_session` cookie, which a browser's `EventSource` sends on its own.
+
+<Figure caption="A build log stream from open to close. Each arrow is one SSE event.">
+  <SseDiagram />
+</Figure>
+
+| Event    | Data                                                              | Sent by                |
+| -------- | ----------------------------------------------------------------- | ---------------------- |
+| `log`    | one line of text, without its newline                             | all three endpoints    |
+| `status` | `{"status":"building"}`, sent first and on every change           | build log only         |
+| `end`    | empty; the stream is complete and the client should not reconnect | build and runtime logs |
+
+```sse title="curl -N --cookie shed_session=... /api/deployments/{id}/logs"
+event: status
+data: {"status":"building"}
+
+event: log
+data: ==> Building acme/web@3f9c2ab
+
+event: log
+data: #6 [build 4/4] RUN npm run build
+
+event: log
+data: ==> Starting container
+
+event: log
+data: Network: shed-prj7k2, private address web:8080 once healthy
+
+event: log
+data: ==> Waiting for /health to become healthy
+
+event: status
+data: {"status":"deploying"}
+
+: ping
+
+event: log
+data: Healthy after 3s
+
+event: status
+data: {"status":"active"}
+
+event: end
+data:
+```
+
+- **Replay on reconnect.** There are no `id:` fields and no support for `Last-Event-ID`. A reconnect starts over from the beginning of the file, ring, or 500-line tail, so a client must clear what it has when the stream opens. The dashboard does.
+- **Chunking.** A line longer than 64 KiB without a newline is split into 64 KiB pieces instead of buffered without bound, for build replay and runtime logs alike. The dashboard shows up to 5000 lines per view and strips ANSI escape sequences.
+
+## Secret redaction
+
+shed masks secrets with `***` before they reach a build log or a runtime stream. Redaction is by literal value: shed knows what the secret is and replaces that exact string.
+
+- **What counts as a secret.** The resolved value of every non-empty variable you _stored_ on the service, and for builds also the clone URL, its token, and their base64 form. Injected values like `PORT` are not secrets unless you stored a variable of the same name.
+- **Short values are a trap.** A stored `POSTGRES_USER=postgres` or `POSTGRES_DB=app` masks every `postgres` and `app` in that service's logs. Check your stored variable values before relying on short ones.
+- **Deployed values.** The runtime stream masks the values the active container was started with, recorded when its deployment went live. Saving a new value doesn't unmask the old one while the old container still runs it; the new value is masked from the deployment that starts with it. A deployment that went live before shed recorded this falls back to the variables as they are now.
+- **Literal only.** A base64 or URL-encoded copy of a secret is a different string and is not masked. Neither are log lines already written to a build log before the variable was stored.
+- **Where.** Build output, the container's boot output copied into the build log, deployment error messages, and the runtime stream. Not Docker's raw log.
+
+Output arrives in arbitrary writes, so a secret can be cut in two. Replacing inside each write would let it through. shed buffers instead: after each write it emits everything except the last _longest secret minus one_ characters, because only those could begin a match that is not complete yet. It takes the earliest match, longest secret first, and writes what remains when the stream ends. Try it:
+
+<RedactionLab />

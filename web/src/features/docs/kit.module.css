@@ -1,0 +1,254 @@
+.doc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  max-width: 780px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.eyebrow {
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.title {
+  font-size: var(--text-3xl);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.lede {
+  max-width: 64ch;
+  color: var(--ink-2);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+}
+
+.h2 {
+  position: relative;
+  color: var(--ink);
+  scroll-margin-top: var(--space-6);
+  font-size: var(--text-xl);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+
+  &:hover .anchor {
+    opacity: 1;
+  }
+}
+
+.anchor {
+  position: absolute;
+  top: 50%;
+  left: -24px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-xs);
+  color: var(--ink-4);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity var(--dur) var(--ease);
+
+  &:hover,
+  &:focus-visible {
+    color: var(--accent-ink);
+    opacity: 1;
+  }
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--ink-2);
+  line-height: 1.65;
+
+  & h3 {
+    margin-top: var(--space-2);
+    color: var(--ink);
+    font-size: var(--text-base);
+    font-weight: 650;
+  }
+
+  & p,
+  & li {
+    max-width: 70ch;
+  }
+
+  & ul,
+  & ol {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding-left: 1.3em;
+  }
+
+  & li::marker {
+    color: var(--ink-4);
+  }
+
+  & strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  & a:not(.anchor) {
+    color: var(--accent-ink);
+    font-weight: 500;
+    text-decoration: underline;
+    text-decoration-color: var(--accent-line);
+    text-underline-offset: 3px;
+
+    &:hover {
+      text-decoration-color: currentColor;
+    }
+  }
+
+  & :not(pre) > code {
+    padding: 1px 5px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-xs);
+    background: var(--sunken);
+    color: var(--ink);
+    font-size: 0.86em;
+    white-space: nowrap;
+  }
+}
+
+.term {
+  font-size: 0.86em;
+}
+
+.code {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--sunken);
+}
+
+.codeHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.codeTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: var(--ink);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  scrollbar-width: thin;
+}
+
+.line {
+  display: inline;
+}
+
+.comment {
+  color: var(--ink-3);
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+
+  & th {
+    padding: 8px 12px;
+    background: var(--layer);
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-3);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  & td {
+    padding: 8px 12px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--ink-2);
+    vertical-align: top;
+  }
+
+  & tr:first-child td {
+    border-top: 0;
+  }
+
+  & td code {
+    font-size: 0.9em;
+  }
+}
+
+.monoFirst td:first-child {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.demo {
+  margin: var(--space-2) 0;
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.figureBody {
+  overflow-x: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--raised);
+}
+
+.caption {
+  padding: 0 4px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.body > .h2 {
+  margin-top: var(--space-6);
+}
+
+.body > .h2:first-child {
+  margin-top: 0;
+}

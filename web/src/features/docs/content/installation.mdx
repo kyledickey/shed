@@ -1,0 +1,84 @@
+---
+title: Installation and updates
+group: Getting started
+order: 15
+description: One command sets up a fresh Linux server, and shed updates itself from the dashboard, verifying every release before it runs it.
+---
+
+## Install
+
+On a fresh Linux server (amd64 or arm64) with systemd, run:
+
+```sh
+curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo bash
+```
+
+The installer:
+
+1. Installs what's missing: Docker (through [get.docker.com](https://get.docker.com)) with the buildx plugin, `git`, and `railpack`.
+2. Asks a few questions (below) and writes `/etc/shed/shed.toml`.
+3. Downloads the latest release, checks it against the release's `checksums.txt`, and installs it to `/usr/local/bin/shed` along with `/etc/systemd/system/shed.service`.
+4. Starts shed and prints the setup URL and the one-time setup token.
+
+Open that URL, enter the token, and follow the [GitHub setup](/docs/github#first-run-setup) to create the GitHub App. Then sign in with one of the GitHub logins you allowed.
+
+Running the installer on a server that already has `/etc/shed/shed.toml` upgrades the binary and the systemd unit, restarts shed, and leaves the config alone.
+
+## What the installer asks
+
+| Prompt                | Becomes              | Notes                                                                                                                                 |
+| --------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Dashboard domain      | `server.url`         | For example `shed.example.com`. Needs an `A` or `AAAA` record pointing at the server. The installer warns if it doesn't resolve here. |
+| Apps base domain      | `proxy.base_domain`  | Optional. Generated domains are `<service>-<project>.<base>`, so it needs a wildcard record `*.<base>`.                               |
+| ACME email            | `proxy.acme_email`   | Optional. Let's Encrypt contact address for certificate expiry notices.                                                               |
+| Allowed GitHub logins | `auth.allowed_users` | Comma-separated. Only these accounts can sign in.                                                                                     |
+
+Every other key keeps its default. See [Configuration](/docs/configuration) to change them later, then `systemctl restart shed`. Ports 80 and 443 must be reachable from the internet for HTTPS certificates; the installer warns if something else is already listening on them.
+
+## Unattended installs
+
+Every prompt has an environment variable. With `SHED_YES=1`, or when there is no terminal, the installer asks nothing and fails if a required value is missing.
+
+```sh
+curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo \
+  SHED_DOMAIN=shed.example.com \
+  SHED_BASE_DOMAIN=apps.example.com \
+  SHED_ACME_EMAIL=you@example.com \
+  SHED_ALLOWED_USERS=octocat,hubot \
+  SHED_YES=1 bash
+```
+
+| Variable             | Required | Meaning                                                    |
+| -------------------- | -------- | ---------------------------------------------------------- |
+| `SHED_DOMAIN`        | yes      | Dashboard domain                                           |
+| `SHED_ALLOWED_USERS` | yes      | Comma-separated GitHub logins                              |
+| `SHED_BASE_DOMAIN`   | no       | Apps base domain                                           |
+| `SHED_ACME_EMAIL`    | no       | Let's Encrypt contact                                      |
+| `SHED_VERSION`       | no       | Release tag to install, such as `v1.2.0`. Default: latest. |
+| `SHED_YES`           | no       | `1` skips every confirmation                               |
+
+## Updates
+
+shed checks GitHub for a new release a minute after it starts and every 6 hours after that. When one is out, the sidebar shows **Update available** and **Settings → Updates** shows the new version and its release notes. Click **Check now** to check right away.
+
+Updating has two steps:
+
+1. **Download.** shed downloads the release's `checksums.txt` and checks its signature against the release key built into shed. Then it downloads the archive for this server's architecture, checks it against `checksums.txt`, and runs the new binary once to confirm it reports the right version. If any step fails, shed discards the download and shows the error. Turn on **Download automatically** to do this as soon as a release is found.
+2. **Install and restart.** You start this yourself. shed puts the new binary in place, keeps the old one as `/usr/local/bin/shed.prev`, shuts down cleanly, and starts the new binary in the same process.
+
+While shed restarts, the dashboard stays open and shows a restarting screen. It reloads itself once the new version answers, usually within a few seconds. Your containers keep running, but because the reverse proxy is part of shed, every domain is unreachable until it's back. Builds, backups, and restores running at that moment are interrupted and handled like after any restart: interrupted deployments fail, and interrupted restores are recovered on boot.
+
+Development builds (anything not built from a release tag) don't check for updates. Neither does a shed that can't write to the directory its binary is in; the Updates card says why.
+
+To update from the command line instead, run the installer again.
+
+## Rolling back
+
+The binary that was replaced is kept next to the new one. To go back:
+
+```sh
+sudo mv /usr/local/bin/shed.prev /usr/local/bin/shed
+sudo systemctl restart shed
+```
+
+To install a specific older release, run the installer with `SHED_VERSION=v1.2.0`. Check the release notes first: a newer release may have migrated the database in a way an older binary doesn't understand, in which case restore the [shed.db backup](/docs/backups) taken before the update.

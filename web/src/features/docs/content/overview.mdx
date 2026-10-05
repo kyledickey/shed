@@ -1,0 +1,39 @@
+---
+title: Overview
+group: Getting started
+order: 10
+description: shed is a self-hosted deployment platform for one Linux server. Push to GitHub, and shed builds your app, runs it in Docker next to its databases, puts it behind HTTPS, and backs up its data.
+---
+
+import { ArchitectureDiagram, RequestDiagram } from "../components/overview/diagrams";
+
+## What shed is
+
+shed is inspired by Railway, scaled down to one VPS. You get projects, services, variables with references, push-to-deploy, zero-downtime switchovers, metrics, logs, and backups, all running on hardware you control.
+
+- **One binary.** A single Go process serves this dashboard and the JSON API, runs the deploy pipeline, samples metrics, schedules backups, and embeds [Caddy](https://caddyserver.com) as its reverse proxy. There is no separate proxy or queue to run.
+- **Docker runs every workload.** Apps, databases, build helpers, and backup helpers are all containers. shed talks to the Docker Engine API directly.
+- **State lives in SQLite.** Projects, services, deployments, metrics, and settings are in one file, `shed.db`, which shed also backs up.
+- **One GitHub App** handles sign-in, repository access, push webhooks, and CI status. shed creates it for you on first run.
+
+There are no environments: a project is a set of services that run together. If you want staging, make a second project.
+
+## Architecture
+
+Everything inside the dashed box is one process. Caddy terminates TLS on ports 80 and 443 and routes the dashboard hostname to the API on `127.0.0.1:3000`. Every other hostname goes straight to the IP of a service's active container on its project's Docker network.
+
+<Figure caption="shed's moving parts. Everything in the green box runs inside the one shed process.">
+  <ArchitectureDiagram />
+</Figure>
+
+If you want to read or change the code, the [Codebase](/docs/codebase) page maps each of these parts to its Go package.
+
+## Life of a request
+
+A request takes one of two paths, chosen by its `Host` header. Requests for the dashboard host go to the API, which checks your session. Requests for any other domain go to a container and never touch the API.
+
+<Figure caption="Top: you, using the dashboard. Bottom: a visitor using an app you deployed.">
+  <RequestDiagram />
+</Figure>
+
+Inside a project, services find each other by name. The active container of service `postgres` has the network alias `postgres` on the project network `shed-<projectID>`, so an app connects to `postgres:5432`. Nothing is published on the host unless you set a [public TCP port](/docs/networking#public-tcp-ports).

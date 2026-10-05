@@ -1,0 +1,159 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--control-h);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+
+  & svg {
+    flex: none;
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  &[data-loading] {
+    opacity: 0.8;
+    cursor: progress;
+  }
+}
+
+.sm {
+  height: var(--control-h-sm);
+  padding: 0 10px;
+  gap: 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-xs);
+}
+
+.lg {
+  height: var(--control-h-lg);
+  padding: 0 18px;
+  font-size: var(--text-base);
+  border-radius: var(--r-md);
+}
+
+.icon {
+  width: var(--control-h);
+  padding: 0;
+
+  &.sm {
+    width: var(--control-h-sm);
+  }
+
+  &.lg {
+    width: var(--control-h-lg);
+  }
+}
+
+/*
+ * Material: solid fills, a crisp 1px border, a 1px top sheen and a darker
+ * bottom edge. Pressing drops the edge so the button sits down.
+ */
+.primary {
+  background: var(--accent-strong);
+  border-color: color-mix(in oklch, var(--accent-strong) 72%, black);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.22),
+    0 1px 0 color-mix(in oklch, var(--accent-strong) 50%, black);
+
+  &:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--accent-strong) 90%, white);
+  }
+
+  &:active:not(:disabled) {
+    box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.25);
+  }
+}
+
+.secondary {
+  background: var(--raised);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  box-shadow:
+    inset 0 1px 0 light-dark(oklch(1 0 0 / 0), oklch(1 0 0 / 0.06)),
+    0 1px 0 var(--edge);
+
+  &:hover:not(:disabled) {
+    background: var(--hover);
+    border-color: light-dark(oklch(0.76 0.01 85), oklch(0.44 0.008 270));
+  }
+
+  &:active:not(:disabled) {
+    background: var(--active);
+    box-shadow: inset 0 1px 2px var(--shadow-soft);
+  }
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink-2);
+
+  &:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  &:active:not(:disabled) {
+    background: var(--active);
+  }
+}
+
+.soft {
+  background: var(--tone-soft);
+  border-color: var(--tone-line);
+  color: var(--tone-ink);
+
+  &:hover:not(:disabled) {
+    border-color: var(--tone);
+  }
+}
+
+.danger {
+  background: var(--danger-strong);
+  border-color: color-mix(in oklch, var(--danger-strong) 72%, black);
+  color: oklch(0.99 0 0);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.2),
+    0 1px 0 color-mix(in oklch, var(--danger-strong) 50%, black);
+
+  &:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--danger-strong) 90%, white);
+  }
+
+  &:active:not(:disabled) {
+    box-shadow: inset 0 1px 2px oklch(0 0 0 / 0.25);
+  }
+}
+
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

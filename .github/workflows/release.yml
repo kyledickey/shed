@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      MINISIGN_PUBLIC_KEY: RWRBeRUdMkDg7PI7SQWikYL/5Evv0feGGQ07ZbVIfV5Q80snhMX7QaMK
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build dashboard
+        working-directory: web
+        run: bun ci && bun run build
+
+      - name: Build archives
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            stage="$(mktemp -d)"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o "$stage/shed" ./cmd/shed
+            cp deploy/shed.service deploy/shed.example.toml "$stage/"
+            tar -czf "dist/shed_${version}_linux_${arch}.tar.gz" -C "$stage" shed shed.service shed.example.toml
+          done
+          cd dist
+          sha256sum shed_*.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Sign checksums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          keyfile="$(mktemp)"
+          trap 'rm -f "$keyfile"' EXIT
+          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile")
+          cd dist
+          go run aead.dev/minisign/cmd/minisign@v0.3.0 -S -W -s "$keyfile" -m checksums.txt
+          go run aead.dev/minisign/cmd/minisign@v0.3.0 -V -P "$MINISIGN_PUBLIC_KEY" -m checksums.txt
+
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${prerelease[@]}" \
+            dist/shed_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig deploy/install.sh

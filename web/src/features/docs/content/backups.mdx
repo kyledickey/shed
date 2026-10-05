@@ -1,0 +1,153 @@
+---
+title: Backups
+group: Data
+order: 110
+description: "shed backs up every service that has a volume, and its own database. A backup is one file: your data, compressed with zstd, optionally encrypted with age, kept on disk and in S3. Every format is standard, so you can recover without shed."
+---
+
+import { PipelineDiagram } from "../components/backups/PipelineDiagram";
+import { ArchiveDemo } from "../components/backups/ArchiveDemo";
+import { RetentionSim } from "../components/backups/RetentionSim";
+
+## Backup methods
+
+What gets archived depends on the service and on what it is doing when the backup runs. Databases that are up are dumped through their own tools. Everything else has its volumes archived.
+
+| Service  | Container | Method | Produced by                                                                                           | File               |
+| -------- | --------- | ------ | ----------------------------------------------------------------------------------------------------- | ------------------ |
+| postgres | running   | dump   | `pg_dumpall --clean --if-exists`                                                                      | `<id>.sql.zst`     |
+| mysql    | running   | dump   | `mysqldump --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF` | `<id>.sql.zst`     |
+| mongo    | running   | dump   | `mongodump --archive` under `fsyncLock`                                                               | `<id>.archive.zst` |
+| redis    | running   | dump   | `BGSAVE`, then the RDB file                                                                           | `<id>.rdb.zst`     |
+| database | stopped   | volume | tar of its volumes                                                                                    | `<id>.tar.zst`     |
+| app      | either    | volume | tar of its volumes, read live                                                                         | `<id>.tar.zst`     |
+| shed.db  | n/a       | sqlite | `VACUUM INTO` snapshot                                                                                | `<id>.db.zst`      |
+
+Encrypted archives get a `.age` suffix. The method is chosen when the backup is queued and chosen again when it runs. If the service changed state in between, the backup row records the method that was actually used.
+
+### How dumps authenticate
+
+Dumps run with `docker exec` in the active container, through `sh -c`, so credentials come from the container's own environment: `POSTGRES_USER`/`POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MONGO_INITDB_ROOT_*`, `REDIS_PASSWORD`. Passwords never appear on a command line. They go through `PGPASSWORD`, `MYSQL_PWD`, and `REDISCLI_AUTH`, and the mongo tools read theirs from a private `--config` file. A failed command's error ends with the last 4 KiB of its stderr.
+
+### Consistent mongo dumps
+
+Without a replica set's oplog, `mongodump` reads each collection at a different moment, so a dump taken while an app writes would mix states. shed blocks writes for the length of the dump with `fsyncLock`; reads go on, and writes wait, then complete once the lock is released. Replica sets are not supported.
+
+The lock belongs to the server, not to the connection that took it, so the dump script guards it with a watchdog in the container, using `/tmp/shed-backup-<backupID>`:
+
+- The watchdog ends the dump if `mongodump` writes nothing for 60 seconds, for example because shed hung, or if shed removes the `run` file in that directory, which it does when the backup fails or is canceled. Either way the dump fails and the lock is released within seconds.
+- The script releases the lock when the dump ends for any reason. If the script itself is killed, the watchdog releases it, and it keeps retrying until mongod accepts the unlock.
+- A restart of mongod drops the lock, too.
+
+Mongo dumps therefore pause writes for as long as the dump runs, typically seconds for small databases. Schedule backups when brief write pauses are acceptable, or stop the service to get a volume backup instead.
+
+The redis dump waits until no background save is running, starts `BGSAVE SCHEDULE`, waits until `rdb_saves` has advanced, checks `rdb_last_bgsave_status:ok`, and streams `/data/dump.rdb`. It needs redis 7 or newer.
+
+### How volume archives work
+
+shed reads volumes through the Docker archive API from a helper container. The helper is created but never started, uses the active deployment's image, mounts the volumes read-only, and is named `shed-backup-<backupID>` with the label `shed.backup=<backupID>`. Tar entries are rooted at each volume's mount path relative to `/` (for example `var/lib/data/...`), and ownership, modes, and extended attributes are kept. A volume nested inside another's mount path is archived once, from its own volume.
+
+A stopped database is held while its volumes are read, so nothing starts it mid-archive. App volumes are archived without a hold, while the app runs. A service with volumes but no active deployment cannot be backed up yet: `POST /api/services/{id}/backups` returns 400, and scheduled runs skip it.
+
+## Archive pipeline
+
+The archive is streamed: data flows from the source through zstd and, if encryption is on, through age, straight into a file. Nothing is buffered whole in memory. Compression happens before encryption, which is the only order that compresses.
+
+<Figure caption="Top: what one backup job does. Bottom: the statuses a backup row moves through.">
+  <PipelineDiagram />
+</Figure>
+
+1. The row starts `queued`. One backup or restore runs at a time across all of shed, and the rest wait in order. A service may have one job queued or running, except that a restore can be queued behind its backup. Conflicting requests get 409.
+2. While `running`, the archive is written to `<data>/backups/<serviceID or system>/<file>.partial`, synced to disk, and renamed into place. Only then is `local` set. A crash can leave a `.partial`, never a half-written archive under its real name.
+3. If the policy uploads and S3 is configured, the backup becomes `uploading`. It is still the service's running job, so it cannot be deleted and another backup cannot start. The intended `destination_id` and `remote_key` are recorded before the upload starts.
+4. After the upload's outcome is recorded, or right away when there is nothing to upload, the backup is `succeeded` and `finished_at` is set. An upload failure still ends `succeeded`, with `remote_error` set and the remote location cleared.
+5. With `keepLocal = 0`, the local file is deleted only after the upload succeeded and the row was committed with its remote location. Without S3, or after a failed upload, the file stays, so a backup is never left without a copy. Failing to remove the file leaves a valid backup.
+6. After every job, failed backups older than 30 days are deleted.
+
+If shed restarts mid-job, boot recovery settles each row by what survived. See [crash recovery](/docs/restores#crash-recovery).
+
+## Compression
+
+The policy's `compression` picks a zstd encoder level. shed uses a streaming encoder with up to four threads. Encoding stays under about 100 MiB of memory.
+
+| Policy value | Encoder level                      | Use it when                                                 |
+| ------------ | ---------------------------------- | ----------------------------------------------------------- |
+| `fastest`    | about zstd level 1                 | CPU is scarce and disk is not.                              |
+| `default`    | about zstd level 3                 | You want the usual zstd trade-off.                          |
+| `better`     | about zstd level 7                 | A middle path.                                              |
+| `best`       | about zstd level 11, 16 MiB window | The default. Backups are written once and kept a long time. |
+
+The 16 MiB window finds more long-range repetition in dumps, and the `zstd` command line decodes it without extra flags. Dumps compress well. Volume archives of already-compressed files (images, videos) will not shrink much at any level.
+
+## Encryption
+
+Encryption is one global switch, `backup.encrypt`. The first time you turn it on, shed generates an age X25519 identity and stores it in the `settings` table as `backup.age_identity`. The insert does nothing if a key exists, and shed reads the stored one back, so concurrent saves agree on one identity and a stored identity is never replaced.
+
+- While encryption is on, every new archive, local and remote, is encrypted to that identity's recipient.
+- Turning it off keeps the identity. Older archives keep their own `encrypted` flag, and shed decrypts them with the stored key.
+- Dashboard downloads and restores decrypt for you. Files you take from disk or S3 are still `.age`.
+
+The recipient (`age1...`) is public. The identity (`AGE-SECRET-KEY-1...`) is the secret: reveal it in the backup settings and store it off the server. Without it, encrypted backups, including those of shed.db, cannot be recovered after the server is lost. The dashboard reveals the secret key on request through `GET /api/backups/settings/key`.
+
+## S3 storage
+
+Backups can be copied to any S3-compatible storage. A destination has an endpoint URL, region, bucket, prefix, path-style flag, access key ID, and secret. The prefix is stored without surrounding slashes and omitted from keys when empty.
+
+```text title="object keys"
+<prefix>/services/<serviceID>/<file>
+<prefix>/system/<file>
+```
+
+### Destinations are never deleted
+
+Each location (endpoint, region, bucket, prefix, path-style) is a row in `backup_destinations`. Saving the settings at an existing location keeps its ID and takes the new credentials. Any other location gets a new row. Rows are never deleted, and each uploaded backup records its `destination_id`. Downloads, restores, deletes, and pruning of an object always use the destination it was uploaded to, so changing or removing the current destination never points old backups somewhere else.
+
+The API never returns the secret. Saving or testing a destination with an empty secret reuses the stored one. A test writes, reads, and deletes `<prefix>/.shed-check-<random>`. Large objects use multipart upload. Deleting a service keeps its S3 objects as an off-site copy; remove them by hand if you don't want them. Deleting a single backup removes its local file and its S3 object.
+
+## Schedules
+
+One loop wakes every minute and checks each service with volumes (using its stored policy, or the default) and the shed.db policy. The default is `0 3 * * *`, compression `best`, keep 7 local, upload, keep 30 remote. The shed.db policy lives in `settings` as `backup.system` (JSON) with the same fields.
+
+Schedules are standard 5-field cron (no seconds) or descriptors like `@daily` and `@every 30m`. They run in UTC unless prefixed with `CRON_TZ=<zone>`.
+
+| Schedule                          | Runs                                                      |
+| --------------------------------- | --------------------------------------------------------- |
+| `0 3 * * *`                       | Every day at 03:00 UTC (the default).                     |
+| `@daily`                          | Every day at 00:00 UTC.                                   |
+| `0 */6 * * *`                     | Every six hours, on the hour.                             |
+| `@every 30m`                      | Every 30 minutes, counted from when the schedule was set. |
+| `CRON_TZ=Europe/Berlin 0 4 * * 1` | Mondays at 04:00 Berlin time, DST included.               |
+
+Next-run times live in memory and are computed from boot (or from when you saved the policy). **Runs missed while shed was down are skipped, not caught up.** A run that finds its target busy is skipped too. Policies are validated on save: a parsable schedule, a known compression, no negative counts, `keepLocal ≥ 1` unless uploading, and `keepRemote ≥ 1` when uploading.
+
+## Retention
+
+After each scheduled backup, shed prunes that target's backups. Only `succeeded` backups with the `schedule` trigger are ever pruned. Manual and `pre-restore` backups stay until you delete them.
+
+- The newest `keepLocal` scheduled backups that have a local file keep it. Older ones lose the file.
+- With `keepLocal = 0`, only backups that are in S3 lose their local file, so a failed upload never leaves a backup without a copy.
+- While the policy uploads, `keepRemote` works the same way for S3 objects. With upload off, S3 objects are left alone.
+- A pruned backup with neither a local file nor an S3 object is deleted.
+- A backup that a queued or running restore uses keeps its file and object; the next prune after the restore applies the policy to it. While a prune or a delete is removing a backup's archive, restoring or deleting that backup answers 409.
+
+<RetentionSim />
+
+## Downloads and manual recovery
+
+A download is the archive decrypted but still compressed, read from the local file or else from S3. It is named `<service name or shed>-<YYYYMMDD-HHMMSS>.<ext>.zst` from its creation time in UTC, for example `postgres-20261004-030000.sql.zst`. The dashboard links to `GET /api/backups/{id}/download`.
+
+Because the formats are standard, you can recover with nothing but `age`, `zstd`, and the database's own client. The builder below turns a service kind and a few choices into the archive name, S3 key, and recovery command. The block after it covers every format.
+
+<ArchiveDemo />
+
+```sh
+# raw file from <data>/backups or S3 (encrypted: .zst.age)
+age -d -i key.txt <id>.sql.zst.age | zstd -d | psql -U postgres -d postgres
+age -d -i key.txt <id>.sql.zst.age | zstd -d | mysql -uroot -p
+age -d -i key.txt <id>.archive.zst.age | zstd -d | mongorestore --archive --drop
+age -d -i key.txt <id>.rdb.zst.age | zstd -d > dump.rdb
+age -d -i key.txt <id>.tar.zst.age | zstd -d | tar -x -C restore
+age -d -i key.txt <id>.db.zst.age | zstd -d > shed.db
+```
+
+Volume archives extract relative to `/`, so extract into a scratch directory and copy out what you need. To bring back shed.db itself, see [Recovering shed.db](/docs/restores#recovering-sheddb).

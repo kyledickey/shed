@@ -1,0 +1,37 @@
+# Copy to /etc/shed/shed.toml. Every key can also be set with an environment
+# variable, e.g. SHED_SERVER_URL or SHED_PROXY_ACME_EMAIL.
+
+[server]
+listen = "127.0.0.1:3000"
+url = "https://shed.example.com"
+
+[data]
+dir = "/var/lib/shed"
+
+[proxy]
+enabled = true
+http_port = 80
+https_port = 443
+acme_email = "you@example.com"
+# Services get <service>-<project>.<base_domain>. Needs a wildcard DNS record.
+base_domain = "apps.example.com"
+
+[auth]
+# Add your GitHub login before signing in for the first time.
+allowed_users = []
+
+[build]
+# Limits for the dedicated BuildKit builder container; 0 means unlimited.
+memory_mb = 2048
+cpus = 2
+# Refuse to start builds when the data directory or Docker's root directory
+# has less free space than this.
+min_free_mb = 2048
+
+[deployments]
+# Cap on each deployment's build log, and deployments kept per service.
+log_max_mb = 10
+keep = 50
+
+[log]
+level = "info"

@@ -1,0 +1,128 @@
+---
+title: Local development
+group: Developing
+order: 180
+description: Run the Go server and the dashboard dev server side by side on your machine, with the proxy off and a throwaway data directory.
+---
+
+import { DevDiagram } from "../components/local-development/diagrams";
+
+## Prerequisites
+
+| Tool                 | Why                                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `Go 1.27`            | The version in go.mod. Builds the server and runs Go tests.                                             |
+| `Docker with buildx` | shed runs every workload and builds every image through it, and the server pings the daemon at startup. |
+| `git`                | Clones the commit that a build uses.                                                                    |
+| `railpack`           | Builds apps that have no Dockerfile. It must be on PATH.                                                |
+| `bun`                | Installs dashboard dependencies and runs Vite+.                                                         |
+
+shed runs on Linux only. You also need a GitHub account for sign-in and repository access. shed creates its GitHub App for you.
+
+## Running shed locally
+
+Two processes run side by side. Vite serves the dashboard with hot reload and proxies `/api` to the Go server.
+
+<Figure caption="Open the dashboard at the Vite address. The Go server only sees API calls.">
+  <DevDiagram />
+</Figure>
+
+### 1. Configure
+
+Create `shed.dev.toml` in the repository root. It is gitignored, and `make dev` reads it.
+
+```toml title="shed.dev.toml"
+[server]
+listen = "127.0.0.1:3000"
+url = "http://localhost:5173"
+
+[data]
+dir = ".dev/data"
+
+[proxy]
+enabled = false
+base_domain = "localhost"
+
+[log]
+level = "debug"
+
+[auth]
+allowed_users = ["your-github-login"]
+```
+
+- `server.url` must be the exact origin you open the dashboard at. The API rejects any write whose `Origin` header differs from it with `untrusted request origin`. It is also the base of GitHub callbacks and webhooks. If you open the dashboard through a tunnel or a dev domain so that GitHub can reach your machine, use that origin here instead.
+- `proxy.enabled = false` stops shed from starting Caddy on ports 80 and 443. Services still deploy, but nothing routes to them.
+- `data.dir` holds `shed.db`, builds, logs, and backups. `.dev/` is gitignored. Delete it to start from scratch.
+- `auth.allowed_users` lists the GitHub logins that may sign in. Set it before your first sign-in.
+
+Every key also accepts a `SHED_*` environment variable, such as `SHED_SERVER_URL`. See [Configuration](/docs/configuration).
+
+### 2. Start the server
+
+```sh
+make dev            # go run ./cmd/shed -config shed.dev.toml
+# or build the full binary, dashboard included
+make build
+bin/shed -config shed.dev.toml
+```
+
+The log goes to stderr and to `shed.log` next to the config file, so in dev it is in the repository root. On the first run, with no GitHub App yet, shed logs a warning with the setup page URL and a one-time `token`. Open the URL and enter the token to create the App. See [First-run setup](/docs/github#first-run-setup).
+
+### 3. Start the dashboard
+
+```sh
+cd web
+bun install        # first time
+bun run dev        # Vite+ dev server, proxies /api to 127.0.0.1:3000
+```
+
+Open `http://localhost:5173` (or whatever origin you put in `server.url`). Edits to the dashboard hot-reload.
+
+### How the dashboard reaches the binary
+
+`make build` runs `bun run build`, which writes `web/dist`. `web/embed.go` embeds that directory with `//go:embed all:dist`, and the API serves it as a single-page app. The embed happens at compile time, so after you change the dashboard you must run `make build` again before `bin/shed` shows it. With `bun run dev` you never need to, because Vite serves the source directly.
+
+`web/dist` is gitignored apart from a `.gitkeep`, which is why `go run` compiles on a fresh clone.
+
+## Tests and checks
+
+```sh
+make test                       # go test -race ./...
+go vet ./...
+gofmt -l .                      # should print nothing
+
+cd web
+bunx vp check                   # format, lint, typecheck
+bunx vp check --fix             # apply formatting and safe fixes
+bunx vp test run                # dashboard unit tests
+```
+
+Go code must pass `gofmt`, `go vet`, and `go test -race`. Unit tests need no Docker daemon and no network. Packages test against fakes of the interfaces they declare, so `deploy` tests run a whole pipeline against a fake Docker, builder, and store.
+
+### Integration tests
+
+Tests that need real infrastructure carry the `integration` build tag, so `make test` skips them:
+
+```sh
+go test -race -tags integration ./internal/docker ./internal/backup ./internal/s3
+```
+
+| Package           | Needs                                                                                                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal/docker` | A Docker daemon. The tests skip when none responds.                                                                                                                          |
+| `internal/backup` | A Docker daemon, for real database dumps and restores. Skips when none responds.                                                                                             |
+| `internal/s3`     | An S3-compatible endpoint, given by `SHED_S3_TEST_ENDPOINT`, `SHED_S3_TEST_BUCKET`, `SHED_S3_TEST_ACCESS_KEY`, and `SHED_S3_TEST_SECRET_KEY`. Skips unless all four are set. |
+
+Some unit tests also skip on their own when a tool is missing, such as `git` for the build tests.
+
+## Conventions
+
+- **Go style.** Follow the Google Go style guide and Go doc comments. Every package has a package comment, and every exported identifier has a doc comment that starts with its name.
+- **Errors.** Wrap with context, for example `fmt.Errorf("build: clone %s: %w", repo, err)`. Return errors instead of logging and continuing. Use sentinel errors such as `store.ErrNotFound` for conditions callers branch on.
+- **Context and logging.** `context.Context` is the first parameter of anything that does I/O. Log with `log/slog` through a logger that was passed in.
+- **Tests.** Write table-driven tests for logic and fakes for interfaces.
+- **Design.** Change `docs/design.md` in the same commit when you change the data model, the pipeline, or the API. Change `web/src/api/types.ts` with it.
+- **Generated files.** `web/src/routeTree.gen.ts` is produced by the router plugin when Vite runs. Commit it with the route change that caused it.
+- **Commits.** Use short, standard messages with little or no body, such as `fix(deploy): keep candidate address on promotion`. Work on a branch, not `main`.
+
+The [Codebase](/docs/codebase) page explains the package rules, and [Dashboard](/docs/dashboard) covers the frontend.

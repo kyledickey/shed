@@ -1,0 +1,30 @@
+.tip {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  border-radius: var(--r-full);
+  color: var(--ink-4);
+  vertical-align: middle;
+  transition: color var(--dur) var(--ease);
+
+  &:hover {
+    color: var(--accent-ink);
+  }
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 260px;
+  padding: 2px 0;
+  line-height: 1.45;
+}
+
+.more {
+  color: color-mix(in oklch, var(--panel) 65%, transparent);
+  font-size: var(--text-2xs);
+}

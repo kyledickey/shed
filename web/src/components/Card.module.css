@@ -1,0 +1,98 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.padded {
+  padding: var(--space-5);
+}
+
+.interactive {
+  cursor: pointer;
+  transition:
+    transform var(--dur-slow) var(--ease),
+    box-shadow var(--dur-slow) var(--ease),
+    border-color var(--dur) var(--ease);
+
+  &:hover {
+    border-color: var(--line-strong);
+    background: light-dark(var(--raised), oklch(0.22 0.006 270));
+  }
+}
+
+.layer {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 4px 4px;
+  background: var(--layer);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.headless {
+  padding-top: 4px;
+}
+
+.layerHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 4px 6px 4px 10px;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.layerIcon {
+  display: flex;
+  color: var(--ink-3);
+}
+
+.layerTitle {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.layerMeta {
+  overflow: hidden;
+  color: var(--ink-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layerActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.sheet {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--r-lg) - 4px);
+  box-shadow: 0 1px 2px var(--shadow-faint);
+}
+
+.sheet.padded {
+  padding: var(--space-4);
+}
+
+.layerFoot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 8px 4px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}

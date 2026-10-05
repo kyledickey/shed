@@ -1,0 +1,91 @@
+.card {
+  gap: var(--space-3);
+  padding: var(--space-4);
+
+  &:has(.name:focus-visible) {
+    box-shadow: var(--focus-ring);
+  }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+
+  /* Stretch the link over the whole card; inner links sit above it. */
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-lg);
+  }
+}
+
+.line,
+.domain {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+
+  & > svg {
+    flex: none;
+  }
+}
+
+.domain {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  max-width: 100%;
+  transition: color var(--dur) var(--ease);
+
+  &:hover {
+    color: var(--accent-ink);
+  }
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+
+  & > svg {
+    flex: none;
+  }
+}
+
+.truncate {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.when {
+  flex: none;
+  margin-left: auto;
+}
+
+.failed {
+  color: var(--tomato);
+}

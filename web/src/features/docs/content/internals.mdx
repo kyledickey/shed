@@ -1,0 +1,219 @@
+---
+title: Internals
+group: Developing
+order: 170
+description: "How the larger pieces of shed work in code: the types, functions, and locks that implement behavior the other pages describe from the outside. Read Codebase first for how the packages fit together."
+---
+
+import {
+  AdmissionDiagram,
+  ArchiveDiagram,
+  BackupQueueDiagram,
+  CollectorDiagram,
+  HttpChainDiagram,
+  LogWritersDiagram,
+  RestoreDiagram,
+} from "../components/internals/diagrams";
+import { ResolverTrace } from "../components/internals/ResolverTrace";
+
+## HTTP handling
+
+`internal/api` uses a plain `http.ServeMux` with method and path patterns, built in `Server.Handler`. There is no router library. Every response passes through `logRequests` (a debug log line with the status) and `securityHeaders`. Then the mux picks a route.
+
+<Figure caption="Session routes are registered through authed(); the rest are wired individually in Handler.">
+  <HttpChainDiagram />
+</Figure>
+
+Session routes are wrapped by `authed` in `auth.Require(protectMutations(baseURL, requireJSON(s.handle(h))))`. Because `auth.Require` is outermost, an unauthenticated write gets 401, not 403. It also rechecks `auth.allowed_users` on every request, so removing a login takes effect at once for new requests. Details of the protections are on [Request protections](/docs/security#request-protections).
+
+- **Handlers return errors.** A `handlerFunc` returns `error`, and `Server.handle` passes it to `writeError`, which sends `{"error": "..."}`. Create one with `errorf(status, format, ...)`. `store.ErrNotFound` becomes 404, `store.ErrConflict` 409, and the sentinels of `deploy` and `backup` (`ErrFenced`, `ErrServiceBusy`, `ErrBusy`, and so on) map to 409, 400, or 503 in one switch. Anything else is logged and answered as `500 internal error`, so internals never leak.
+- **Bodies.** `decodeJSON` reads at most `maxBody` (1 MiB) with `http.MaxBytesReader`. An empty body leaves the target unchanged. `requireJSON` only checks the media type of POST, PUT, and PATCH.
+- **The SPA.** `spa(fsys)` serves the embedded `web/dist`. A path that is not a file gets `index.html`, so client routes survive a reload. A missing `assets/*` file or anything with an extension is a 404. Files under `assets/` are cached for a year.
+- **Unknown API paths.** `/api/` catches everything unmatched and returns a JSON 404, so a typo never falls through to the SPA.
+
+### Server-sent events
+
+`startSSE` (sse.go) sets `text/event-stream`, `Cache-Control: no-cache`, and `X-Accel-Buffering: no`, flushes, and starts a heartbeat goroutine that writes a `: ping` comment every 15 seconds. `sseStream.send(event, data)` writes one event, one `data:` line per line of text, and flushes with `http.ResponseController`. Writes hold a mutex and become no-ops after `close`. Events have no ids, so a reconnect replays history from the start. `lineWriter` turns a byte stream into lines and splits lines longer than 64 KiB (`maxLogLineBytes`). See [Streaming over SSE](/docs/logs#streaming-over-sse).
+
+### The webhook handler
+
+`Server.webhook` (github.go) does its own checks, in this order:
+
+1. Set a 10 second read deadline. Require a configured GitHub App.
+2. Check the shape of `X-Hub-Signature-256`: `sha256=` plus 64 hex characters, else 401. This happens before the body is read.
+3. `webhookGuard.acquire`: a token bucket (burst 8, one token per second) and at most 4 requests in flight, else 429.
+4. Read the body, at most `maxWebhookBody` (1 MiB), else 413. Then `github.VerifySignature` compares the HMAC in constant time, else 401.
+5. Ignore anything but `push`, deleted branches, and empty refs with 202. Parse with `github.ParsePush`.
+6. `store.ServicesForPush` selects app services whose repo matches without case, whose branch matches exactly, and that have auto-deploy on.
+7. For each service, `deliveryCache.begin` keys on the SHA-256 of the body and the service ID. A completed duplicate is skipped, an in-flight one makes the request return 503, and the cache keeps 1,024 entries for 24 hours in memory.
+8. `Deployer.Deploy(…, store.TriggerPush, commit)`. A fenced service is skipped with a warning. Any other error calls `deliveries.finish(key, false)` to forget the key and returns 503, so GitHub's retry is safe.
+
+The operator view is [Push webhooks](/docs/github#push-webhooks) and [Webhook limits](/docs/security#webhook-limits).
+
+## The deployer
+
+`deploy.Deployer` owns every container shed runs for services. It is created by `deploy.New(Config)`, which takes the store, a `deploy.Docker`, a `deploy.Builder`, an optional `deploy.Proxy`, and a function that returns the GitHub client when there is one.
+
+### Admission and the worker
+
+<Figure caption="Everything above the dashed hold line runs under d.mu. controlMu is taken before mu, never while holding it.">
+  <AdmissionDiagram />
+</Figure>
+
+- **enqueue** checks, under `d.mu`, that the deployer is not stopped, that `admission` allows the service (not being deleted, not held), and that no restore fence exists. Then it stores the deployment as `queued` and hands it to the service's worker.
+- **One worker per service** is started on demand and exits when nothing is pending. Its `pending` slot holds one deployment. A newer one replaces it, and the replaced one is recorded as canceled with `errSuperseded`. It also calls `w.cancel(errSuperseded)` on the running one. Services do not wait for each other. The only shared slot is the build slot in `build.Builder`.
+- **Cancel causes decide the recorded status.** `job.fail` reads `context.Cause`: `errShutdown` records "interrupted by shutdown" as failed, other causes record `canceled`, and `errCIFailed` records `skipped`.
+- **Hold** is how a backup or restore gets exclusive control. `Hold` marks `d.held[serviceID]`, halts the worker with `errHeld`, and returns a `*Held` with `Active`, `Running`, `StopAndRemove`, and `Release`. While held, deploy, redeploy, start, stop, restart, and delete return `ErrServiceBusy`.
+- **Fences** are `restore_fences` rows owned by `backup`. `checkFence` turns one into `ErrFenced` for deploy, start, and restart. The API maps both errors to 409.
+
+The user-facing rules are in [The pipeline](/docs/deployments#the-pipeline).
+
+### The job
+
+`Deployer.run` opens `<data>/logs/<deploymentID>.log` and calls `job.execute`, which runs these in order. Any error goes to `job.fail`, which logs the outcome, removes the candidate container, and if the previous container was stopped, restarts it.
+
+```go title="pipeline.go: job.execute"
+waitForCI        // apps with wait_for_ci; polls every 10s, up to 60 min
+environment      // resolve variables (internal/vars)
+logSecrets       // stored values to redact from logs
+buildImage       // build.Builder, or pull and resolve an image
+detectPort       // lowest exposed TCP port, when the service has none
+start            // status deploying; takeOver first if exclusive
+checkHealth      // probe every 1s, 120s deadline (watchStartup without a port)
+switchOver       // promote, routes, ActivateDeployment, removeOthers
+```
+
+### Replacing a container safely
+
+`exclusive(svc, vols)` is true when the service has volumes or a public port, since two containers cannot share either. Then `start` calls `takeOver` before creating the candidate: `clearStrays` removes leftover containers labeled for the service, `stopPrevious` stops the active one with a 30 second grace period and remembers it in `job.stoppedPrev`, and every container of the service must then be `idle` (created, exited, or dead). If that cannot be confirmed, the deployment fails before the candidate exists and the active container stays up.
+
+On failure, `fail` restarts the previous container only after `clearStrays` confirms nothing else of the service is left. It uses `context.WithoutCancel`, so a canceled deployment still cleans up. The same idea guards service start and restores.
+
+Other services overlap. The candidate starts with no private alias, passes `checkHealth`, and only then does `promote` call `ReconnectNetwork` with the service name as alias. Docker cannot edit the aliases of a connected container, so `recheckHealth` probes again for up to 10 seconds. `switchOver` then holds `routesMu`, applies routes with the candidate's address through `routesFor`, and calls `store.ActivateDeployment`, one transaction that makes the new deployment active and retires the old one. Once routing has succeeded, activation continues on `context.WithoutCancel`, since stopping halfway could remove the container that now receives traffic. Finally the old container is disconnected from the network, then removed by `removeOthers`, and old images are pruned to the newest `keepImages` (5).
+
+See [Zero-downtime switchover](/docs/deployments#zero-downtime-switchover) and [Replacement storage safety](/docs/resources#replacement-storage-safety).
+
+### Routes and health probes
+
+`routesFor` builds the full route list: the dashboard route from `cmd/shed`, then one route per domain to `upstream(serviceID)`, the container IP and the port recorded on the active deployment. A stopped service, a service with no active deployment, or a missing container has no route. A Docker or database error is returned instead, so `proxy.Apply` is not called and Caddy keeps its last good config. `Proxy.Apply` compares the JSON it would load with the last one and skips an identical reload. `probe` makes one attempt with a 5 second timeout: a TCP connect, or a GET that must answer below 400. See [Health checks](/docs/networking#health-checks).
+
+### Boot
+
+`Reconcile` runs after `backup.Recover` and before the API serves. It fails every deployment still queued, waiting, building, or deploying with "interrupted by restart" and removes its containers. For each service it keeps only the newest active deployment, starts its container if it is missing and the service is not stopped (`ensureRunning`), removes the others, and applies routes. `Stop` cancels running jobs with `errShutdown` and leaves queued ones to the next `Reconcile`. See [Reconcile on boot](/docs/deployments#reconcile-on-boot).
+
+## Variable resolver
+
+`vars.Resolve(self, all)` takes the raw variables of every service in a project, keyed by service name, and returns the expanded variables of `self`. Its `resolver` keeps two structures: a `resolved` memo of finished values and a `visiting` set with a `stack` of the variables being expanded.
+
+- Keys of `self` are visited in sorted order, so the first reported cycle is deterministic.
+- `value(ref)` checks the memo first, then returns `""` for a variable that does not exist, and only then checks the stack. A missing variable can never be part of a cycle.
+- A reference is `${{ name }}`, matched by `refPattern`. A name with a dot is split at the first dot into service and key. Go's `\s` is narrower than JavaScript's, which the web port in `lib/vars.ts` accounts for.
+- Limits are checked before bytes are appended: 64 levels deep (`vars: reference depth exceeds 64 at web.V064`), 64 KiB per value, and 1 MiB of resolved values in total.
+- A cycle error lists the stack from the first repeat: `vars: reference cycle: web.A -> web.B -> web.A`.
+
+<ResolverTrace />
+
+### What deploy feeds it
+
+`Deployer.environment` builds the scope: for every service of the project, `injected(...)` merged with the service's stored variables, which win. Injected are `SHED_PROJECT_NAME`, `SHED_SERVICE_NAME`, `SHED_PRIVATE_DOMAIN`, `PORT` (apps with a port), `SHED_PUBLIC_DOMAIN` (the first domain), `SHED_GIT_BRANCH`, and `SHED_GIT_COMMIT_SHA`, the last only for the service being deployed. A service without a port gets one after the build, from the image, and `execute` calls `environment` again. The result becomes the container's environment, sorted by key. Database templates in `internal/catalog` generate 24 character alphanumeric passwords from `crypto/rand` with rejection sampling, so no character is more likely than another.
+
+The operator view is [How resolution works](/docs/variables#how-resolution-works). `lib/vars.ts` mirrors this code for the playground, so change them together.
+
+## Build runner
+
+`build.Builder.Build(ctx, id, Request, out)` does the work, and `deploy` reaches it through `deploy.Builder`. In order:
+
+1. `Request.validate`, then a 30 minute deadline (`buildTimeout`) that starts before the wait for the build slot.
+2. `acquire` takes the one slot, a channel of capacity one shared by all services.
+3. `setup`, once per Builder: `docker buildx rm --keep-state shed`, then `docker buildx create` with memory, swap, and CPU quota options from `build.memory_mb` and `build.cpus`. Limits only apply when the builder container is created, so it is replaced on the first build after boot. The build cache survives.
+4. `checkDisk` before the clone, and `watchDisk` every 3 seconds during the build. Below `min_free_mb` a new build is refused with `ErrLowDisk`. Below half of it the running build is canceled with that cause.
+5. A fresh workspace at `<data>/builds/<id>`, removed afterward. `clone` fetches the commit at depth 1, with the token in a scoped HTTP header rather than the URL.
+6. `findDockerfile` picks the path. With a Dockerfile it runs `docker buildx build --builder shed --load`. Without one it runs `railpack prepare` and then the same build with the Railpack frontend.
+
+Variables reach the build as BuildKit secrets, not as build args. `writeSecrets` writes each into a file in a private directory outside the build context, skipping names that are not valid identifiers, and the build gets `--secret id=KEY,src=...`. `prepareEnv` withholds host-sensitive names (`PATH`, `HOME`, `TMPDIR`, and the `LD_`, `DYLD_`, `XDG_`, `GIT_`, and `DOCKER_` prefixes) from the `railpack prepare` process.
+
+Back in `job.buildImage`, repo apps are built as `shed/<serviceID>:<deploymentID>`. Image apps and databases are pulled and recorded by their resolved local image ID, which is what makes a redeploy repeatable. `Redeploy` refuses a record that only has a mutable tag. See [The shed builder](/docs/builds#the-shed-builder) and [Disk space guard](/docs/builds#disk-space-guard). The sizes and timings are mirrored by `lib/builder.ts`.
+
+## Logs and redaction
+
+<Figure caption="Every log that can contain a secret passes through build.Redactor. shed's own log does not.">
+  <LogWritersDiagram />
+</Figure>
+
+### The redactor
+
+`build.Redactor` (redact.go) is an `io.Writer` wrapper that masks literal secrets with `***`. It sorts secrets longest first and keeps a tail of the longest secret minus one byte in its buffer after every write. Only the bytes before that tail are emitted, so a secret split across two writes is still caught. It always takes the earliest match, and the longest at that position. `Flush` writes the remainder, so you must call it when the stream ends. Writes are processed in 32 KiB pieces. `Redact(s)` masks a whole string, which `job.fail` uses on error messages.
+
+Who supplies the secrets differs by stream. In `Builder.Build` they are the clone URL, its password or token, the base64 of its credentials, and every value of `Request.Env`. In `job.follow` and `Deployer.RuntimeLogs` they come from `logSecrets`: the resolved values of the service's own stored variables, without injected metadata such as ports.
+
+### Build log files
+
+`Deployer.logWriter` wraps the file in a `cappedWriter` (when `deployments.log_max_mb` is set) and a `syncWriter` so concurrent writers never interleave lines. At the cap it writes `==> Log truncated` once and discards the rest without an error. Pipeline headings start with `==> `. `lineWriter.emit` prefixes container lines that start the same way with a space, so they cannot pass as headings. `Deployer.FollowLog` tails the file by polling every 500 ms, reading the status before the log so a finished deployment is complete. The dashboard parses the headings with `lib/buildLog.ts`.
+
+### shed's own log
+
+`newLogger` in `cmd/shed` builds one `slog` text handler over `io.MultiWriter(os.Stderr, tail, rotated)`. Stderr comes first because a MultiWriter stops at the first failing writer. `rotated` is a `lumberjack.Logger` for `shed.log`. `logtail.Tail` is a ring of the last 1,000 lines. `Follow` replays them and then streams new lines through a 256-line channel. A slow follower drops lines instead of blocking the logger. Caddy writes to `caddy.log` with its own rotation.
+
+Operator pages: [Secret redaction](/docs/logs#secret-redaction), [Build logs](/docs/logs#build-logs), and [shed's own log](/docs/logs#sheds-own-log).
+
+## Metrics collector
+
+<Figure caption="Collector.collect runs once per tick. The first reading of a container only seeds c.prev.">
+  <CollectorDiagram />
+</Figure>
+
+`metrics.Collector.Run` collects immediately and then every `Config.Interval` (10 seconds by default). `collect` lists running containers labeled `shed.service`, takes one `Stats` per container, and compares it with `c.prev[containerID]`. `rates` returns false, and nothing is stored, if no time passed or a counter went backwards, as when a container restarts. Rates are summed per service, so the two containers of a switchover add up. The store prunes samples older than `Config.Retention` (7 days) once an hour.
+
+- CPU is a percentage of one core: `Δcpu / Δsystem × online CPUs × 100`, or `Δcpu / Δwall` when the system counter does not advance. Memory is a gauge, usage minus inactive file cache, computed in `internal/docker`. Network and disk are bytes per second.
+- `internal/host` reads `/proc/stat`, `/proc/meminfo`, physical network and disk devices from sysfs, and `statfs`. `collectHost` stores host samples the same way, through `hostRates`.
+- `Query` asks for `Buckets` + 1 = 181 buckets. `window(now, d)` aligns buckets to multiples of the step since the Unix epoch, so they are stable between queries. `settle` keeps the window if the in-progress bucket has data and otherwise shifts it back one step, so the chart does not end on an empty bucket. A bucket with no samples is `nil`, which the API sends as `null`. `lib/buckets.ts` mirrors this.
+
+See [Container sampling](/docs/metrics#container-sampling) and [Ranges and buckets](/docs/metrics#ranges-and-buckets).
+
+## Backup manager
+
+`backup.Manager` runs backups and restores. Like `deploy`, it declares the interfaces it needs (`Store`, `Docker`, `Services`, `Held`, `Remote`) and gets them from `cmd/shed`. `Recover` must run before `Deployer.Reconcile`, and `Run` after.
+
+### Queue
+
+<Figure caption="One job runs at a time across the whole process.">
+  <BackupQueueDiagram />
+</Figure>
+
+Jobs are in `Manager.queue` under `m.mu`, and a worker goroutine takes them one at a time. A service may have only one queued or running job: `enqueueBackup` returns `ErrBusy` if `busy(serviceID)` or the service is paused. `Restore` only counts other restores, so it can queue behind its own backup, and it returns `ErrFenced` for a fenced service. The `Run` loop wakes every minute for `tick`, which enqueues scheduled backups. After each job, `execute` deletes failed backups older than 30 days. On shutdown the running job is canceled and queued jobs are marked failed with "interrupted by shutdown".
+
+### Writing an archive
+
+<Figure caption="writeArchive: compression comes before encryption.">
+  <ArchiveDiagram />
+</Figure>
+
+`produce` picks the method. Services without a database engine, and databases that are not running, are archived from their volumes. A stopped database is held through `Services.Hold` while its files are read. A running database is dumped through `execScript`, which runs the engine's command with `docker exec … sh -c` so credentials come from the container's environment and are never on a command line. Passwords go through `PGPASSWORD`, `MYSQL_PWD`, or `REDISCLI_AUTH`, and Mongo reads a private config file. Failures keep the last 4 KiB of stderr (`stderrTail`). Redis waits for idle saves, runs `BGSAVE SCHEDULE`, waits for `rdb_saves` to advance, and streams `/data/dump.rdb`, so it needs Redis 7 or newer.
+
+`writeArchive` writes `<file>.partial` with `O_EXCL` and mode 0600 through `newEncoder`: zstd at the policy's level, optionally wrapped in `age` with an X25519 recipient. It syncs, renames, and syncs the directory. zstd uses at most 4 goroutines, and `best` adds a 16 MiB window. Volume archives come from the Docker archive API on a never-started helper container (`shed-backup-<id>`, label `shed.backup`) that mounts the volumes read-only. Entries are rooted at each mount path, nested volumes are archived once from their own volume, and ownership, modes, and xattrs are kept.
+
+After `BackupSucceeded` is recorded, an upload failure only sets `RemoteError`. The backup stays successful and local. Retention (`prune`) runs after scheduled backups only. The age identity is created by `ensureIdentity` with an insert-if-absent of `backup.age_identity` and a read back, so concurrent saves agree on one key. `backup_destinations` rows are never deleted, and a backup records its `destination_id`. `internal/s3` wraps minio-go with multipart uploads, and its `Check` writes, reads, and deletes `.shed-check-<random>`. Schedules are 5-field cron through `robfig/cron` and are evaluated in UTC unless they carry `CRON_TZ=`. Next-run times live in `m.next`, so runs missed while shed was down are skipped.
+
+### Restoring
+
+<Figure caption="The fence phase is stored with the fence row, so a restart can resolve it.">
+  <RestoreDiagram />
+</Figure>
+
+`Manager.restore` first runs a `store.BackupPreRestore` backup inline, since it already owns the job slot. It then fetches the archive (from S3 if the local file is gone) and scans it before touching the service. The scan rejects absolute names, `..` escapes, entries beneath an archive symlink, and hard links that leave the volume. It then calls `Services.Hold`.
+
+- **Volumes.** `replaceVolumes` inserts the `restore_fences` row (phase `retaining`) in one transaction with `services.stopped`, remembering the old value. It stops the service, copies each volume to `shed-vol-<id>-pre-restore` and checks the copy, moves to `replacing`, empties the volume and extracts the archive, and verifies by reading back type, link target, size, and SHA-256. Extra files are allowed. If extraction fails, `putBack` restores the copies.
+- **Dumps.** `loadDump` fences with phase `loading` and pipes the dump into the running database through `execScript`. Postgres uses `psql -v ON_ERROR_STOP=1` after terminating sessions and `DROP DATABASE … WITH (FORCE)`. MySQL drops its databases in-session with foreign key checks off. Mongo runs `mongorestore --archive --drop`. Canceling a `docker exec` only aborts the stream, not the process, so on failure the service's containers are stopped and removed before the hold is released.
+- **Redis** is restored like a volume: `redisFiles` writes `dump.rdb` plus a hard link `appendonlydir/appendonly.aof.1.base.rdb` with a manifest, since a server with AOF on would otherwise start empty.
+- **Recovery.** `Recover` fails queued and running jobs with "interrupted by restart", settles uploads by what survived (local file means succeeded with a remote error, a readable remote object means remote-only, otherwise failed), removes leftover `.partial` files and `shed.backup` helper containers, and runs `recoverFence` for each fence. By phase it either puts the previous data back (`replacing`), stops the service and leaves it stopped (`loading`), or just lifts the fence. A service started while fenced is stopped and stays fenced until the user clears it.
+- **Errors.** `backup.ErrFenced` and `deploy.ErrServiceBusy` both map to 409 in `writeError`.
+
+Operator pages: [Archive pipeline](/docs/backups#archive-pipeline), [How a restore runs](/docs/restores#how-a-restore-runs), [Restore fences](/docs/restores#restore-fences), and [Crash recovery](/docs/restores#crash-recovery).
+
+| Sentinel              | Returned when                                                    |
+| --------------------- | ---------------------------------------------------------------- |
+| `backup.ErrBusy`      | The service already has a queued or running job, or is paused.   |
+| `backup.ErrFenced`    | A restore would start into a fenced service.                     |
+| `backup.ErrNoVolumes` | The service has no volumes to back up.                           |
+| `backup.ErrInvalid`   | The request is wrong, such as a service that was never deployed. |
+| `backup.ErrStopped`   | The manager is shutting down.                                    |

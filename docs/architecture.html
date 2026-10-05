@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shed — architecture</title>
+<style>
+  :root {
+    --bg: #fafaf9; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6b66;
+    --line: #dcdcd6; --accent: #1f9d55; --accent-soft: #e6f4ec;
+    --blue: #2563eb; --blue-soft: #e8effd; --violet: #7c3aed; --violet-soft: #f0e9fd;
+    --orange: #c2410c; --orange-soft: #fdf0e6; --red: #b91c1c; --red-soft: #fdeaea;
+    --mono: "Commit Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Open Runde", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 var(--sans); }
+  main { max-width: 1080px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 34px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 24px; margin: 64px 0 8px; letter-spacing: -0.01em; }
+  h2 .n { color: var(--accent); font-family: var(--mono); margin-right: 8px; }
+  h3 { font-size: 17px; margin: 24px 0 4px; }
+  p, li { color: #2f2f2c; }
+  .lead { color: var(--muted); font-size: 18px; margin-top: 0; }
+  code { font-family: var(--mono); font-size: 0.88em; background: #efefeb; padding: 1px 5px; border-radius: 4px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 0; }
+  nav a { font-size: 14px; color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--panel); padding: 4px 10px; border-radius: 999px; }
+  nav a:hover { border-color: var(--accent); color: var(--accent); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin: 16px 0; overflow-x: auto; }
+  .tldr { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 24px; }
+  .tldr div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 15px; }
+  .tldr b { display: block; color: var(--accent); margin-bottom: 2px; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; font-family: var(--sans); }
+  svg text { font-size: 13px; fill: var(--ink); }
+  svg .t { font-weight: 600; font-size: 14px; }
+  svg .s { fill: var(--muted); font-size: 12px; }
+  svg .m { font-family: var(--mono); font-size: 12px; }
+  svg .lbl { font-size: 11.5px; fill: var(--muted); }
+  .g  { fill: var(--accent-soft); stroke: var(--accent); }
+  .b  { fill: var(--blue-soft); stroke: var(--blue); }
+  .v  { fill: var(--violet-soft); stroke: var(--violet); }
+  .o  { fill: var(--orange-soft); stroke: var(--orange); }
+  .r  { fill: var(--red-soft); stroke: var(--red); }
+  .w  { fill: #fff; stroke: var(--line); }
+  .frame { fill: none; stroke: var(--accent); stroke-dasharray: 6 5; }
+  .frameb { fill: none; stroke: var(--blue); stroke-dasharray: 6 5; }
+  rect { stroke-width: 1.5; }
+  .ar { stroke: #8a8a83; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+  .arg { stroke: var(--accent); stroke-width: 1.5; fill: none; marker-end: url(#arrg); }
+  .arr { stroke: var(--red); stroke-width: 1.5; fill: none; marker-end: url(#arrr); stroke-dasharray: 5 4; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+  .note { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; color: #2f2f2c; margin: 16px 0; }
+  ol.steps li { margin-bottom: 6px; }
+  footer { margin-top: 72px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<!-- shared arrow markers -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a83"/></marker>
+    <marker id="arrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1f9d55"/></marker>
+    <marker id="arrr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/></marker>
+  </defs>
+</svg>
+
+<h1>shed — how it all fits together</h1>
+<p class="lead">A self-hosted, single-VPS take on Railway. One Go binary, Docker for everything else.</p>
+
+<nav>
+  <a href="#overview">1 · Runtime</a>
+  <a href="#packages">2 · Packages</a>
+  <a href="#deploy">3 · Push → live</a>
+  <a href="#switch">4 · Zero-downtime switch</a>
+  <a href="#network">5 · Networking & variables</a>
+  <a href="#backups">6 · Backups</a>
+  <a href="#data">7 · Data model</a>
+  <a href="#choices">8 · Design choices</a>
+  <a href="#code">9 · Where to look</a>
+</nav>
+
+<div class="tldr">
+  <div><b>One process</b>Dashboard, JSON API, deploy pipeline, backups, metrics, and the reverse proxy (embedded Caddy) all live in one binary under systemd.</div>
+  <div><b>Docker runs workloads</b>Every app and database is a container. Each project gets its own Docker network, and services find each other by name.</div>
+  <div><b>SQLite holds state</b>Projects, services, deployments, variables, backups, sessions, GitHub credentials. Config is a TOML file.</div>
+  <div><b>One GitHub App</b>Used for sign-in, cloning repos, push webhooks, and reading CI status.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="overview"><span class="n">1</span>Runtime: what's running on the box</h2>
+<p>Everything in the green dashed box is the single <code>shed</code> process. Traffic enters through Caddy, which runs <em>inside</em> shed: shed owns the routing table and pushes it to Caddy whenever a deployment goes live.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 560" width="1000">
+  <!-- externals -->
+  <rect class="b" x="10" y="30" width="150" height="56" rx="28"/><text class="t" x="85" y="54" text-anchor="middle">You (browser)</text><text class="s" x="85" y="72" text-anchor="middle">dashboard</text>
+  <rect class="b" x="10" y="120" width="150" height="56" rx="28"/><text class="t" x="85" y="144" text-anchor="middle">Visitors</text><text class="s" x="85" y="162" text-anchor="middle">your apps' users</text>
+  <rect class="v" x="10" y="300" width="150" height="76" rx="12"/><text class="t" x="85" y="326" text-anchor="middle">GitHub</text><text class="s" x="85" y="344" text-anchor="middle">OAuth · repos</text><text class="s" x="85" y="360" text-anchor="middle">webhooks · CI</text>
+  <rect class="v" x="10" y="440" width="150" height="56" rx="12"/><text class="t" x="85" y="464" text-anchor="middle">S3 storage</text><text class="s" x="85" y="482" text-anchor="middle">off-site backups</text>
+
+  <!-- shed binary -->
+  <rect class="frame" x="200" y="10" width="480" height="540" rx="14"/>
+  <text class="t" x="216" y="34" style="fill:#1f9d55">shed (one Go binary)</text>
+
+  <rect class="g" x="220" y="50" width="160" height="130" rx="10"/>
+  <text class="t" x="300" y="78" text-anchor="middle">Caddy</text>
+  <text class="s" x="300" y="98" text-anchor="middle">:80 / :443</text>
+  <text class="s" x="300" y="116" text-anchor="middle">auto HTTPS</text>
+  <text class="s" x="300" y="134" text-anchor="middle">routes from shed</text>
+  <text class="m" x="300" y="160" text-anchor="middle">internal/proxy</text>
+
+  <rect class="g" x="420" y="50" width="240" height="70" rx="10"/>
+  <text class="t" x="540" y="76" text-anchor="middle">API + dashboard</text>
+  <text class="s" x="540" y="96" text-anchor="middle">JSON, SSE logs, webhook, SPA</text>
+  <text class="m" x="540" y="112" text-anchor="middle">internal/api · web/dist</text>
+
+  <rect class="w" x="420" y="140" width="110" height="50" rx="8"/><text class="t" x="475" y="162" text-anchor="middle">auth</text><text class="s" x="475" y="180" text-anchor="middle">sessions</text>
+  <rect class="w" x="550" y="140" width="110" height="50" rx="8"/><text class="t" x="605" y="162" text-anchor="middle">metrics</text><text class="s" x="605" y="180" text-anchor="middle">every 10s</text>
+
+  <rect class="g" x="220" y="230" width="200" height="110" rx="10"/>
+  <text class="t" x="320" y="258" text-anchor="middle">deploy</text>
+  <text class="s" x="320" y="278" text-anchor="middle">one worker per service</text>
+  <text class="s" x="320" y="296" text-anchor="middle">CI → build → start →</text>
+  <text class="s" x="320" y="312" text-anchor="middle">health → switch</text>
+
+  <rect class="g" x="460" y="230" width="200" height="110" rx="10"/>
+  <text class="t" x="560" y="258" text-anchor="middle">backup</text>
+  <text class="s" x="560" y="278" text-anchor="middle">dump / tar → zstd → age</text>
+  <text class="s" x="560" y="296" text-anchor="middle">cron schedule, retention</text>
+  <text class="s" x="560" y="312" text-anchor="middle">restore</text>
+
+  <rect class="w" x="220" y="370" width="200" height="56" rx="8"/>
+  <text class="t" x="320" y="394" text-anchor="middle">build</text><text class="s" x="320" y="412" text-anchor="middle">Dockerfile or Railpack</text>
+
+  <rect class="o" x="220" y="460" width="440" height="70" rx="10"/>
+  <text class="t" x="440" y="488" text-anchor="middle">SQLite — shed.db</text>
+  <text class="s" x="440" y="508" text-anchor="middle">projects · services · deployments · vars · backups · sessions · settings</text>
+
+  <!-- docker -->
+  <rect class="frameb" x="720" y="10" width="270" height="540" rx="14"/>
+  <text class="t" x="736" y="34" style="fill:#2563eb">Docker Engine</text>
+  <rect class="frameb" x="736" y="50" width="238" height="250" rx="10"/>
+  <text class="lbl" x="750" y="70">network shed-&lt;projectID&gt;</text>
+  <rect class="b" x="752" y="82" width="206" height="58" rx="8"/><text class="t" x="855" y="106" text-anchor="middle">app container</text><text class="m" x="855" y="125" text-anchor="middle">alias "web"</text>
+  <rect class="b" x="752" y="152" width="206" height="58" rx="8"/><text class="t" x="855" y="176" text-anchor="middle">postgres</text><text class="m" x="855" y="195" text-anchor="middle">alias "postgres"</text>
+  <rect class="b" x="752" y="222" width="206" height="58" rx="8"/><text class="t" x="855" y="246" text-anchor="middle">redis</text><text class="m" x="855" y="265" text-anchor="middle">alias "redis"</text>
+  <rect class="w" x="736" y="320" width="238" height="56" rx="8"/><text class="t" x="855" y="344" text-anchor="middle">named volumes</text><text class="m" x="855" y="362" text-anchor="middle">shed-vol-&lt;id&gt;</text>
+  <rect class="w" x="736" y="396" width="238" height="56" rx="8"/><text class="t" x="855" y="420" text-anchor="middle">BuildKit (buildx)</text><text class="s" x="855" y="438" text-anchor="middle">builds images</text>
+  <rect class="w" x="736" y="472" width="238" height="56" rx="8"/><text class="t" x="855" y="496" text-anchor="middle">images</text><text class="m" x="855" y="514" text-anchor="middle">shed/&lt;svc&gt;:&lt;deploy&gt;</text>
+
+  <!-- arrows -->
+  <path class="ar" d="M160,58 L218,90"/>
+  <path class="ar" d="M160,148 L218,130"/>
+  <path class="arg" d="M380,85 L418,85"/>
+  <text class="lbl" x="383" y="78">dash</text>
+  <path class="arg" d="M380,64 C 560,0 680,40 750,105"/>
+  <text class="lbl" x="560" y="28">domain → container IP:port</text>
+  <path class="ar" d="M480,120 L340,228"/>
+  <text class="lbl" x="385" y="200">enqueue</text>
+  <path class="ar" d="M160,325 L218,295"/>
+  <text class="lbl" x="164" y="292">push webhook</text>
+  <path class="ar" d="M320,340 L320,368"/>
+  <path class="ar" d="M420,248 L440,212 L734,212"/>
+  <text class="lbl" x="470" y="206">create / start / swap alias</text>
+  <path class="ar" d="M420,398 L734,420"/>
+  <path class="arg" d="M260,230 L260,182"/>
+  <text class="lbl" x="226" y="210">routes</text>
+  <path class="ar" d="M560,340 C 560,420 260,420 160,468"/>
+  <text class="lbl" x="440" y="440">upload</text>
+  <path class="ar" d="M660,285 L734,285"/>
+  <text class="lbl" x="664" y="278">exec</text>
+  <path class="ar" d="M320,426 L320,458"/>
+  <path class="ar" d="M560,340 L560,458"/>
+  <path class="ar" d="M660,165 L734,165"/>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="packages"><span class="n">2</span>Packages: lego pieces</h2>
+<p>The Go code is split so each piece can be understood and tested alone. Arrows point from the importer to what it imports. The bottom row are <strong>leaf packages</strong>: they import nothing from <code>internal/</code>.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 440" width="1000">
+  <!-- tier 0 -->
+  <rect class="g" x="400" y="10" width="200" height="50" rx="10"/>
+  <text class="t" x="500" y="32" text-anchor="middle">cmd/shed</text>
+  <text class="s" x="500" y="50" text-anchor="middle">flags, config, wiring, shutdown</text>
+
+  <!-- tier 1 -->
+  <rect class="g" x="400" y="100" width="200" height="50" rx="10"/>
+  <text class="t" x="500" y="122" text-anchor="middle">api</text>
+  <text class="s" x="500" y="140" text-anchor="middle">HTTP, SSE, webhook, SPA</text>
+
+  <!-- tier 2 -->
+  <rect class="w" x="100" y="200" width="160" height="50" rx="10"/><text class="t" x="180" y="222" text-anchor="middle">auth</text><text class="s" x="180" y="240" text-anchor="middle">sessions, sign-in</text>
+  <rect class="w" x="310" y="200" width="160" height="50" rx="10"/><text class="t" x="390" y="222" text-anchor="middle">deploy</text><text class="s" x="390" y="240" text-anchor="middle">pipeline, workers</text>
+  <rect class="w" x="530" y="200" width="160" height="50" rx="10"/><text class="t" x="610" y="222" text-anchor="middle">backup</text><text class="s" x="610" y="240" text-anchor="middle">dump, archive, S3</text>
+  <rect class="w" x="740" y="200" width="160" height="50" rx="10"/><text class="t" x="820" y="222" text-anchor="middle">metrics</text><text class="s" x="820" y="240" text-anchor="middle">sampling, series</text>
+
+  <!-- leaves -->
+  <rect class="frame" x="10" y="300" width="980" height="130" rx="12"/>
+  <text class="lbl" x="24" y="320">leaf packages — import nothing from internal/</text>
+  <g>
+    <rect class="o" x="24"  y="334" width="88" height="34" rx="8"/><text class="t" x="68"  y="356" text-anchor="middle">store</text>
+    <rect class="b" x="120" y="334" width="88" height="34" rx="8"/><text class="t" x="164" y="356" text-anchor="middle">docker</text>
+    <rect class="b" x="216" y="334" width="88" height="34" rx="8"/><text class="t" x="260" y="356" text-anchor="middle">build</text>
+    <rect class="g" x="312" y="334" width="88" height="34" rx="8"/><text class="t" x="356" y="356" text-anchor="middle">proxy</text>
+    <rect class="v" x="408" y="334" width="88" height="34" rx="8"/><text class="t" x="452" y="356" text-anchor="middle">github</text>
+    <rect class="w" x="504" y="334" width="88" height="34" rx="8"/><text class="t" x="548" y="356" text-anchor="middle">vars</text>
+    <rect class="w" x="600" y="334" width="88" height="34" rx="8"/><text class="t" x="644" y="356" text-anchor="middle">catalog</text>
+    <rect class="w" x="696" y="334" width="88" height="34" rx="8"/><text class="t" x="740" y="356" text-anchor="middle">host</text>
+    <rect class="v" x="792" y="334" width="88" height="34" rx="8"/><text class="t" x="836" y="356" text-anchor="middle">s3</text>
+    <rect class="w" x="888" y="334" width="88" height="34" rx="8"/><text class="t" x="932" y="356" text-anchor="middle">logtail</text>
+    <rect class="w" x="24"  y="382" width="88" height="34" rx="8"/><text class="t" x="68"  y="404" text-anchor="middle">config</text>
+    <text class="s" x="130" y="404">store=SQLite · docker=moby client · build=clone+image · proxy=Caddy · vars=${{ }} refs · catalog=DB templates · host=procfs</text>
+  </g>
+
+  <!-- arrows -->
+  <path class="ar" d="M500,60 L500,98"/>
+  <path class="ar" d="M440,150 L200,198"/>
+  <path class="ar" d="M480,150 L400,198"/>
+  <path class="ar" d="M520,150 L600,198"/>
+  <path class="ar" d="M560,150 L800,198"/>
+  <text class="lbl" x="620" y="120">+ store, github, catalog, logtail</text>
+  <text class="m" x="180" y="272" text-anchor="middle" style="fill:#6b6b66">→ github</text>
+  <text class="m" x="390" y="272" text-anchor="middle" style="fill:#6b6b66">→ store docker build proxy</text>
+  <text class="m" x="390" y="288" text-anchor="middle" style="fill:#6b6b66">github vars catalog</text>
+  <text class="m" x="610" y="272" text-anchor="middle" style="fill:#6b6b66">→ store docker</text>
+  <text class="m" x="820" y="272" text-anchor="middle" style="fill:#6b6b66">→ store docker host</text>
+</svg>
+</div>
+
+<div class="note"><strong>Interfaces belong to the consumer.</strong> <code>deploy</code> doesn't depend on the concrete Docker client; it declares a small <code>deploy.Docker</code> interface with just the methods it calls. <code>cmd/shed</code> plugs in the real implementation. Tests plug in a fake, so nothing needs a Docker daemon to run <code>go test</code>. (Where an upper package imports a leaf, it's mostly for plain struct types like <code>store.Service</code>.) Similarly, the backup → S3 link is an interface wired up in <code>cmd/shed</code>, not an import.</div>
+
+<!-- ============================================================ -->
+<h2 id="deploy"><span class="n">3</span>From <code>git push</code> to live</h2>
+<p>Each service has one worker goroutine. A newer deployment cancels older unfinished ones for the same service, so rapid pushes don't pile up.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 330" width="1000">
+  <rect class="v" x="10"  y="40" width="120" height="70" rx="10"/><text class="t" x="70" y="68" text-anchor="middle">git push</text><text class="s" x="70" y="88" text-anchor="middle">GitHub webhook</text>
+  <rect class="w" x="160" y="40" width="130" height="70" rx="10"/><text class="t" x="225" y="68" text-anchor="middle">pending push</text><text class="s" x="225" y="88" text-anchor="middle">stored in SQLite</text>
+  <rect class="w" x="320" y="40" width="120" height="70" rx="10"/><text class="t" x="380" y="68" text-anchor="middle">1 · Wait CI</text><text class="s" x="380" y="88" text-anchor="middle">optional, ≤60m</text>
+  <rect class="w" x="470" y="40" width="120" height="70" rx="10"/><text class="t" x="530" y="68" text-anchor="middle">2 · Build</text><text class="s" x="530" y="88" text-anchor="middle">or pull image</text>
+  <rect class="w" x="620" y="40" width="120" height="70" rx="10"/><text class="t" x="680" y="68" text-anchor="middle">3 · Start</text><text class="s" x="680" y="88" text-anchor="middle">no alias yet</text>
+  <rect class="w" x="770" y="40" width="100" height="70" rx="10"/><text class="t" x="820" y="68" text-anchor="middle">4 · Health</text><text class="s" x="820" y="88" text-anchor="middle">≤120s</text>
+  <rect class="g" x="890" y="40" width="100" height="70" rx="10"/><text class="t" x="940" y="68" text-anchor="middle">5 · Switch</text><text class="s" x="940" y="88" text-anchor="middle">go live</text>
+
+  <path class="ar" d="M130,75 L158,75"/>
+  <path class="ar" d="M290,75 L318,75"/>
+  <path class="ar" d="M440,75 L468,75"/>
+  <path class="ar" d="M590,75 L618,75"/>
+  <path class="ar" d="M740,75 L768,75"/>
+  <path class="arg" d="M870,75 L888,75"/>
+
+  <!-- side outcomes -->
+  <rect class="o" x="320" y="170" width="120" height="50" rx="10"/><text class="t" x="380" y="192" text-anchor="middle">skipped</text><text class="s" x="380" y="210" text-anchor="middle">a check failed</text>
+  <path class="arr" d="M380,110 L380,168"/>
+
+  <rect class="r" x="560" y="170" width="300" height="70" rx="10"/>
+  <text class="t" x="710" y="194" text-anchor="middle">failed</text>
+  <text class="s" x="710" y="212" text-anchor="middle">remove new container,</text>
+  <text class="s" x="710" y="228" text-anchor="middle">restart previous one if it was stopped</text>
+  <path class="arr" d="M530,110 L620,168"/>
+  <path class="arr" d="M680,110 L700,168"/>
+  <path class="arr" d="M820,110 L790,168"/>
+
+  <rect class="g" x="890" y="170" width="100" height="70" rx="10"/><text class="t" x="940" y="196" text-anchor="middle">active</text><text class="s" x="940" y="214" text-anchor="middle">old one →</text><text class="s" x="940" y="230" text-anchor="middle">removed</text>
+  <path class="arg" d="M940,110 L940,168"/>
+
+  <text class="lbl" x="10" y="280">Build detail: a repo is cloned at the exact commit with a short-lived installation token. Dockerfile if present, else Railpack.</text>
+  <text class="lbl" x="10" y="298">Variables reach the build as BuildKit secrets (RUN --mount=type=secret), never as build args. Logs mask secret values.</text>
+  <text class="lbl" x="10" y="316">Images are tagged shed/&lt;serviceID&gt;:&lt;deploymentID&gt;; the last 5 per service are kept so rollbacks are instant.</text>
+</svg>
+</div>
+
+<h3>On boot: reconcile</h3>
+<p>If shed (or the VPS) restarts mid-deploy, <code>deploy.Reconcile</code> marks orphaned in-progress deployments <code>failed</code>, makes sure every non-stopped service's <em>active</em> container is running (recreating it from the saved runtime snapshot if needed), removes stray containers, and re-applies proxy routes. Pushes that arrived but weren't deployed are replayed.</p>
+
+<!-- ============================================================ -->
+<h2 id="switch"><span class="n">4</span>The zero-downtime switch</h2>
+<p>The trick is that the new container starts <em>without</em> the service's network name. It only takes over the name (and public routes) once it's proven healthy.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 250" width="1000">
+  <text class="lbl" x="10" y="20">time →</text>
+  <line x1="60" y1="16" x2="990" y2="16" stroke="#dcdcd6"/>
+  <!-- old -->
+  <text class="t" x="10" y="70">old</text>
+  <rect class="g" x="60" y="50" width="640" height="34" rx="6"/>
+  <text x="380" y="72" text-anchor="middle">serving traffic · has alias "web" · routes point here</text>
+  <rect class="w" x="700" y="50" width="160" height="34" rx="6"/>
+  <text class="s" x="780" y="72" text-anchor="middle">disconnect → stop</text>
+  <!-- new -->
+  <text class="t" x="10" y="140">new</text>
+  <rect class="w" x="200" y="120" width="300" height="34" rx="6"/>
+  <text x="350" y="142" text-anchor="middle">starting · no alias · health probe</text>
+  <rect class="o" x="500" y="120" width="200" height="34" rx="6"/>
+  <text x="600" y="142" text-anchor="middle">gets alias · probed again</text>
+  <rect class="g" x="700" y="120" width="290" height="34" rx="6"/>
+  <text x="845" y="142" text-anchor="middle">routes applied · active</text>
+  <!-- markers -->
+  <line x1="700" y1="36" x2="700" y2="180" stroke="#1f9d55" stroke-dasharray="4 4"/>
+  <text class="lbl" x="694" y="196" text-anchor="end">cutover: proxy accepts the new routes first, then one DB transaction</text>
+  <text class="lbl" x="694" y="212" text-anchor="end">marks new = active and old = removed</text>
+  <text class="lbl" x="10" y="226">Exception: services with volumes or a published host port stop the old container first (two Postgres processes can't share one data dir), so they have a brief gap.</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="network"><span class="n">5</span>Networking & variables</h2>
+<p>Each project is its own Docker network. Inside it, a service is reachable at <code>&lt;service name&gt;:&lt;port&gt;</code>. That's the "private domain". Variables can reference each other, so apps never hard-code another service's credentials.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 260" width="1000">
+  <rect class="frameb" x="10" y="10" width="560" height="240" rx="12"/>
+  <text class="lbl" x="24" y="30">project "shop" → network shed-&lt;projectID&gt;</text>
+
+  <rect class="b" x="30" y="50" width="240" height="180" rx="10"/>
+  <text class="t" x="150" y="74" text-anchor="middle">postgres</text>
+  <text class="m" x="44" y="100">POSTGRES_USER=postgres</text>
+  <text class="m" x="44" y="118">POSTGRES_PASSWORD=&lt;random&gt;</text>
+  <text class="m" x="44" y="136">POSTGRES_DB=app</text>
+  <text class="m" x="44" y="160">DATABASE_URL=postgresql://</text>
+  <text class="m" x="44" y="178">  ${{POSTGRES_USER}}:...</text>
+  <text class="m" x="44" y="196">  @postgres:5432/app</text>
+  <text class="s" x="44" y="220">created by the catalog template</text>
+
+  <rect class="b" x="310" y="50" width="240" height="180" rx="10"/>
+  <text class="t" x="430" y="74" text-anchor="middle">web (app)</text>
+  <text class="m" x="324" y="100">DATABASE_URL=</text>
+  <text class="m" x="324" y="118">  ${{ postgres.DATABASE_URL }}</text>
+  <text class="s" x="324" y="146">shed also injects:</text>
+  <text class="m" x="324" y="166">PORT, SHED_SERVICE_NAME,</text>
+  <text class="m" x="324" y="184">SHED_PRIVATE_DOMAIN,</text>
+  <text class="m" x="324" y="202">SHED_GIT_COMMIT_SHA, ...</text>
+
+  <path class="ar" d="M308,120 L272,120"/>
+  <text class="lbl" x="276" y="112">refs</text>
+
+  <rect class="g" x="620" y="50" width="360" height="80" rx="10"/>
+  <text class="t" x="800" y="76" text-anchor="middle">Public domains</text>
+  <text class="s" x="800" y="96" text-anchor="middle">custom, or generated:</text>
+  <text class="m" x="800" y="116" text-anchor="middle">web-shop.apps.example.com</text>
+  <path class="arg" d="M618,90 L552,110"/>
+
+  <text class="lbl" x="620" y="170">References are resolved at deploy time by internal/vars.</text>
+  <text class="lbl" x="620" y="188">The resolved values are snapshotted on the active</text>
+  <text class="lbl" x="620" y="206">deployment, so a container can be recreated exactly,</text>
+  <text class="lbl" x="620" y="224">even if you've edited variables since.</text>
+</svg>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="backups"><span class="n">6</span>Backups</h2>
+<p>Every service with a volume, plus shed's own database, can be backed up on a cron schedule. A backup is one ordinary file you could restore by hand with standard tools.</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 230" width="1000">
+  <rect class="b" x="10" y="20" width="220" height="190" rx="10"/>
+  <text class="t" x="120" y="44" text-anchor="middle">source</text>
+  <text class="s" x="24" y="70">postgres → pg_dumpall</text>
+  <text class="s" x="24" y="90">mysql → mysqldump</text>
+  <text class="s" x="24" y="110">mongo → mongodump</text>
+  <text class="s" x="24" y="130">redis → BGSAVE → RDB</text>
+  <text class="s" x="24" y="150">app / stopped DB → tar volumes</text>
+  <text class="s" x="24" y="170">shed.db → VACUUM INTO</text>
+  <text class="lbl" x="24" y="196">dumps run inside the live container</text>
+
+  <rect class="w" x="280" y="80" width="120" height="60" rx="10"/><text class="t" x="340" y="106" text-anchor="middle">zstd</text><text class="s" x="340" y="124" text-anchor="middle">compress</text>
+  <rect class="w" x="440" y="80" width="140" height="60" rx="10"/><text class="t" x="510" y="106" text-anchor="middle">age</text><text class="s" x="510" y="124" text-anchor="middle">encrypt (optional)</text>
+
+  <rect class="o" x="640" y="30" width="170" height="60" rx="10"/><text class="t" x="725" y="56" text-anchor="middle">local disk</text><text class="m" x="725" y="74" text-anchor="middle">data/backups/</text>
+  <rect class="v" x="640" y="130" width="170" height="60" rx="10"/><text class="t" x="725" y="156" text-anchor="middle">S3</text><text class="s" x="725" y="174" text-anchor="middle">off-site copy</text>
+
+  <rect class="w" x="850" y="70" width="140" height="80" rx="10"/><text class="t" x="920" y="96" text-anchor="middle">retention</text><text class="s" x="920" y="116" text-anchor="middle">keep_local /</text><text class="s" x="920" y="132" text-anchor="middle">keep_remote</text>
+
+  <path class="ar" d="M230,110 L278,110"/>
+  <path class="ar" d="M400,110 L438,110"/>
+  <path class="ar" d="M580,105 L638,65"/>
+  <path class="ar" d="M580,115 L638,155"/>
+  <path class="ar" d="M810,65 L848,95"/>
+  <path class="ar" d="M810,155 L848,125"/>
+</svg>
+</div>
+<p>Restores load the archive back in. While a restore is changing a service's data, a <em>restore fence</em> blocks deploys and pushes for that service so nothing starts on half-restored data.</p>
+
+<!-- ============================================================ -->
+<h2 id="data"><span class="n">7</span>Data model</h2>
+<p>All state is in one SQLite file. The core shape is small:</p>
+
+<div class="card">
+<svg viewBox="0 0 1000 256" width="1000">
+  <rect class="o" x="10" y="90" width="140" height="56" rx="10"/><text class="t" x="80" y="114" text-anchor="middle">projects</text><text class="s" x="80" y="132" text-anchor="middle">= a Docker network</text>
+  <rect class="o" x="210" y="90" width="160" height="56" rx="10"/><text class="t" x="290" y="114" text-anchor="middle">services</text><text class="s" x="290" y="132" text-anchor="middle">app | postgres | ...</text>
+
+  <rect class="w" x="440" y="10" width="160" height="44" rx="8"/><text class="t" x="520" y="37" text-anchor="middle">variables</text>
+  <rect class="w" x="440" y="64" width="160" height="44" rx="8"/><text class="t" x="520" y="91" text-anchor="middle">volumes</text>
+  <rect class="w" x="440" y="118" width="160" height="44" rx="8"/><text class="t" x="520" y="145" text-anchor="middle">domains</text>
+  <rect class="g" x="440" y="172" width="160" height="56" rx="8"/><text class="t" x="520" y="196" text-anchor="middle">deployments</text><text class="s" x="520" y="214" text-anchor="middle">≤1 active per service</text>
+
+  <rect class="w" x="660" y="10" width="160" height="44" rx="8"/><text class="t" x="740" y="37" text-anchor="middle">backups</text>
+  <rect class="w" x="660" y="64" width="160" height="44" rx="8"/><text class="t" x="740" y="91" text-anchor="middle">backup_policies</text>
+  <rect class="w" x="660" y="118" width="160" height="44" rx="8"/><text class="t" x="740" y="145" text-anchor="middle">restores / fences</text>
+  <rect class="w" x="660" y="172" width="160" height="56" rx="8"/><text class="t" x="740" y="196" text-anchor="middle">pending_pushes</text><text class="s" x="740" y="214" text-anchor="middle">newest per app</text>
+
+  <rect class="w" x="860" y="10" width="130" height="60" rx="8"/><text class="t" x="925" y="34" text-anchor="middle">settings</text><text class="s" x="925" y="52" text-anchor="middle">GitHub App creds</text>
+  <rect class="w" x="860" y="84" width="130" height="44" rx="8"/><text class="t" x="925" y="111" text-anchor="middle">users / sessions</text>
+  <rect class="w" x="860" y="142" width="130" height="60" rx="8"/><text class="t" x="925" y="166" text-anchor="middle">metric_samples</text><text class="s" x="925" y="184" text-anchor="middle">pruned after 7d</text>
+
+  <path class="ar" d="M150,118 L208,118"/><text class="lbl" x="160" y="110">1:N</text>
+  <path class="ar" d="M370,110 L438,32"/>
+  <path class="ar" d="M370,114 L438,86"/>
+  <path class="ar" d="M370,122 L438,140"/>
+  <path class="ar" d="M370,128 L438,198"/>
+  <path class="ar" style="marker-end:none" d="M290,146 L290,244 L636,244 L636,32"/>
+  <path class="ar" d="M636,32 L658,32"/>
+  <path class="ar" d="M636,86 L658,86"/>
+  <path class="ar" d="M636,140 L658,140"/>
+  <path class="ar" d="M636,200 L658,200"/>
+</svg>
+</div>
+<p>Deployment statuses: <code>queued</code> → <code>waiting</code> / <code>building</code> / <code>deploying</code> → <code>active</code>, or <code>failed</code>, <code>skipped</code>, <code>canceled</code>. A superseded deployment becomes <code>removed</code>; an active one whose container died shows as <code>crashed</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="choices"><span class="n">8</span>Design choices (and why)</h2>
+<div class="card">
+<table>
+  <tr><th>Choice</th><th>Why</th><th>Trade-off</th></tr>
+  <tr><td>Single Go binary</td><td>One thing to install, upgrade, and run under systemd. Dashboard is embedded with <code>go:embed</code>.</td><td>Not horizontally scalable, by design: it's for one VPS.</td></tr>
+  <tr><td>Embedded Caddy</td><td>Automatic HTTPS for free, and shed controls routes in-process with <code>proxy.Apply(routes)</code>, with no config files or second daemon to sync.</td><td>Caddy has process-global state; it's quarantined in <code>internal/proxy</code>.</td></tr>
+  <tr><td>Docker for everything</td><td>Apps and databases are uniform: same lifecycle, logs, metrics, networks, volumes.</td><td>Needs Docker + buildx on the host.</td></tr>
+  <tr><td>Dockerfile, else Railpack</td><td>Respect a repo's own Dockerfile; otherwise build with zero config like Railway does.</td><td><code>railpack</code> must be on <code>PATH</code>.</td></tr>
+  <tr><td>One GitHub App</td><td>One setup flow (manifest) covers sign-in, private repo cloning, push webhooks, and CI checks. Credentials stored in SQLite.</td><td>GitHub is required, even for sign-in.</td></tr>
+  <tr><td>No environments</td><td>Keeps the model tiny: project → services. Want staging? Make another project.</td><td>No per-env variable overrides.</td></tr>
+  <tr><td>SQLite</td><td>Zero ops, one file, easy to back up (shed backs itself up with <code>VACUUM INTO</code>).</td><td>Single writer, which is fine at this scale.</td></tr>
+  <tr><td>Per-project Docker network</td><td>Services talk by name (<code>postgres:5432</code>) and projects are isolated from each other.</td><td>—</td></tr>
+  <tr><td>Start new, then switch</td><td>Zero-downtime deploys: the old container keeps serving until the new one passes health checks twice.</td><td>Volume-backed services must stop first (brief gap).</td></tr>
+  <tr><td>Runtime snapshot on deploy</td><td>The active deployment remembers its exact command, resolved vars, limits, and volumes, so reboots and restarts recreate it faithfully.</td><td>Edited settings wait for the next deploy.</td></tr>
+  <tr><td>Standard backup formats</td><td>zstd + age + plain SQL/tar means you can recover without shed.</td><td>—</td></tr>
+  <tr><td>Consumer-owned interfaces</td><td>Packages are swappable and testable with fakes; tests never need Docker or network.</td><td>A bit of adapter code in <code>cmd/shed</code>.</td></tr>
+  <tr><td>Explicit allowlist</td><td>Only GitHub logins in <code>auth.allowed_users</code> can sign in; empty list = nobody.</td><td>Revoking someone means editing config and restarting.</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="code"><span class="n">9</span>Where to look in the code</h2>
+<div class="card">
+<table>
+  <tr><th>If you want to understand…</th><th>Start at</th></tr>
+  <tr><td>How it's all wired</td><td><code>cmd/shed/</code></td></tr>
+  <tr><td>The source of truth</td><td><code>docs/design.md</code>: data model, pipeline, API contract</td></tr>
+  <tr><td>A deploy end to end</td><td><code>internal/deploy</code> (pipeline, workers, reconcile) → <code>internal/build</code> → <code>internal/docker</code> → <code>internal/proxy</code></td></tr>
+  <tr><td>Webhooks & sign-in</td><td><code>internal/github</code>, <code>internal/auth</code>, webhook handler in <code>internal/api</code></td></tr>
+  <tr><td>Backups</td><td><code>internal/backup</code>, <code>internal/s3</code></td></tr>
+  <tr><td>Database templates</td><td><code>internal/catalog</code></td></tr>
+  <tr><td>The dashboard</td><td><code>web/src/routes/</code> (pages), <code>web/src/api/</code> (queries + <code>types.ts</code>)</td></tr>
+</table>
+</div>
+
+<footer>Generated from <code>docs/design.md</code> and the package import graph.</footer>
+</main>
+</body>
+</html>

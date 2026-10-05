@@ -1,0 +1,132 @@
+---
+title: Configuration
+group: Operating
+order: 130
+description: "shed reads one TOML file and a set of SHED_* environment variables. Everything else, including GitHub App credentials, sessions, and backup settings, lives in the database."
+---
+
+import { DataDirDiagram, LayerDiagram } from "../components/configuration/diagrams";
+import { EnvConverter } from "../components/configuration/EnvConverter";
+import { BuildLimitsDemo } from "../components/configuration/BuildLimitsDemo";
+
+## Host requirements
+
+shed is a single binary, but it drives other tools on the host.
+
+| Requirement                          | Why                                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Linux                                | Host metrics are read from procfs, sysfs, and statfs.                                                                              |
+| Docker Engine with the buildx plugin | Every workload is a container. Builds use a dedicated buildx builder.                                                              |
+| `git`                                | Clones the commit being built.                                                                                                     |
+| `railpack`                           | On PATH. Builds apps that have no Dockerfile.                                                                                      |
+| Root, or a user in the docker group  | To talk to the Docker socket. The example unit runs as root.                                                                       |
+| Ports 80 and 443                     | Caddy terminates TLS there. Change them with `proxy.http_port` and `proxy.https_port`, or turn the proxy off with `proxy.enabled`. |
+
+The binary is usually run under systemd with `CAP_NET_BIND_SERVICE` so it can bind low ports. The example unit that ships with shed:
+
+```ini title="/etc/systemd/system/shed.service"
+[Unit]
+Description=shed deployment platform
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/shed -config /etc/shed/shed.toml
+Restart=always
+RestartSec=2
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Config file
+
+The file defaults to `/etc/shed/shed.toml`; point at another with `-config`. A missing file is not an error: you get the built-in defaults. Every key is optional. The values below are the defaults, except `server.url`, where the built-in default is `http://localhost:3000` and the example shows a public URL.
+
+<Figure caption="Later layers override earlier ones, key by key.">
+  <LayerDiagram />
+</Figure>
+
+```toml title="shed.toml"
+[server]
+listen = "127.0.0.1:3000"           # dashboard + API listener (Caddy fronts it)
+url    = "https://shed.example.com" # public dashboard URL; GitHub callbacks and the origin check use it
+
+[data]
+dir = "/var/lib/shed"               # shed.db, builds/, logs/, backups/, caddy/
+
+[proxy]
+enabled     = true
+http_port   = 80
+https_port  = 443
+acme_email  = ""                    # contact address for certificate issuance
+base_domain = ""                    # e.g. "apps.example.com" -> <service>-<project>.apps.example.com
+
+[auth]
+allowed_users = []                  # GitHub logins. Empty denies everyone.
+
+[build]
+memory_mb   = 2048                  # builder container memory, no swap; 0 = unlimited
+cpus        = 2                     # builder container CPU quota in cores; 0 = unlimited
+min_free_mb = 2048                  # 0 = disk check off
+
+[deployments]
+log_max_mb = 10                     # per-deployment build log cap; 0 = unlimited
+keep       = 50                     # finished deployments kept per service; 0 = keep all
+
+[log]
+level        = "info"               # debug | info | warn | error
+max_size_mb  = 20
+max_backups  = 5
+max_age_days = 30
+```
+
+shed validates on boot and refuses to start on a bad value: `server.listen` and `data.dir` can't be empty, `server.url` must be an http(s) URL with a host, ports must be 1-65535, `log.level` must be one of the four levels, and no limit or log setting may be negative.
+
+Set `allowed_users` before the first sign-in. See [Security](/docs/security#authentication) for what it controls.
+
+## Environment overrides
+
+Any key can be set with an environment variable, and the variable wins over the file. The rule is mechanical: strip `SHED_`, lowercase, and replace the **first** underscore with a dot. The remaining underscores stay.
+
+```sh
+SHED_SERVER_URL=https://shed.example.com      # server.url
+SHED_PROXY_ACME_EMAIL=you@example.com         # proxy.acme_email
+SHED_AUTH_ALLOWED_USERS=alice,Bob             # auth.allowed_users (comma-separated)
+```
+
+Values are strings that shed decodes into each field's type, so `SHED_PROXY_ENABLED=false` works. `auth.allowed_users` is the one list: split on commas, with blanks trimmed. A name that maps to no key is ignored without a warning, so a typo like `SHED_PROXYACME_EMAIL` silently does nothing. The converter flags those.
+
+<EnvConverter />
+
+## Data directory
+
+shed creates `data.dir`, `logs`, `builds`, and `backups` on boot (mode 0750). The application log is the exception: it goes next to the config file, not in the data directory.
+
+<Figure caption="Docker volumes live in Docker's own storage, so back up with shed, not by copying data.dir.">
+  <DataDirDiagram />
+</Figure>
+
+- **shed.log** is rotated by `log.max_size_mb`, `log.max_backups`, and `log.max_age_days`, and mirrored to stderr. The last 1000 lines are also kept in memory, which is what `GET /api/logs` replays before it follows new lines (Server, Logs in the dashboard).
+- **shed.db** is the only copy of your projects, variables, deployments, sessions, metrics, and GitHub App credentials. shed backs it up like any service.
+- **backups/** holds one directory per service id, plus `system`. Directories are mode 0700 and archives 0600.
+- **builds/** and **logs/** are named by deployment id. Build workspaces are deleted after the build. Logs are deleted with their deployment.
+
+## Build limits
+
+Builds run on a dedicated buildx builder named `shed` with the docker-container driver, because workload limits don't constrain Docker's default BuildKit. Before its first build, shed removes the builder with `--keep-state` (the build cache survives) and recreates it with memory and swap set to `build.memory_mb` and a CFS quota of `build.cpus` cores. That is why a limit change applies after a restart.
+
+| Key                      | Default | Effect                                                                                                                                                                                           |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build.memory_mb`        | `2048`  | Builder memory in MiB, no swap. 0 = unlimited.                                                                                                                                                   |
+| `build.cpus`             | `2`     | Builder CPU quota in cores. 0 = unlimited.                                                                                                                                                       |
+| `build.min_free_mb`      | `2048`  | A build is refused below this much free space on the build directory's filesystem or Docker's root. A running build is canceled below half of it. 0 = off.                                       |
+| `deployments.log_max_mb` | `10`    | Cap on each build log. Output beyond it becomes one final '==> Log truncated' line. 0 = unlimited.                                                                                               |
+| `deployments.keep`       | `50`    | Finished deployments (failed, removed, canceled, skipped) kept per service, newest first. Older ones are deleted with their logs. Active, crashed, and in-progress ones never are. 0 = keep all. |
+
+While a build runs, shed polls free space every three seconds. This is best-effort monitoring, not a hard quota: a build can write quickly between polls, and shed doesn't prune the builder's cache afterwards. One build runs at a time across all services, with a 30-minute deadline that includes queueing.
+
+<BuildLimitsDemo />

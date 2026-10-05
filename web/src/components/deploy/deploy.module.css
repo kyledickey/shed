@@ -1,0 +1,233 @@
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-md);
+  transition: background var(--dur) var(--ease);
+
+  &:hover {
+    background: var(--hover);
+  }
+
+  &[data-current] {
+    background: color-mix(in oklch, var(--grass-soft) 60%, transparent);
+    box-shadow: inset 0 0 0 1px var(--grass-line);
+  }
+}
+
+.rowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.rail {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+  box-shadow: inset 0 0 0 1px var(--tone-line);
+
+  &[data-live] {
+    animation: glow 1.8s var(--ease) infinite;
+  }
+}
+
+@keyframes glow {
+  50% {
+    box-shadow:
+      inset 0 0 0 1px var(--tone-line),
+      0 0 0 5px color-mix(in oklch, var(--tone) 18%, transparent);
+  }
+}
+
+.commit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.message {
+  overflow: hidden;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.metaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sha {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 18px;
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: none;
+}
+
+.when {
+  color: var(--ink-4);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.currentTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--r-full);
+  background: var(--grass);
+  color: light-dark(oklch(0.99 0 0), oklch(0.2 0.03 150));
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.currentDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.actions {
+  padding-right: 8px;
+}
+
+/* Stepper */
+
+.steps {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+
+  /* Connector to the previous stage. */
+  &:not(:first-child)::before {
+    content: "";
+    position: absolute;
+    top: 11px;
+    right: calc(50% + 16px);
+    left: calc(-50% + 16px);
+    height: 2px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+
+  &[data-state="done"]:not(:first-child)::before,
+  &[data-state="current"]:not(:first-child)::before,
+  &[data-state="failed"]:not(:first-child)::before {
+    background: var(--grass);
+  }
+}
+
+.node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 2px var(--line);
+  color: oklch(0.99 0 0);
+
+  [data-state="done"] > & {
+    background: var(--grass);
+    box-shadow: none;
+  }
+
+  [data-state="failed"] > & {
+    background: var(--tomato);
+    box-shadow: none;
+  }
+
+  [data-state="current"] > & {
+    background: var(--sky-soft);
+    box-shadow: inset 0 0 0 2px var(--sky);
+  }
+}
+
+.nodePulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sky);
+  animation: pulse 1.2s var(--ease) infinite alternate;
+}
+
+@keyframes pulse {
+  to {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+}
+
+.stageLabel {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  font-weight: 500;
+
+  [data-state="current"] > & {
+    color: var(--sky-ink);
+    font-weight: 600;
+  }
+
+  [data-state="failed"] > & {
+    color: var(--tomato-ink);
+    font-weight: 600;
+  }
+
+  [data-state="done"] > & {
+    color: var(--ink-2);
+  }
+}
