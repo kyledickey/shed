@@ -760,9 +760,22 @@ read from the local file or else from S3, named
 `<service name or "shed">-<YYYYMMDD-HHMMSS>.<ext>.zst` from its creation
 time in UTC.
 
-**Recovering shed.db.** Stop shed, then fetch the newest
-`<prefix>/system/*.db.zst[.age]`. Run `age -d -i key.txt` if it is encrypted,
-then `zstd -d -o /var/lib/shed/shed.db`, and start shed.
+**Recovering shed.db.** Stop shed and preserve the current database and WAL
+files together. Fetch `<prefix>/system/*.db.zst[.age]`, decrypt with the original
+age key if needed, and decompress into a separate file. Only after success,
+replace the database in `data.dir` and remove the old WAL and SHM files before
+starting shed. This restores metadata, not Docker images or volume data.
+
+On a replacement host, recover matching Docker images and named volumes from a
+host backup before starting shed. Without them, recreation fails safely; queued
+pushes and explicitly requested deployments still run normally. Rebuilding and
+restoring from service archives instead is a separate manual workflow: a new
+deployment uses the current source/tag and creates missing volumes empty, and
+database dump restore requires a running compatible server. Keep dependent apps,
+auto-deploy, and production traffic disabled until data recovery is verified.
+A full fresh-host rebuild/restore sequence has not been integration-tested.
+Archive files or S3 access, TOML configuration, and encryption keys must also be
+recovered; restoring database rows does not restore local archive files.
 
 ### Proxy
 

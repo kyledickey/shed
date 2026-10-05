@@ -118,9 +118,11 @@ The same sweep settles `uploading` backups: with the local file present, the bac
 
 ## Recovering shed.db
 
-shed.db can't be restored from the dashboard, because shed is running on it. Recovery is manual: stop shed, put the archive in place, start shed. This is also the procedure for a new server after the old one is lost. You need your age secret key if backups are encrypted. The GitHub App credentials come back with shed.db, but if the new server has a different `server.url`, update the App's webhook and callback URLs to match. See the [encryption](/docs/backups#encryption) section about storing that key.
+shed.db can't be restored from the dashboard, because shed is running on it. Recovery of the metadata database is manual: stop shed, replace the database, then start shed. These steps assume the server still has its Docker images and volumes. They do not recover a lost server's workloads or data; see the new-server section below. You need your age secret key if backups are encrypted. The GitHub App credentials come back with shed.db, but if the new server has a different `server.url`, update the App's webhook and callback URLs to match. See the [encryption](/docs/backups#encryption) section about storing that key.
 
 ```sh
+# Run in bash; stop if decryption or decompression fails.
+set -euo pipefail
 systemctl stop shed
 
 # fetch the newest shed.db archive from S3 (any S3 client works)...
@@ -131,9 +133,24 @@ aws s3 cp s3://<bucket>/<prefix>/system/<id>.db.zst.age . --endpoint-url <endpoi
 # decrypt (drop age if encryption was off) and decompress
 age -d -i key.txt <id>.db.zst.age | zstd -d -o shed.db
 
+# Keep the existing database and its WAL together before replacing them.
+recovery_copy=$(mktemp -d /var/lib/shed/before-recovery.XXXXXX)
+for file in /var/lib/shed/shed.db /var/lib/shed/shed.db-wal /var/lib/shed/shed.db-shm; do
+  if [ -e "$file" ]; then cp -a "$file" "$recovery_copy/"; fi
+done
 mv shed.db /var/lib/shed/shed.db
 rm -f /var/lib/shed/shed.db-wal /var/lib/shed/shed.db-shm
 systemctl start shed
 ```
 
 shed.db runs in WAL mode, so `shed.db-wal` and `shed.db-shm` sit beside it. They belong to the database you are replacing, so delete them as shown. `/var/lib/shed` is the default `data.dir`; use yours if you changed it.
+
+## Recovering on a new server
+
+A shed.db backup restores records: projects, services, variables, domains, deployment history, backup locations, pending pushes, and GitHub App credentials. It does **not** contain Docker images, containers, or volume data. Keep the matching TOML configuration, archive files or S3 access, and encryption key separately.
+
+For a host-level recovery, restore the Docker images and named volumes from your host backup before starting shed. Volume names must match the IDs in the restored database (`shed-vol-<volumeID>`). A missing image or declared volume blocks container recreation instead of creating an empty replacement. Boot logs identify the failure, and the affected service appears crashed. Restored pending pushes can still trigger new deployments, so keep the server isolated from production traffic until recovery is checked.
+
+If the Docker state was lost and only shed's archives remain, rebuilding services is a separate manual recovery operation. Keep dependent apps stopped and auto-deploy disabled while recovering databases. A new deployment builds the current branch head or pulls the configured image tag; it does not recover the previous image or its data, and missing volumes start empty. Database dump restores require a running, compatible database container. Restore data from a reachable backup after that container exists, verify it, then bring dependent apps and traffic back. A full fresh-host recovery through this sequence has not been integration-tested.
+
+Local archive files must be copied into the matching `<data.dir>/backups/<serviceID>/` paths recorded by shed; restoring their database rows does not copy the files. S3 archives need their recorded destination credentials, and encrypted archives need the original age key. If the address changed, update `server.url`, DNS, and the GitHub App's webhook and callback URLs.
