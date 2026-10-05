@@ -2133,3 +2133,79 @@ func TestPauseServiceContext(t *testing.T) {
 		t.Errorf("paused count = %d after the context ended, want 0", n)
 	}
 }
+
+// localGoneFailStore fails recording that a backup's local file is gone.
+type localGoneFailStore struct{ Store }
+
+func (s localGoneFailStore) UpdateBackup(ctx context.Context, b store.Backup) error {
+	if b.Status == store.BackupSucceeded && !b.Local {
+		return errors.New("update failed")
+	}
+	return s.Store.UpdateBackup(ctx, b)
+}
+
+func TestUploadRecordsRemoteBeforeRemovingLocal(t *testing.T) {
+	e := newEnv(t)
+	e.setS3("")
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	e.setPolicy(sv.ID, func(p *PolicyInput) { p.KeepLocal = 0 })
+	e.m.store = localGoneFailStore{e.st}
+	b, err := e.m.BackUp(e.ctx, sv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.drain()
+	got := e.backup(b.ID)
+	if got.Status != store.BackupSucceeded || got.RemoteKey == "" || got.DestinationID == "" || got.RemoteError != "" {
+		t.Errorf("backup = %+v, want succeeded with its remote location recorded", got)
+	}
+}
+
+func TestRecoverUploading(t *testing.T) {
+	e := newEnv(t)
+	e.setS3("")
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	dest, err := e.m.destination(e.ctx)
+	if err != nil || dest == nil {
+		t.Fatalf("destination = %v, %v", dest, err)
+	}
+	e.remote.objects["k/present"] = []byte("x")
+	dir := filepath.Join(e.dir, sv.ID)
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "local.sql.zst"), []byte("x"), 0o600)
+
+	tests := []struct {
+		name       string
+		b          store.Backup
+		wantStatus store.BackupStatus
+		wantLocal  bool
+		wantRemote bool
+	}{
+		{"local file kept", store.Backup{File: "local.sql.zst", Local: true, RemoteKey: "k/present", DestinationID: dest.ID}, store.BackupSucceeded, true, false},
+		{"remote only", store.Backup{File: "gone.sql.zst", Local: true, RemoteKey: "k/present", DestinationID: dest.ID}, store.BackupSucceeded, false, true},
+		{"remote object missing", store.Backup{File: "gone.sql.zst", Local: true, RemoteKey: "k/absent", DestinationID: dest.ID}, store.BackupFailed, false, false},
+		{"nothing recorded", store.Backup{File: "gone.sql.zst", Local: true}, store.BackupFailed, false, false},
+	}
+	ids := make([]string, len(tests))
+	for i, tt := range tests {
+		tt.b.ServiceID, tt.b.Trigger, tt.b.Method, tt.b.Status = sv.ID, store.BackupManual, store.MethodDump, store.BackupUploading
+		b, err := e.st.CreateBackup(e.ctx, tt.b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = b.ID
+	}
+	if err := e.m.Recover(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i, tt := range tests {
+		got := e.backup(ids[i])
+		if got.Status != tt.wantStatus || got.Local != tt.wantLocal || (got.RemoteKey != "") != tt.wantRemote ||
+			(got.RemoteKey != "") != (got.DestinationID != "") || got.FinishedAt == nil {
+			t.Errorf("%s: backup = %+v", tt.name, got)
+		}
+		if got.Status == store.BackupSucceeded && !got.Local && got.RemoteKey == "" {
+			t.Errorf("%s: succeeded backup has no copy", tt.name)
+		}
+	}
+}

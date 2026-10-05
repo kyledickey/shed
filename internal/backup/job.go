@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -320,27 +321,39 @@ func (m *Manager) readVolumes(ctx context.Context, backupID, image string, vols 
 }
 
 // upload stores the archive of the uploading backup b in the destination d,
-// reached through r, and records b as succeeded with the outcome. With
-// keep_local 0, a successful upload removes the local file.
+// reached through r, and records b as succeeded with the outcome. The intended
+// destination and object key are recorded before the upload starts, and the
+// remote location is committed before the local file is removed. With
+// keep_local 0, a successful upload then removes the local file, so a crash
+// at any point leaves a copy that the row points to.
 func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput, r Remote, d store.BackupDestination) error {
 	key := objectKey(d, b.ServiceID, b.File)
-	if err := m.put(ctx, r, key, m.localPath(b)); err != nil {
-		b.RemoteError = err.Error()
-		m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
-	} else {
-		b.RemoteKey, b.DestinationID, b.RemoteError = key, d.ID, ""
-		if p.KeepLocal == 0 {
-			if err := os.Remove(m.localPath(b)); err != nil {
-				m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
-			} else {
-				b.Local = false
-			}
-		}
+	b.RemoteKey, b.DestinationID = key, d.ID
+	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
+		return fmt.Errorf("backup: record upload target: %w", err)
 	}
+	err := m.put(ctx, r, key, m.localPath(b))
 	finished := m.now()
 	b.Status, b.FinishedAt = store.BackupSucceeded, &finished
+	if err != nil {
+		b.RemoteKey, b.DestinationID, b.RemoteError = "", "", err.Error()
+		m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
+	} else {
+		b.RemoteError = ""
+	}
 	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
 		return fmt.Errorf("backup: record upload: %w", err)
+	}
+	if b.RemoteKey == "" || p.KeepLocal != 0 {
+		return nil
+	}
+	if err := os.Remove(m.localPath(b)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
+		return nil
+	}
+	b.Local = false
+	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
+		return fmt.Errorf("backup: record local removal: %w", err)
 	}
 	return nil
 }

@@ -51,6 +51,7 @@ type Store interface {
 	Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error)
 	DeleteBackup(ctx context.Context, id string) error
 	DeleteFailedBackupsBefore(ctx context.Context, t time.Time) (int64, error)
+	UploadingBackups(ctx context.Context) ([]store.Backup, error)
 	FailInterruptedBackups(ctx context.Context, msg string) (int64, error)
 	CreateRestore(ctx context.Context, r store.Restore) (store.Restore, error)
 	UpdateRestore(ctx context.Context, r store.Restore) error
@@ -256,14 +257,17 @@ func (m *Manager) checkService(ctx context.Context, serviceID string) error {
 }
 
 // Recover cleans up after an unclean stop: it marks queued and running
-// backups and running restores failed, uploading backups succeeded with an
-// upload error, removes partial files and leftover helper containers, and
+// backups and running restores failed, uploading backups succeeded (see
+// recoverUploads), removes partial files and leftover helper containers, and
 // finishes the restores that were interrupted while their service was
 // fenced. Those services get their previous data back if their volumes may
 // hold partial data; a service whose data cannot be put back stays stopped
 // and fenced until the fence is cleared, and the error is logged. Call Recover before anything starts
 // services, in particular before the deployer reconciles, and before Run.
 func (m *Manager) Recover(ctx context.Context) error {
+	if err := m.recoverUploads(ctx); err != nil {
+		return fmt.Errorf("backup: recover: %w", err)
+	}
 	if _, err := m.store.FailInterruptedBackups(ctx, errRestart); err != nil {
 		return fmt.Errorf("backup: recover: %w", err)
 	}
@@ -823,4 +827,54 @@ func (m *Manager) ForgetService(ctx context.Context, serviceID string) error {
 		return fmt.Errorf("backup: forget service %s: %w", serviceID, err)
 	}
 	return nil
+}
+
+// recoverUploads settles the backups whose upload a restart interrupted. One
+// whose local file exists stays local and records the upload as interrupted,
+// forgetting the intended remote location because the object may be missing
+// or partial. One without a local file is remote-only if its recorded object
+// can be read, and failed otherwise. A succeeded backup is never left
+// without a local file or a remote object.
+func (m *Manager) recoverUploads(ctx context.Context) error {
+	bs, err := m.store.UploadingBackups(ctx)
+	if err != nil {
+		return err
+	}
+	for _, b := range bs {
+		finished := m.now()
+		b.FinishedAt = &finished
+		_, statErr := os.Stat(m.localPath(b))
+		switch {
+		case statErr == nil:
+			b.Status, b.Local = store.BackupSucceeded, true
+			b.RemoteKey, b.DestinationID, b.RemoteError = "", "", errRestart
+		case m.remoteHas(ctx, b):
+			b.Status, b.Local, b.RemoteError = store.BackupSucceeded, false, ""
+		default:
+			b.Status, b.Local, b.Error = store.BackupFailed, false, errRestart
+			b.RemoteKey, b.DestinationID = "", ""
+		}
+		if err := m.store.UpdateBackup(ctx, b); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
+// remoteHas reports whether the object that b records exists.
+func (m *Manager) remoteHas(ctx context.Context, b store.Backup) bool {
+	if b.RemoteKey == "" || b.DestinationID == "" {
+		return false
+	}
+	r, err := m.remoteOf(ctx, b)
+	if err != nil {
+		m.log.Error("backup: recover: open destination", "backup", b.ID, "err", err)
+		return false
+	}
+	rc, err := r.Get(ctx, b.RemoteKey)
+	if err != nil {
+		return false
+	}
+	rc.Close()
+	return true
 }

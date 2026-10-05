@@ -534,6 +534,12 @@ service's running job, so it cannot be deleted and another backup cannot
 start. Once the upload's outcome is recorded, or right away when there is
 nothing to upload, the backup is `succeeded` and `finished_at` is set. Upload
 failure still ends `succeeded` but records `remote_error`.
+Before uploading, the intended `destination_id` and `remote_key` are
+recorded on the `uploading` row. After a successful upload, the row is
+committed `succeeded` with that remote location first; only then is the local
+file removed, and `local = false` recorded in a separate update. A failure
+removing the file or recording it leaves a valid backup. A failed upload
+clears the intended location.
 `keep_local = 0` (allowed only when uploading) deletes the local file only
 after a successful upload: without S3, or when the upload fails, the local
 file is kept, so a backup is never left without a copy. Removing the S3
@@ -655,9 +661,12 @@ manual steps below.
 
 **Boot, shutdown, and deletion.** On boot, before the deployer reconciles,
 `queued` and `running` backups and `running` restores are marked `failed`
-("interrupted by restart"), and `uploading` backups, whose archive is
-complete, are marked `succeeded` with that message as their `remote_error`.
-A backup that shutdown interrupts while `uploading` likewise ends `succeeded`
+("interrupted by restart"), and `uploading` backups are settled by what survives. With the local file
+present, the backup is `succeeded` and local, with that message as its
+`remote_error` and the intended remote location cleared. Without it, the
+backup is remote-only (`succeeded`, `local = false`) if the object at its
+recorded `remote_key` can be read, and `failed` otherwise. A succeeded backup
+therefore always has a local file or a remote object. A backup that shutdown interrupts while `uploading` likewise ends `succeeded`
 with the upload error. Leftover `.partial` files (archives, snapshots,
 downloads) and `shed.backup` helper containers are removed. Then each
 restore fence is resolved: in phase `retaining` the volumes are unchanged,

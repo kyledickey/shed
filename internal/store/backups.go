@@ -186,6 +186,15 @@ func (s *Store) BackupDestination(ctx context.Context, id string) (BackupDestina
 	return d, nil
 }
 
+// UploadingBackups returns every backup whose status is uploading.
+func (s *Store) UploadingBackups(ctx context.Context) ([]Backup, error) {
+	bs, err := queryAll(ctx, s, scanBackup, `SELECT `+backupCols+` FROM backups WHERE status = ?`, BackupUploading)
+	if err != nil {
+		return nil, fmt.Errorf("store: uploading backups: %w", err)
+	}
+	return bs, nil
+}
+
 // FailInterruptedBackups marks every queued or running backup as failed with
 // the error msg, and every uploading one, whose archive is complete, as
 // succeeded with the upload error msg. It returns how many it changed.
