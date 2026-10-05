@@ -738,6 +738,77 @@ func TestPruneAfterScheduledBackups(t *testing.T) {
 	}
 }
 
+// TestPruneKeepsQueuedRestoreSource checks that a scheduled backup's prune
+// keeps the archive of a backup that a queued restore uses.
+func TestPruneKeepsQueuedRestoreSource(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv/data")
+	e.docker.volumes["/srv/data"] = volumeTar("/srv/data", map[string]string{"f": "old"})
+	e.setPolicy(sv.ID, func(p *PolicyInput) { p.KeepLocal, p.Upload = 1, false })
+	scheduled := func(day int) store.Backup {
+		t.Helper()
+		e.clock.Set(time.Date(2026, 10, day, 3, 0, 30, 0, time.UTC))
+		b, err := e.m.enqueueBackup(e.ctx, sv.ID, store.BackupSchedule)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	old := scheduled(4)
+	e.drain()
+
+	scheduled(5)
+	r, err := e.m.Restore(e.ctx, old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.drain()
+	if got := mustLatestRestore(t, e, sv.ID); got.ID != r.ID || got.Status != store.RestoreSucceeded {
+		t.Fatalf("restore = %+v, want succeeded", got)
+	}
+	if got := e.docker.volumeFiles(volumeName(mustVolume(t, e, sv.ID))); got["f"] != "old" {
+		t.Errorf("restored volume = %v, want f=old", got)
+	}
+
+	// Once the restore is done, the next prune applies the policy.
+	scheduled(6)
+	e.drain()
+	if _, err := e.st.Backup(e.ctx, old.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("old backup after the next prune: %v, want it deleted", err)
+	}
+}
+
+// TestBackupBeingDestroyed checks that a backup whose archive is being
+// removed can be neither restored nor deleted again.
+func TestBackupBeingDestroyed(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv/data")
+	e.docker.volumes["/srv/data"] = volumeTar("/srv/data", map[string]string{"f": "x"})
+	b := e.backUp(sv.ID)
+	claimed, release := e.m.claim([]string{b.ID})
+	if !claimed[b.ID] {
+		t.Fatal("backup not claimed")
+	}
+	if _, err := e.m.Restore(e.ctx, b.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("Restore while deleting = %v, want ErrBusy", err)
+	}
+	if err := e.m.Delete(e.ctx, b.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("Delete while deleting = %v, want ErrBusy", err)
+	}
+	release()
+
+	// A queued restore pins the backup in turn.
+	if _, err := e.m.Restore(e.ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, _ := e.m.claim([]string{b.ID}); claimed[b.ID] {
+		t.Error("backup of a queued restore was claimed")
+	}
+	if err := e.m.Delete(e.ctx, b.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("Delete of a restore's backup = %v, want ErrBusy", err)
+	}
+}
+
 func TestDeleteFailedBackupsAfter30Days(t *testing.T) {
 	e := newEnv(t)
 	sv := e.service("postgres", true, "/var/lib/postgresql")

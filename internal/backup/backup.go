@@ -201,6 +201,9 @@ type Manager struct {
 	wake    chan struct{}
 	next    map[string]scheduled // by target
 	paused  map[string]int       // pauses by service ID
+	// destroying holds the IDs of backups whose archives Delete or prune
+	// is removing. Restore refuses them.
+	destroying map[string]bool
 }
 
 // New returns a Manager. Call Recover and then Run.
@@ -218,16 +221,17 @@ func New(cfg Config) *Manager {
 		newRemote = func(S3Config) (Remote, error) { return nil, errors.New("S3 is not available") }
 	}
 	return &Manager{
-		store:     cfg.Store,
-		docker:    cfg.Docker,
-		services:  cfg.Services,
-		newRemote: newRemote,
-		dir:       cfg.Dir,
-		log:       log,
-		now:       func() time.Time { return now().UTC().Truncate(time.Millisecond) },
-		wake:      make(chan struct{}, 1),
-		next:      make(map[string]scheduled),
-		paused:    make(map[string]int),
+		store:      cfg.Store,
+		docker:     cfg.Docker,
+		services:   cfg.Services,
+		newRemote:  newRemote,
+		dir:        cfg.Dir,
+		log:        log,
+		now:        func() time.Time { return now().UTC().Truncate(time.Millisecond) },
+		wake:       make(chan struct{}, 1),
+		next:       make(map[string]scheduled),
+		paused:     make(map[string]int),
+		destroying: make(map[string]bool),
 	}
 }
 
@@ -439,6 +443,34 @@ func (m *Manager) jobs() []*job {
 	return append([]*job{m.running}, m.queue...)
 }
 
+// inUse reports whether a queued or running job uses the backup id, as the
+// backup it writes or the backup it restores, or its archives are being
+// removed. The caller holds m.mu.
+func (m *Manager) inUse(id string) bool {
+	return m.destroying[id] || slices.ContainsFunc(m.jobs(), func(j *job) bool { return j.backup.ID == id })
+}
+
+// claim marks the backups ids that are not in use as being destroyed and
+// returns them. Call the returned function once their archives are removed
+// and their records updated.
+func (m *Manager) claim(ids []string) (claimed map[string]bool, release func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	claimed = make(map[string]bool)
+	for _, id := range ids {
+		if !m.inUse(id) {
+			claimed[id], m.destroying[id] = true, true
+		}
+	}
+	return claimed, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for id := range claimed {
+			delete(m.destroying, id)
+		}
+	}
+}
+
 // push queues j. The caller holds m.mu.
 func (m *Manager) push(j *job) {
 	j.done = make(chan struct{})
@@ -570,6 +602,17 @@ func (m *Manager) Backups(ctx context.Context, serviceID string, limit int) ([]s
 // service is already queued or running or the service is paused, and
 // ErrFenced if a failed restore left the service fenced.
 func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, error) {
+	// The backup is read and its restore queued under m.mu, so that Delete
+	// and prune either see the queued restore and keep the archive, or
+	// have removed it before the backup is read.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped {
+		return store.Restore{}, ErrStopped
+	}
+	if m.destroying[backupID] {
+		return store.Restore{}, ErrBusy
+	}
 	b, err := m.store.Backup(ctx, backupID)
 	if err != nil {
 		return store.Restore{}, fmt.Errorf("backup: %w", err)
@@ -581,11 +624,6 @@ func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, 
 		return store.Restore{}, invalidf("only successful backups can be restored")
 	case !b.Local && b.RemoteKey == "":
 		return store.Restore{}, invalidf("the backup's archive no longer exists")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.stopped {
-		return store.Restore{}, ErrStopped
 	}
 	if m.paused[b.ServiceID] > 0 || m.busy(b.ServiceID, true) {
 		return store.Restore{}, ErrBusy
@@ -612,13 +650,12 @@ func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, 
 }
 
 // Delete deletes a backup: its local archive, its S3 object, and its record.
-// It returns ErrBusy while the backup is queued or running, or a queued
-// restore uses it.
+// It returns ErrBusy while the backup is queued or running, a queued or
+// running restore uses it, or it is already being deleted.
 func (m *Manager) Delete(ctx context.Context, backupID string) error {
-	m.mu.Lock()
-	busy := slices.ContainsFunc(m.jobs(), func(j *job) bool { return j.backup.ID == backupID })
-	m.mu.Unlock()
-	if busy {
+	claimed, release := m.claim([]string{backupID})
+	defer release()
+	if !claimed[backupID] {
 		return ErrBusy
 	}
 	b, err := m.store.Backup(ctx, backupID)

@@ -593,7 +593,9 @@ with `keep_local = 0`, only backups that are in S3 lose their local file.
 While the policy uploads, `keep_remote` works the same way for S3 objects;
 with upload off, S3 objects are left alone. A pruned backup with neither a
 local file nor a remote object is deleted. Manual and pre-restore backups are
-never pruned automatically.
+never pruned automatically. A backup used by a queued or running restore keeps
+its file and object until a later prune. While pruning or deletion removes an
+archive, a restore or delete of that backup returns `ErrBusy` (409).
 
 **Restore.** `POST /api/backups/{id}/restore` creates a `restores` row
 (`running` while it waits in the queue) and runs in the background. Restores
@@ -890,8 +892,8 @@ GET    /api/backups/system                      → SystemBackups
 PUT    /api/backups/system/policy  BackupPolicyInput → BackupPolicy
 POST   /api/backups/system                      202 → Backup
 GET    /api/backups/{id}/download               archive, decrypted, still zstd-compressed (Content-Disposition)
-POST   /api/backups/{id}/restore                202 → Restore  (409 if busy or fenced; 400 for shed.db, unsuccessful, or vanished backups)
-DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running/uploading or being restored)
+POST   /api/backups/{id}/restore                202 → Restore  (409 if busy, fenced, or archive being deleted/pruned; 400 for shed.db, unsuccessful, or vanished backups)
+DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running/uploading, used by a restore, or being deleted/pruned)
 GET    /api/backups/settings                    → BackupSettings
 PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
 POST   /api/backups/settings/test  BackupSettingsInput → 204  (400 {error} with the S3 failure; blank secret = stored)

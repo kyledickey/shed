@@ -411,15 +411,28 @@ func retention(bs []store.Backup, p PolicyInput) (dropLocal, dropRemote map[stri
 
 // prune applies the retention of policy p to a target's scheduled backups.
 // Backups left with neither a local file nor an S3 object are deleted.
+// Backups that a queued or running restore uses keep their archives until a
+// later prune.
 func (m *Manager) prune(ctx context.Context, serviceID string, p PolicyInput) error {
 	bs, err := m.store.Backups(ctx, serviceID, 0)
 	if err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
 	dropLocal, dropRemote := retention(bs, p)
+	var drop []string
+	for _, b := range bs {
+		if dropLocal[b.ID] || dropRemote[b.ID] {
+			drop = append(drop, b.ID)
+		}
+	}
+	claimed, release := m.claim(drop)
+	defer release()
 	remotes := make(map[string]Remote) // by destination ID
 	var errs []error
 	for _, b := range bs {
+		if !claimed[b.ID] {
+			continue
+		}
 		changed := false
 		if dropLocal[b.ID] {
 			if err := os.Remove(m.localPath(b)); err == nil || errors.Is(err, os.ErrNotExist) {

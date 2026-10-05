@@ -116,6 +116,7 @@ After each scheduled backup, shed prunes that target's backups. Only `succeeded`
 - With `keepLocal = 0`, only backups that are in S3 lose their local file, so a failed upload never leaves a backup without a copy.
 - While the policy uploads, `keepRemote` works the same way for S3 objects. With upload off, S3 objects are left alone.
 - A pruned backup with neither a local file nor an S3 object is deleted.
+- A backup that a queued or running restore uses keeps its file and object; the next prune after the restore applies the policy to it. While a prune or a delete is removing a backup's archive, restoring or deleting that backup answers 409.
 
 <RetentionSim />
 
