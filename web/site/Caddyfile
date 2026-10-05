@@ -1,0 +1,21 @@
+# Serves the prerendered site. TLS is terminated by the proxy in front of it.
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+
+	# The installer is a release asset; shed.land/install.sh is its stable URL.
+	redir /install.sh https://github.com/kyledickey/shed/releases/latest/download/install.sh 302
+
+	redir /docs /docs/overview
+	redir /docs/ /docs/overview
+
+	header /assets/* Cache-Control "public, max-age=31536000, immutable"
+
+	try_files {path} {path}.html {path}/index.html
+	file_server
+}

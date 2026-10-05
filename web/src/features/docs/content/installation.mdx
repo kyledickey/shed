@@ -10,7 +10,7 @@ description: One command sets up a fresh Linux server, and shed updates itself f
 On a fresh Linux server (amd64 or arm64) with systemd, run:
 
 ```sh
-curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://shed.land/install.sh | sudo bash
 ```
 
 The installer:
@@ -40,7 +40,7 @@ Every other key keeps its default. See [Configuration](/docs/configuration) to c
 Every prompt has an environment variable. With `SHED_YES=1`, or when there is no terminal, the installer asks nothing and fails if a required value is missing.
 
 ```sh
-curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo \
+curl -fsSL https://shed.land/install.sh | sudo \
   SHED_DOMAIN=shed.example.com \
   SHED_BASE_DOMAIN=apps.example.com \
   SHED_ACME_EMAIL=you@example.com \

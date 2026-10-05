@@ -1,0 +1,119 @@
+.site {
+  --header-h: 56px;
+  --docs-header: var(--header-h);
+
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+:global(html) {
+  scroll-padding-top: var(--header-h, 56px);
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in oklch, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  max-width: 1320px;
+  height: var(--header-h);
+  margin: 0 auto;
+  padding: 0 var(--space-8);
+
+  @media (max-width: 820px) {
+    padding: 0 var(--space-5);
+  }
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.nav {
+  display: flex;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.navLink {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+
+  &:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+}
+
+.current {
+  color: var(--ink);
+  background: var(--active);
+}
+
+.main {
+  flex: 1;
+}
+
+.footer {
+  border-top: 1px solid var(--line-soft);
+}
+
+.footerBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-8);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+
+  @media (max-width: 820px) {
+    padding: var(--space-5);
+  }
+}
+
+.footerBrand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.footerNav {
+  display: flex;
+  gap: var(--space-5);
+  margin-left: auto;
+
+  & a:hover {
+    color: var(--ink);
+  }
+}

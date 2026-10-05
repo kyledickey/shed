@@ -22,7 +22,7 @@ See [docs/design.md](docs/design.md) for how it works.
 ## Install
 
 ```sh
-curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://shed.land/install.sh | sudo bash
 ```
 
 The installer adds whatever is missing (Docker with buildx, `git`, `railpack`),
@@ -36,7 +36,7 @@ To run it unattended, pass the answers as environment variables
 (`SHED_BASE_DOMAIN`, `SHED_ACME_EMAIL`, and `SHED_VERSION` are optional):
 
 ```sh
-curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh \
+curl -fsSL https://shed.land/install.sh \
   | sudo SHED_DOMAIN=shed.example.com SHED_ALLOWED_USERS=your-github-login SHED_YES=1 bash
 ```
 

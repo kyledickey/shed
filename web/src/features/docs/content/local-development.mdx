@@ -84,6 +84,21 @@ Open `http://localhost:5173` (or whatever origin you put in `server.url`). Edits
 
 `web/dist` is gitignored apart from a `.gitkeep`, which is why `go run` compiles on a fresh clone.
 
+## The public site
+
+`web/site/` is a second Vite app: a home page plus these docs, built from the same MDX files and components as the dashboard. It is not embedded in the binary.
+
+```sh
+cd web
+bun run site:dev                # dev server with hot reload
+bun run site:build              # or `make site` from the repository root
+bun run site:preview            # serve the build
+```
+
+`site:build` makes a client build, a server build, and then runs `site/prerender.ts`, which renders every page to `site-dist/client`: `index.html` for the home page and `docs/<slug>.html` for each docs page. Crawlers get the full content as HTML, and the browser hydrates it into the app. It also writes `sitemap.xml` and `robots.txt` for `https://shed.land`.
+
+`web/site/Dockerfile` builds the site and serves it with Caddy on `PORT` (default 8080). Caddy also redirects `/install.sh` to the latest release's installer, which is what makes `https://shed.land/install.sh` work. To deploy it on shed, create an app from this repository with root directory `web` and Dockerfile path `site/Dockerfile`.
+
 ## Tests and checks
 
 ```sh

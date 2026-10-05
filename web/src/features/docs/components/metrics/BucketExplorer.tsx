@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Segmented } from "../../../../components/Form";
 import { Diagram, Edge, Node, Note } from "../../diagram";
 import { Demo, DocTable, Figure } from "../../kit";
@@ -10,11 +10,15 @@ const ranges = (Object.keys(rangeSeconds) as BucketRange[]).map((r) => ({ value:
 const hms = (sec: number) => new Date(sec * 1000).toISOString().slice(11, 19);
 const stamp = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 19).replace("T", " ");
 
+/** A fixed instant (2026-01-01 00:12:17 UTC) for the first render, so prerendered HTML hydrates. */
+const sampleNow = 1_767_226_337;
+
 /** BucketExplorer shows the window a metrics query covers. */
 export function BucketExplorer() {
   const [range, setRange] = useState<BucketRange>("1h");
   const [hasSamples, setHasSamples] = useState(true);
-  const [now] = useState(() => Math.floor(Date.now() / 1000));
+  const [now, setNow] = useState(sampleNow);
+  useEffect(() => setNow(Math.floor(Date.now() / 1000)), []);
   const w = bucketWindow(now, range, hasSamples);
   return (
     <Demo title="The window of a query">

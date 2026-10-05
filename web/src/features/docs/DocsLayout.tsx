@@ -16,14 +16,19 @@ function useCurrentSlug(): string | undefined {
 /**
  * useScrollSpy returns the id of the section the reader is in: the last
  * section whose heading has scrolled past the top third of the scroller.
+ * The scroller is the enclosing <main> if it scrolls (the dashboard panel),
+ * or else the page (the public site).
  */
 function useScrollSpy(ids: readonly string[], root: HTMLElement | null): string | undefined {
   const [active, setActive] = useState<string | undefined>(ids[0]);
   useEffect(() => {
-    const scroller = root?.closest("main");
-    if (!scroller) return;
+    const main = root?.closest("main");
+    if (!main) return;
+    const ownScroll = ["auto", "scroll"].includes(getComputedStyle(main).overflowY);
+    const scroller = ownScroll ? main : document.documentElement;
+    const target = ownScroll ? main : window;
     const update = () => {
-      const top = scroller.getBoundingClientRect().top + scroller.clientHeight / 3;
+      const top = (ownScroll ? main.getBoundingClientRect().top : 0) + scroller.clientHeight / 3;
       let current = ids[0];
       for (const id of ids) {
         const el = document.getElementById(id);
@@ -36,8 +41,8 @@ function useScrollSpy(ids: readonly string[], root: HTMLElement | null): string 
       setActive(current);
     };
     update();
-    scroller.addEventListener("scroll", update, { passive: true });
-    return () => scroller.removeEventListener("scroll", update);
+    target.addEventListener("scroll", update, { passive: true });
+    return () => target.removeEventListener("scroll", update);
   }, [ids, root]);
   return active;
 }

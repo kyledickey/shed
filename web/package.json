@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vp dev",
     "build": "vp build && touch dist/.gitkeep",
+    "site:dev": "vp dev -c vite.site.config.ts",
+    "site:build": "vp build -c vite.site.config.ts && vp build -c vite.site.config.ts --ssr server.tsx && bun site/prerender.ts",
+    "site:preview": "vp preview -c vite.site.config.ts",
     "preview": "vp preview",
     "check": "vp check",
     "lint": "vp lint",
