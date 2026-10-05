@@ -478,7 +478,7 @@ age. Archives are standard formats, so they can be recovered by hand with
 |---|---|---|---|---|
 | postgres | yes | `dump` | `pg_dumpall --clean --if-exists` (plain SQL) | `<id>.sql.zst` |
 | mysql | yes | `dump` | `mysqldump --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF` | `<id>.sql.zst` |
-| mongo | yes | `dump` | `mongodump --archive` (uncompressed; zstd compresses better) | `<id>.archive.zst` |
+| mongo | yes | `dump` | `mongodump --archive` under `fsyncLock` (uncompressed; zstd compresses better) | `<id>.archive.zst` |
 | redis | yes | `dump` | `BGSAVE`, wait for it to finish, then the RDB file | `<id>.rdb.zst` |
 | database | no | `volume` | tar of its volumes (consistent because the server is stopped) | `<id>.tar.zst` |
 | app | either | `volume` | tar of its volumes, read live | `<id>.tar.zst` |
@@ -498,6 +498,14 @@ of hanging. A failed command's error ends with the last 4 KiB of its stderr.
 The redis dump waits until no background save is running, starts `BGSAVE SCHEDULE`, waits
 until `rdb_saves` has advanced and no save is in progress, checks
 `rdb_last_bgsave_status:ok`, and streams `/data/dump.rdb` (redis 7 or newer).
+
+Standalone mongo dumps hold `fsyncLock` so collections are read from a stable
+state. Writes pause for the whole dump; reads continue. A watchdog in the
+container watches `/tmp/shed-backup-<backupID>` and ends a dump that writes
+nothing for 60 seconds or whose `run` file is removed after cancellation or
+failure. The dump script releases the server-held lock on exit. If that script
+is killed, the watchdog releases it and retries unlock failures. A dump ended
+by the watchdog fails rather than publishing a partial archive.
 
 Volume archives are read with the Docker archive API from a helper container:
 it is created but never started, uses the active deployment's image, mounts

@@ -542,3 +542,160 @@ func TestIntegrationStoppedPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// blockedWriter blocks every write until done is closed, like a shed that
+// hangs or died while reading a dump.
+type blockedWriter struct{ done chan struct{} }
+
+func (w blockedWriter) Write(p []byte) (int, error) {
+	<-w.done
+	return 0, errors.New("closed")
+}
+
+// TestIntegrationMongoWriteLock checks the write lock of mongo dumps, as an
+// app on the network sees it: writes wait while a dump runs, and resume
+// soon after the dump stalls because shed stopped reading it, or shed drops
+// the dump, whether or not it could end it. Execs into the database's
+// container hang while a dump's output is not read, so a client container
+// does the writes.
+func TestIntegrationMongoWriteLock(t *testing.T) {
+	e := newITEnv(t)
+	s := e.catalogService("mongo")
+	e.waitReady(s, "mongod", `mongosh --quiet --eval 'db.runCommand({ping: 1}).ok' | grep -q 1`)
+	const auth = `-u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin`
+	// Enough data that the dump fills the pipes and blocks.
+	e.mustSh(s, `mongosh --quiet `+auth+` --eval 'const t = db.getSiblingDB("app").big; for (let i = 0; i < 40; i++) {
+		t.insertMany(Array.from({length: 100}, () => ({s: Array.from({length: 120}, () => Math.random().toString(36)).join("")})));
+	}'`)
+	user := e.mustSh(s, `printf %s "$MONGO_INITDB_ROOT_USERNAME"`)
+	pw := e.mustSh(s, `printf %s "$MONGO_INITDB_ROOT_PASSWORD"`)
+	ctr, err := e.dc.Inspect(e.ctx, e.container(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := e.dc.Run(e.ctx, docker.RunSpec{
+		Name: "shed-it-client-" + s.sv.ID, Image: "mongo:8", Cmd: []string{"sleep", "infinity"},
+		Labels: map[string]string{"shed.it": s.sv.ID}, // Removed with the service.
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canWrite := func() bool {
+		cmd := []string{"timeout", "3", "mongosh", "--quiet", "--host", ctr.IPs["bridge"], "-u", user, "-p", pw,
+			"--authenticationDatabase", "admin", "--eval", `db.getSiblingDB("app").w.insertOne({x: 1})`}
+		return e.dc.Exec(e.ctx, client, cmd, nil, io.Discard, io.Discard) == nil
+	}
+	waitWrites := func(want bool, what string) {
+		t.Helper()
+		start := time.Now()
+		for canWrite() != want {
+			if time.Since(start) > 45*time.Second {
+				t.Fatalf("writes did not %s", what)
+			}
+		}
+		t.Logf("writes %s after %v", what, time.Since(start).Round(time.Second))
+	}
+
+	for _, tt := range []struct {
+		name  string
+		stall int
+		// drop cancels the exec, as a canceled job or a crash of shed
+		// does; end then removes the run file, as shed does after a
+		// canceled or failed dump.
+		drop, end bool
+	}{
+		{name: "shed stops reading", stall: 3},
+		{name: "shed cancels the dump", stall: 600, drop: true, end: true},
+		{name: "shed dies", stall: 5, drop: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := "/tmp/shed-backup-" + store.NewID()
+			w := blockedWriter{done: make(chan struct{})}
+			ctx, cancel := context.WithCancel(e.ctx)
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				e.dc.Exec(ctx, e.container(s), []string{"sh", "-c", mongoDump(dir, tt.stall)}, nil, w, io.Discard)
+			})
+			unblock := sync.OnceFunc(func() { cancel(); close(w.done); wg.Wait() })
+			defer unblock()
+
+			waitWrites(false, "stop while the dump runs")
+			if tt.drop {
+				unblock()
+			}
+			if tt.end {
+				e.mustSh(s, "rm -f '"+dir+"/run'")
+			}
+			waitWrites(true, "resume")
+			unblock()
+
+			unlock := `try { db.adminCommand({fsyncUnlock: 1}); print("was locked") } catch (e) { print(e.message) }`
+			if out, _ := e.sh(s, `mongosh --quiet `+auth+` --eval '`+unlock+`'`); !strings.Contains(out, "not locked") {
+				t.Errorf("fsyncUnlock after the dump: %q, want not locked", out)
+			}
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				if _, err := e.sh(s, "test -e '"+dir+"'"); err != nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s left behind", dir)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		})
+	}
+}
+
+// TestIntegrationMongoConsistent checks that a mongo dump taken while an app
+// writes to two collections in step sees both at the same moment.
+func TestIntegrationMongoConsistent(t *testing.T) {
+	e := newITEnv(t)
+	s := e.catalogService("mongo")
+	const auth = `-u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin`
+	e.waitReady(s, "mongod", `mongosh --quiet --eval 'db.runCommand({ping: 1}).ok' | grep -q 1`)
+	pad := `Array.from({length: 60}, () => Math.random().toString(36)).join("")`
+	e.mustSh(s, fmt.Sprintf(`mongosh --quiet %s --eval 'const d = db.getSiblingDB("app");
+		for (let i = 0; i < 20; i++) { d.a.insertMany(Array.from({length: 100}, () => ({p: %s}))); d.b.insertMany(Array.from({length: 100}, () => ({p: %s}))); }'`,
+		auth, pad, pad))
+
+	// The writer adds one document to a, then one to b, until stopped.
+	wctx, stop := context.WithCancel(e.ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		e.dc.Exec(wctx, e.container(s), []string{"sh", "-c", fmt.Sprintf(`mongosh --quiet %s --eval 'const d = db.getSiblingDB("app");
+			while (!require("fs").existsSync("/tmp/stop-writer")) { const p = %s; d.a.insertOne({p}); d.b.insertOne({p}); }'`, auth, pad)},
+			nil, io.Discard, io.Discard)
+	})
+	time.Sleep(2 * time.Second)
+	b := e.backUp(s)
+	e.mustSh(s, "touch /tmp/stop-writer")
+	wg.Wait()
+	stop()
+
+	rc, err := e.m.Open(e.ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	archive, err := decompress(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	var errOut bytes.Buffer
+	script := `mongorestore --quiet ` + auth + ` --archive --nsInclude 'app.*' --nsFrom 'app.*' --nsTo 'check.*'`
+	if err := e.dc.Exec(e.ctx, e.container(s), []string{"sh", "-c", script}, archive, io.Discard, &errOut); err != nil {
+		t.Fatalf("%v: %s", err, errOut.String())
+	}
+	got := e.mustSh(s, `mongosh --quiet `+auth+` --eval 'const d = db.getSiblingDB("check"); print(d.a.countDocuments() + " " + d.b.countDocuments())'`)
+	var na, nb int
+	if _, err := fmt.Sscan(got, &na, &nb); err != nil {
+		t.Fatalf("counts %q: %v", got, err)
+	}
+	// The lock can fall between the two inserts of one step.
+	if na != nb && na != nb+1 {
+		t.Errorf("dump has %d documents in a and %d in b, want the same or one more in a", na, nb)
+	}
+	t.Logf("dump has %d documents in a and %d in b", na, nb)
+}

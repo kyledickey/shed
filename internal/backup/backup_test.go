@@ -2382,7 +2382,11 @@ func TestRecoverUploading(t *testing.T) {
 // TestEngineScriptsParse checks the shell syntax of every engine script.
 func TestEngineScriptsParse(t *testing.T) {
 	for kind, eng := range engines {
-		for what, script := range map[string]string{"dump": eng.dump, "restore": eng.restore, "ready": eng.ready} {
+		dump := eng.dump
+		if kind == "mongo" {
+			dump = mongoDump("/tmp/shed-backup-x", 60)
+		}
+		for what, script := range map[string]string{"dump": dump, "restore": eng.restore, "ready": eng.ready} {
 			if script == "" {
 				continue
 			}
@@ -2390,5 +2394,50 @@ func TestEngineScriptsParse(t *testing.T) {
 				t.Errorf("%s %s: %v: %s", kind, what, err, out)
 			}
 		}
+	}
+}
+
+// TestDumpMongoEnd checks that shed ends a mongo dump that failed or was
+// canceled, since the dump and its write lock outlive the aborted exec.
+func TestDumpMongoEnd(t *testing.T) {
+	tests := []struct {
+		name      string
+		fail      func(e *testEnv, ctx context.Context) error
+		wantError string
+	}{
+		{name: "succeeds"},
+		{name: "fails", fail: func(*testEnv, context.Context) error { return &docker.ExitError{Code: 1} }, wantError: "exit status 1"},
+		{name: "canceled", fail: func(e *testEnv, ctx context.Context) error {
+			e.m.mu.Lock()
+			e.m.running.cancel(nil)
+			e.m.mu.Unlock()
+			<-ctx.Done()
+			return ctx.Err()
+		}, wantError: errShutdown.Error()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			sv := e.service("mongo", true, "/data/db")
+			b, err := e.m.BackUp(e.ctx, sv.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.fail != nil {
+				e.docker.dumpHook = func(ctx context.Context) error { return tt.fail(e, ctx) }
+			}
+			e.drain()
+			got := e.backup(b.ID)
+			if tt.fail == nil && got.Status != store.BackupSucceeded || tt.fail != nil && !strings.Contains(got.Error, tt.wantError) {
+				t.Errorf("backup = %+v, want error %q", got, tt.wantError)
+			}
+			end := []string{"rm -f '/tmp/shed-backup-" + b.ID + "/run'"}
+			if tt.fail == nil {
+				end = nil
+			}
+			if ran := e.docker.ran(); !reflect.DeepEqual(ran, end) {
+				t.Errorf("scripts after the dump %q, want %q", ran, end)
+			}
+		})
 	}
 }

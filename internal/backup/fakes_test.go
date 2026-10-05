@@ -77,6 +77,10 @@ type fakeDocker struct {
 	isolated   map[string]string
 	removeErrs map[string]error // returned by Remove, by container name
 	readyErr   error            // returned by execs other than dumps and restores
+	runs       []string         // scripts of execs other than dumps and restores
+	// dumpHook is called by dump execs before they write the dump; an
+	// error aborts the exec.
+	dumpHook func(ctx context.Context) error
 }
 
 // fakeFile is an entry of a named volume, by its path in the volume.
@@ -171,7 +175,19 @@ func (f *fakeDocker) Exec(ctx context.Context, id string, cmd []string, stdin io
 		f.rec.add("exec %s run", id)
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		f.runs = append(f.runs, script)
 		return f.readyErr
+	}
+	if stdin == nil {
+		f.mu.Lock()
+		hook := f.dumpHook
+		f.mu.Unlock()
+		if hook != nil {
+			if err := hook(ctx); err != nil {
+				f.rec.add("exec %s dump aborted", id)
+				return err
+			}
+		}
 	}
 	if stdin != nil {
 		kind = "restore"
@@ -548,4 +564,11 @@ func (r *fakeRemote) keys() []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// ran returns the scripts of execs other than dumps and restores.
+func (f *fakeDocker) ran() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.runs)
 }

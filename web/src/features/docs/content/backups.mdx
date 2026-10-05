@@ -17,7 +17,7 @@ What gets archived depends on the service and on what it is doing when the backu
 | -------- | --------- | ------ | ----------------------------------------------------------------------------------------------------- | ------------------ |
 | postgres | running   | dump   | `pg_dumpall --clean --if-exists`                                                                      | `<id>.sql.zst`     |
 | mysql    | running   | dump   | `mysqldump --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF` | `<id>.sql.zst`     |
-| mongo    | running   | dump   | `mongodump --archive`                                                                                 | `<id>.archive.zst` |
+| mongo    | running   | dump   | `mongodump --archive` under `fsyncLock`                                                               | `<id>.archive.zst` |
 | redis    | running   | dump   | `BGSAVE`, then the RDB file                                                                           | `<id>.rdb.zst`     |
 | database | stopped   | volume | tar of its volumes                                                                                    | `<id>.tar.zst`     |
 | app      | either    | volume | tar of its volumes, read live                                                                         | `<id>.tar.zst`     |
@@ -28,6 +28,18 @@ Encrypted archives get a `.age` suffix. The method is chosen when the backup is 
 ### How dumps authenticate
 
 Dumps run with `docker exec` in the active container, through `sh -c`, so credentials come from the container's own environment: `POSTGRES_USER`/`POSTGRES_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `MONGO_INITDB_ROOT_*`, `REDIS_PASSWORD`. Passwords never appear on a command line. They go through `PGPASSWORD`, `MYSQL_PWD`, and `REDISCLI_AUTH`, and the mongo tools read theirs from a private `--config` file. A failed command's error ends with the last 4 KiB of its stderr.
+
+### Consistent mongo dumps
+
+Without a replica set's oplog, `mongodump` reads each collection at a different moment, so a dump taken while an app writes would mix states. shed blocks writes for the length of the dump with `fsyncLock`; reads go on, and writes wait, then complete once the lock is released. Replica sets are not supported.
+
+The lock belongs to the server, not to the connection that took it, so the dump script guards it with a watchdog in the container, using `/tmp/shed-backup-<backupID>`:
+
+- The watchdog ends the dump if `mongodump` writes nothing for 60 seconds, for example because shed hung, or if shed removes the `run` file in that directory, which it does when the backup fails or is canceled. Either way the dump fails and the lock is released within seconds.
+- The script releases the lock when the dump ends for any reason. If the script itself is killed, the watchdog releases it, and it keeps retrying until mongod accepts the unlock.
+- A restart of mongod drops the lock, too.
+
+Mongo dumps therefore pause writes for as long as the dump runs, typically seconds for small databases. Schedule backups when brief write pauses are acceptable, or stop the service to get a volume backup instead.
 
 The redis dump waits until no background save is running, starts `BGSAVE SCHEDULE`, waits until `rdb_saves` has advanced, checks `rdb_last_bgsave_status:ok`, and streams `/data/dump.rdb`. It needs redis 7 or newer.
 

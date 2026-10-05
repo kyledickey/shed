@@ -170,8 +170,31 @@ func (m *Manager) produce(ctx context.Context, b *store.Backup, level string) er
 	}
 	eng := engines[sv.Kind]
 	return m.writeArchive(ctx, b, store.MethodDump, eng.ext, level, recipient, func(w io.Writer) error {
+		if sv.Kind == "mongo" {
+			return m.dumpMongo(ctx, d.ContainerID, b.ID, w)
+		}
 		return execScript(ctx, m.docker, d.ContainerID, sv.Kind+" dump", eng.dump, nil, w)
 	})
+}
+
+// dumpMongo writes a dump of the mongo database in container cid to w with
+// mongoDump. If the dump fails or is canceled, which leaves it running in
+// the container, its run file is removed, so the dump ends and the write
+// lock is released within seconds. If that fails too, the dump ends once it
+// has stalled for m.mongoStall.
+func (m *Manager) dumpMongo(ctx context.Context, cid, backupID string, w io.Writer) error {
+	dir := "/tmp/shed-backup-" + backupID
+	stall := max(1, int(m.mongoStall/time.Second))
+	err := execScript(ctx, m.docker, cid, "mongo dump", mongoDump(dir, stall), nil, w)
+	if err == nil {
+		return nil
+	}
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if aerr := execScript(actx, m.docker, cid, "mongo dump end", "rm -f '"+dir+"/run'", nil, io.Discard); aerr != nil {
+		m.log.Warn("backup: end a failed mongo dump; it ends once it has stalled", "backup", backupID, "err", aerr)
+	}
+	return err
 }
 
 // setMethod records the method a backup ended up using, when the service's

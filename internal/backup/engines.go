@@ -16,7 +16,8 @@ import (
 type engine struct {
 	// ext is the archive extension before ".zst".
 	ext string
-	// dump writes the dump to stdout.
+	// dump writes the dump to stdout. It is empty for mongo, which uses
+	// mongoDump.
 	dump string
 	// restore reads a dump from stdin. It is empty for redis, whose RDB file
 	// is restored into the stopped service's volume instead.
@@ -58,8 +59,8 @@ exec mysqldump -uroot --all-databases --single-transaction --routines --events -
 		ready:   serverIs("mysqld") + `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin -uroot ping >/dev/null`,
 	},
 	"mongo": {
-		ext:     "archive",
-		dump:    mongoAuth + `mongodump --quiet --archive "$@"`,
+		ext: "archive",
+		// The dump is mongoDump, which also holds a write lock.
 		restore: mongoAuth + mongoDropDatabases + `mongorestore --quiet --archive --drop "$@"`,
 		ready: serverIs("mongod") + `mongosh --quiet --nodb --eval '
 const r = new Mongo("mongodb://127.0.0.1:27017/?directConnection=true").getDB("admin").runCommand({ping: 1});
@@ -155,6 +156,100 @@ if [ -n "$MONGO_INITDB_ROOT_USERNAME" ]; then
 	set -- --username "$MONGO_INITDB_ROOT_USERNAME" --authenticationDatabase admin --config "$cfg"
 fi
 `
+
+// mongoDump returns a script that writes a consistent dump of a standalone
+// mongod to stdout. mongodump without a replica set's oplog reads each
+// collection at a different time, so writes are blocked with fsyncLock while
+// it runs; reads go on. The lock outlives the connection that took it, so a
+// watchdog started before the lock ends the dump when it stalls: when
+// mongodump has written nothing for stall seconds, because shed stopped
+// reading or went away, or when dir/run is removed, which shed does to end
+// the dump early. The lock is released as soon as the dump ends, by the
+// script or, if the script itself was killed, by the watchdog, which keeps
+// trying. A dump the watchdog ended fails. Only stopping mongod, which drops
+// the lock, bypasses all this.
+func mongoDump(dir string, stall int) string {
+	return mongoAuth + fmt.Sprintf("set +e\ndir='%s'\nstall=%d\n", dir, stall) + `fsync() {
+	SHED_FSYNC=$1 mongosh --quiet --nodb --eval '
+const admin = new Mongo("mongodb://127.0.0.1:27017/?directConnection=true").getDB("admin");
+const user = process.env.MONGO_INITDB_ROOT_USERNAME;
+if (user) admin.auth(user, process.env.MONGO_INITDB_ROOT_PASSWORD);
+const lock = process.env.SHED_FSYNC == "lock";
+try {
+	admin.runCommand(lock ? {fsync: 1, lock: true} : {fsyncUnlock: 1});
+} catch (e) {
+	// Unlocking what is not locked is done.
+	if (lock || !/not locked/.test(e.message)) {
+		print("fsync " + process.env.SHED_FSYNC + ": " + e.message);
+		quit(1);
+	}
+}
+quit(0);' </dev/null >&2
+}
+# dir/locked exists from before the lock is requested until it is released.
+unlock() {
+	[ -e "$dir/locked" ] || return 0
+	n=0
+	until fsync unlock; do
+		n=$((n+1))
+		[ "$n" -lt 30 ] || return 1
+		sleep 1
+	done
+	rm -f "$dir/locked"
+}
+killdump() { [ ! -e "$dir/dump.pid" ] || kill -9 "$(cat "$dir/dump.pid")" 2>/dev/null; }
+mkdir -p "$dir" && touch "$dir/run" || exit 1
+main=$$
+(
+	last= idle=0
+	while [ -e "$dir/run" ] && [ "$idle" -lt "$stall" ]; do
+		sleep 1
+		n=$(sed -n 's/^wchar: //p' "/proc/$(cat "$dir/dump.pid" 2>/dev/null)/io" 2>/dev/null)
+		if [ -n "$n" ] && [ "$n" != "$last" ]; then
+			last=$n idle=0
+		else
+			idle=$((idle+1))
+		fi
+	done
+	touch "$dir/ended"
+	killdump
+	while kill -0 "$main" 2>/dev/null; do sleep 1; done
+	until unlock; do sleep 5; done
+	rm -rf "$dir"
+) >/dev/null 2>&1 </dev/null &
+wd=$!
+cleanup() {
+	killdump
+	if unlock; then
+		kill "$wd" 2>/dev/null
+		rm -rf "$dir"
+	else
+		echo "releasing the write lock failed; retrying in the background" >&2
+	fi
+	[ -z "$cfg" ] || rm -f "$cfg"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
+touch "$dir/locked"
+fsync lock || exit 1
+if [ -e "$dir/ended" ]; then
+	echo "the dump was ended before it started" >&2
+	exit 1
+fi
+mongodump --quiet --archive "$@" &
+echo $! > "$dir/dump.pid"
+[ ! -e "$dir/ended" ] || killdump
+wait $!
+status=$?
+rm -f "$dir/dump.pid"
+if [ -e "$dir/ended" ]; then
+	echo "the dump stalled or was canceled, so it was ended" >&2
+	exit 1
+fi
+[ "$status" -eq 0 ] || exit "$status"
+unlock || exit 1
+`
+}
 
 // redisDump starts a background save once no other is running, waits for it
 // to finish successfully, and writes the RDB file to stdout.

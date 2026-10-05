@@ -199,6 +199,9 @@ type Manager struct {
 	// readyTimeout is how long the isolated database that a dump is
 	// loaded into gets to accept connections.
 	readyTimeout time.Duration
+	// mongoStall is how long a mongo dump may write nothing before it is
+	// ended and its write lock released; see mongoDump.
+	mongoStall time.Duration
 
 	mu      sync.Mutex
 	queue   []*job
@@ -235,6 +238,7 @@ func New(cfg Config) *Manager {
 		log:          log,
 		now:          func() time.Time { return now().UTC().Truncate(time.Millisecond) },
 		readyTimeout: 5 * time.Minute,
+		mongoStall:   time.Minute,
 		wake:         make(chan struct{}, 1),
 		next:         make(map[string]scheduled),
 		paused:       make(map[string]int),
