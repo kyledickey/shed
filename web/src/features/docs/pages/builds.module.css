@@ -1,0 +1,34 @@
+.inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.input {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: var(--space-3) 0;
+}
+
+.inputs .input {
+  margin: 0;
+}
+
+.inputLabel {
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.warn,
+.note {
+  margin: 0 0 var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.warn {
+  color: var(--danger-ink);
+}

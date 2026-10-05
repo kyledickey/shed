@@ -10,6 +10,7 @@ import { shortSha } from "../../lib/names";
 import { formatDuration } from "../../lib/time";
 import { CommitMeta, deploymentTitle } from "./CommitMeta";
 import styles from "./LatestDeployment.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** useTick re-renders every second, for live elapsed times. */
 function useTick() {
@@ -46,7 +47,11 @@ export function InProgressCard({
   const since = d.startedAt ?? d.createdAt;
   return (
     <LayerCard
-      title="In progress"
+      title={
+        <>
+          In progress <HelpTip topic="pipeline" />
+        </>
+      }
       meta={<StatusBadge kind="deployment" status={d.status} size="sm" />}
       actions={
         <Button size="sm" onClick={onViewLogs} aria-label="View logs">

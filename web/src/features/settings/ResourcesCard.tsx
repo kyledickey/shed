@@ -2,6 +2,7 @@ import type { Service } from "../../api/types";
 import { Field, Input } from "../../components/Form";
 import { SettingsCard, useSectionForm } from "./SectionForm";
 import styles from "./Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 const MiB = 1 << 20;
 
@@ -13,7 +14,15 @@ export function ResourcesCard({ service }: { service: Service }) {
   }));
   const { draft, set } = form;
   return (
-    <SettingsCard title="Resources" meta="Limits for this service's container." form={form}>
+    <SettingsCard
+      title={
+        <>
+          Resources <HelpTip topic="resourceLimits" />
+        </>
+      }
+      meta="Limits for this service's container."
+      form={form}
+    >
       <div className={styles.twoCol}>
         <Field label="CPU" hint="Cores the container may use. 0 is unlimited.">
           {(id) => (

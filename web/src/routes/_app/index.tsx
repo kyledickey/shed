@@ -8,6 +8,7 @@ import { EmptyState } from "../../components/Misc";
 import { PageHeader } from "../../components/Shell";
 import { NewProjectDialog } from "../../features/projects/NewProjectDialog";
 import { ProjectGrid } from "../../features/projects/ProjectGrid";
+import { HelpTip } from "../../features/docs/HelpTip";
 
 type HomeSearch = { new?: boolean };
 
@@ -33,7 +34,14 @@ function ProjectsPage() {
 
   return (
     <Page>
-      <PageHeader title="Projects" actions={newButton} />
+      <PageHeader
+        title={
+          <>
+            Projects <HelpTip topic="projects" />
+          </>
+        }
+        actions={newButton}
+      />
       {projects.length === 0 ? (
         <EmptyState
           icon={<FolderPlus />}

@@ -10,6 +10,7 @@ import { Card } from "../../../../../../components/Card";
 import { FillHeight } from "../../../../../../components/logs/FillHeight";
 import { RuntimeLogView } from "../../../../../../components/logs/RuntimeLogView";
 import { EmptyState } from "../../../../../../components/Misc";
+import { HelpTip } from "../../../../../../features/docs/HelpTip";
 
 export const Route = createFileRoute("/_app/projects/$projectId/services/$serviceId/logs")({
   component: LogsPage,
@@ -48,7 +49,11 @@ function RuntimeLogs({ service, onReconnect }: { service: Service; onReconnect: 
         <RuntimeLogView
           lines={lines}
           state={state}
-          title={`${service.name} logs`}
+          title={
+            <>
+              {service.name} logs <HelpTip topic="runtimeLogs" />
+            </>
+          }
           onClear={clear}
           height={height}
         />

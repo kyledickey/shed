@@ -12,12 +12,20 @@ import { Dialog, Menu, MenuItem, MenuSeparator, useToast } from "../../component
 import { ConfirmDialog } from "./ConfirmDialog";
 import { SettingsCard, useSectionForm } from "./SectionForm";
 import styles from "./Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** NetworkingCard shows the private address, public domains, and the public TCP port. */
 export function NetworkingCard({ service }: { service: Service }) {
   return (
     <div className={styles.stack}>
-      <LayerCard title="Networking" meta="How traffic reaches this service.">
+      <LayerCard
+        title={
+          <>
+            Networking <HelpTip topic="privateNetwork" />
+          </>
+        }
+        meta="How traffic reaches this service."
+      >
         <div className={styles.list}>
           <div className={styles.row}>
             <ServiceIcon icon={<Lock />} tone="neutral" size={28} />
@@ -53,7 +61,11 @@ function DomainsCard({ service }: { service: Service }) {
 
   return (
     <LayerCard
-      title="Public domains"
+      title={
+        <>
+          Public domains <HelpTip topic="domains" />
+        </>
+      }
       meta="Certificates are issued automatically."
       actions={
         <Button size="sm" onClick={() => setAdding(true)}>
@@ -164,7 +176,12 @@ function AddDomainDialog({
         onOpenChange(next);
       }}
       title="Add domain"
-      description="Point an A or AAAA record for the domain at this server."
+      description={
+        <>
+          Point an A or AAAA record for the domain at this server, or generate one under the base
+          domain. <HelpTip topic="generatedDomains" />
+        </>
+      }
       footer={
         <>
           <Button onClick={() => submit()} disabled={add.isPending}>
@@ -208,7 +225,15 @@ function AddDomainDialog({
 function PublicPortCard({ service }: { service: Service }) {
   const form = useSectionForm(service, (s) => ({ publicPort: s.publicPort }));
   return (
-    <SettingsCard title="Public TCP port" meta="Publish the service on a host port." form={form}>
+    <SettingsCard
+      title={
+        <>
+          Public TCP port <HelpTip topic="publicPort" />
+        </>
+      }
+      meta="Publish the service on a host port."
+      form={form}
+    >
       <Field
         label="Host port"
         hint="Reach the service from outside, e.g. a database. 0 keeps it private."

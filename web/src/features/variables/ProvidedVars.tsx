@@ -1,6 +1,7 @@
 import type { Service } from "../../api/types";
 import { LayerCard } from "../../components/Card";
 import styles from "./Variables.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** ProvidedVars lists the variables shed injects that other variables can reference. */
 export function ProvidedVars({ service }: { service: Service }) {
@@ -16,7 +17,14 @@ export function ProvidedVars({ service }: { service: Service }) {
     ["SHED_GIT_BRANCH", "Branch being deployed."],
   ];
   return (
-    <LayerCard title="Provided by shed" meta="Available in every deployment.">
+    <LayerCard
+      title={
+        <>
+          Provided by shed <HelpTip topic="injectedVariables" />
+        </>
+      }
+      meta="Available in every deployment."
+    >
       <div className={styles.provided}>
         {vars.map(([key, desc]) => (
           <div key={key} className={styles.row}>

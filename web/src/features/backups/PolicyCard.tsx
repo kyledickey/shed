@@ -8,6 +8,7 @@ import { presetFor, schedulePresets } from "../../lib/cron";
 import { formatDateUTC, relativeTime } from "../../lib/time";
 import { SettingsCard } from "../settings/SectionForm";
 import styles from "../settings/Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 const compressionOptions: { value: BackupCompression; label: string; hint: string }[] = [
   { value: "fastest", label: "Fastest", hint: "Least CPU, largest archives." },
@@ -103,7 +104,11 @@ export function PolicyCard({ scope, policy, s3Configured }: PolicyCardProps) {
       />
       {draft.enabled && (
         <Field
-          label="Schedule"
+          label={
+            <>
+              Schedule <HelpTip topic="backupSchedule" />
+            </>
+          }
           hint={<ScheduleHint policy={policy} draft={draft} custom={mode === "custom"} />}
         >
           {(id) => (
@@ -152,7 +157,11 @@ export function PolicyCard({ scope, policy, s3Configured }: PolicyCardProps) {
         )}
       </Field>
       <Field
-        label="Keep locally"
+        label={
+          <>
+            Keep locally <HelpTip topic="backupRetention" />
+          </>
+        }
         hint="Scheduled backups only. Manual backups are kept until deleted."
       >
         {(id) => (

@@ -10,6 +10,7 @@ import { Dialog, useToast } from "../../components/Overlay";
 import { SettingsCard } from "../settings/SectionForm";
 import styles from "./Backups.module.css";
 import settingsStyles from "../settings/Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** EncryptionCard turns age encryption of new backups on or off and reveals the secret key. */
 export function EncryptionCard({ settings }: { settings: BackupSettings }) {
@@ -54,7 +55,15 @@ export function EncryptionCard({ settings }: { settings: BackupSettings }) {
   };
 
   return (
-    <SettingsCard title="Encryption" meta="Protect archives with age." form={form}>
+    <SettingsCard
+      title={
+        <>
+          Encryption <HelpTip topic="backupEncryption" />
+        </>
+      }
+      meta="Protect archives with age."
+      form={form}
+    >
       <Switch
         checked={enabled}
         onChange={setEnabled}

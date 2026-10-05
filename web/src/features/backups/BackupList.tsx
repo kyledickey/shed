@@ -31,6 +31,7 @@ import { formatBytes } from "../../lib/format";
 import { formatDate, formatDuration, relativeTime } from "../../lib/time";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
 import styles from "./Backups.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** The API returns at most this many backups. */
 const LIST_LIMIT = 100;
@@ -71,7 +72,11 @@ export function BackupList({ scope, serviceName, backups, restoreRunning }: Back
 
   return (
     <LayerCard
-      title="Backups"
+      title={
+        <>
+          Backups <HelpTip topic="backupMethods" />
+        </>
+      }
       meta={<Count>{backups.length}</Count>}
       actions={<BackupNowButton scope={scope} busy={backups.some(isBackupActive)} />}
       sheetClassName={styles.sheet}

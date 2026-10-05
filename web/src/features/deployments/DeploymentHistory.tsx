@@ -7,6 +7,7 @@ import type { DeploymentActions } from "./actions";
 import { deploymentTitle } from "./CommitMeta";
 import styles from "./DeploymentHistory.module.css";
 import { DeploymentMenu } from "./DeploymentMenu";
+import { HelpTip } from "../docs/HelpTip";
 
 /** The API returns at most this many deployments. */
 const HISTORY_LIMIT = 50;
@@ -25,7 +26,11 @@ export function DeploymentHistory({
 }) {
   return (
     <LayerCard
-      title="History"
+      title={
+        <>
+          History <HelpTip topic="deploymentStatus" />
+        </>
+      }
       meta={<Count>{deployments.length}</Count>}
       sheetClassName={styles.sheet}
       footer={

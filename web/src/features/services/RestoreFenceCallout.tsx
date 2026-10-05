@@ -9,6 +9,7 @@ import { Button } from "../../components/Button";
 import { Callout } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
+import { HelpTip } from "../docs/HelpTip";
 
 /**
  * RestoreFenceCallout explains why a service that a failed restore fenced
@@ -42,7 +43,11 @@ function FencedCallout({ service, fence }: { service: Service; fence: RestoreFen
       <Callout
         tone="tomato"
         icon={<ShieldAlert size={16} />}
-        title="Restore failed"
+        title={
+          <>
+            Restore failed <HelpTip topic="restoreFences" />
+          </>
+        }
         actions={
           <Button size="sm" variant="danger" onClick={() => setConfirm(true)}>
             Keep current data

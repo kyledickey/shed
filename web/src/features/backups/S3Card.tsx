@@ -10,6 +10,7 @@ import { useToast } from "../../components/Overlay";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
 import { SettingsCard } from "../settings/SectionForm";
 import styles from "../settings/Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 type Draft = Omit<S3Settings, "hasSecret"> & { secretAccessKey: string };
 type S3Input = NonNullable<BackupSettingsInput["s3"]>;
@@ -95,7 +96,11 @@ export function S3Card({ settings }: { settings: BackupSettings }) {
 
   return (
     <SettingsCard
-      title="S3 destination"
+      title={
+        <>
+          S3 destination <HelpTip topic="backupS3" />
+        </>
+      }
       meta="Where backups are uploaded."
       form={form}
       footerStart={

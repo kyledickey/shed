@@ -10,6 +10,7 @@ import { Grid, Section } from "../../../components/Layout";
 import { Callout, EmptyState, Skeleton } from "../../../components/Misc";
 import { ChartCard, ChartValue } from "../../../features/metrics/ChartCard";
 import { formatBytes, formatPercent, formatRate } from "../../../lib/format";
+import { HelpTip } from "../../../features/docs/HelpTip";
 
 type ServerSearch = { range?: MetricsRange };
 
@@ -31,7 +32,11 @@ function ServerPage() {
 
   return (
     <Section
-      title="Metrics"
+      title={
+        <>
+          Metrics <HelpTip topic="hostMetrics" />
+        </>
+      }
       description="Resource usage of the whole machine, across all services and everything else."
       actions={
         <Segmented

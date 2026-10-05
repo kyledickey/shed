@@ -2,6 +2,7 @@ import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   Archive,
+  BookOpen,
   ChartArea,
   Command as CommandIcon,
   FolderPlus,
@@ -39,11 +40,12 @@ import {
 import { Crumbs, Logo, Shell, type Crumb } from "../../components/Shell";
 import { Tabs } from "../../components/Tabs";
 import { useTheme, type Theme } from "../../lib/theme";
+import { docPages } from "../docs/registry";
 import styles from "./AppShell.module.css";
 
 export type ServiceTab = "deployments" | "logs" | "metrics" | "variables" | "backups" | "settings";
 type ProjectTab = "services" | "settings";
-type RootTab = "projects" | "server" | "settings";
+type RootTab = "projects" | "server" | "docs" | "settings";
 
 const serviceTabs: { value: ServiceTab; label: string; icon: ReactNode }[] = [
   { value: "deployments", label: "Deployments", icon: <Rocket size={15} /> },
@@ -62,6 +64,7 @@ const projectTabs: { value: ProjectTab; label: string; icon: ReactNode }[] = [
 const rootTabs: { value: RootTab; label: string; icon: ReactNode }[] = [
   { value: "projects", label: "Projects", icon: <Layers size={15} /> },
   { value: "server", label: "Server", icon: <Server size={15} /> },
+  { value: "docs", label: "Docs", icon: <BookOpen size={15} /> },
   { value: "settings", label: "Settings", icon: <Settings size={15} /> },
 ];
 
@@ -233,7 +236,7 @@ function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string 
   return (
     <Tabs
       label="Sections"
-      value={activeTab(pathname, "", ["server", "settings"] as RootTab[], "projects")}
+      value={activeTab(pathname, "", ["server", "docs", "settings"] as RootTab[], "projects")}
       items={rootTabs}
       onChange={(next) => void navigate({ to: next === "projects" ? "/" : `/${next}` })}
     />
@@ -353,6 +356,13 @@ function Palette({
       run: () => void navigate({ to: "/server" }),
     },
     {
+      id: "docs",
+      group: "Actions",
+      label: "Docs",
+      icon: <BookOpen size={15} />,
+      run: () => void navigate({ to: "/docs" }),
+    },
+    {
       id: "settings",
       group: "Actions",
       label: "Settings",
@@ -397,6 +407,16 @@ function Palette({
           }),
       });
     }
+  }
+
+  for (const page of docPages) {
+    commands.push({
+      id: `docs-${page.slug}`,
+      group: "Docs",
+      label: page.title,
+      icon: <BookOpen size={15} />,
+      run: () => void navigate({ to: "/docs/$slug", params: { slug: page.slug } }),
+    });
   }
 
   return <CommandPalette open={open} onOpenChange={onOpenChange} commands={commands} />;

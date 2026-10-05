@@ -1,0 +1,193 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.note {
+  margin-bottom: var(--space-3);
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--raised);
+
+  &[data-state="pending"],
+  &[data-state="unused"] {
+    background: var(--sunken);
+    color: var(--ink-3);
+  }
+
+  &[data-state="current"] {
+    border-color: var(--accent-line);
+  }
+
+  &[data-state="failed"] {
+    border-color: var(--tone-line);
+    background: var(--tone-soft);
+  }
+}
+
+.stepTitle {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.stepState {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+
+  [data-state="failed"] > & {
+    color: var(--tone-ink);
+  }
+}
+
+.headings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-xs);
+
+  & code {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & > span {
+    flex: none;
+  }
+}
+
+.stepper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.stepList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stepButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--line-strong);
+  }
+}
+
+.stepHere {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.stepNo {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.frameDetail {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.stepNav {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.anatomy {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.anatomyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  border-bottom: 1px solid var(--line-soft);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.anatomyLog {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.7;
+}
+
+.logHeading {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.anatomyNote {
+  padding: 10px 12px;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}

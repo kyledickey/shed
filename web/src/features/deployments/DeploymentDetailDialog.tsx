@@ -17,6 +17,7 @@ import { redeployLabel, type DeploymentActions } from "./actions";
 import { CommitMeta, deploymentTitle } from "./CommitMeta";
 import styles from "./DeploymentDetailDialog.module.css";
 import { WaitingForCi } from "./LatestDeployment";
+import { HelpTip } from "../docs/HelpTip";
 
 type DeploymentDetailDialogProps = {
   service: Service;
@@ -82,6 +83,7 @@ export function DeploymentDetailDialog({
         <span className={styles.title}>
           <StatusBadge kind="deployment" status={d.status} size="sm" />
           <span className={styles.titleText}>{deploymentTitle(d)}</span>
+          <HelpTip topic="buildLog" />
         </span>
       }
       description={

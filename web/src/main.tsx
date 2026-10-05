@@ -32,6 +32,8 @@ const router = createRouter({
   defaultPreload: "intent",
   defaultPreloadStaleTime: 0,
   scrollRestoration: true,
+  // The shell panel scrolls, not the window.
+  scrollToTopSelectors: ["#panel"],
   defaultPendingComponent: RoutePending,
   defaultErrorComponent: RouteError,
 });

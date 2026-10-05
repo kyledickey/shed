@@ -14,8 +14,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppDocsRouteImport } from './routes/_app/docs'
 import { Route as AppServerRouteImport } from './routes/_app/server'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as AppDocsIndexRouteImport } from './routes/_app/docs/index'
+import { Route as AppDocsSlugRouteImport } from './routes/_app/docs/$slug'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
 import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
@@ -54,6 +57,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDocsRoute = AppDocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppServerRoute = AppServerRouteImport.update({
   id: '/server',
   path: '/server',
@@ -63,6 +71,16 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
   getParentRoute: () => AppRoute,
+} as any)
+const AppDocsIndexRoute = AppDocsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppDocsRoute,
+} as any)
+const AppDocsSlugRoute = AppDocsSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => AppDocsRoute,
 } as any)
 const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
   id: '/projects/$projectId',
@@ -144,11 +162,14 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/docs': typeof AppDocsRouteWithChildren
   '/server': typeof AppServerRouteWithChildren
   '/settings': typeof AppSettingsRoute
+  '/docs/$slug': typeof AppDocsSlugRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/docs/': typeof AppDocsIndexRoute
   '/server/': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
@@ -166,8 +187,10 @@ export interface FileRoutesByTo {
   '/showcase': typeof ShowcaseRoute
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
+  '/docs/$slug': typeof AppDocsSlugRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/docs': typeof AppDocsIndexRoute
   '/server': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/projects/$projectId': typeof AppProjectsProjectIdIndexRoute
@@ -184,12 +207,15 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
+  '/_app/docs': typeof AppDocsRouteWithChildren
   '/_app/server': typeof AppServerRouteWithChildren
   '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/docs/$slug': typeof AppDocsSlugRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
   '/_app/server/backups': typeof AppServerBackupsRoute
   '/_app/server/logs': typeof AppServerLogsRoute
+  '/_app/docs/': typeof AppDocsIndexRoute
   '/_app/server/': typeof AppServerIndexRoute
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
   '/_app/projects/$projectId/': typeof AppProjectsProjectIdIndexRoute
@@ -208,11 +234,14 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
+    | '/docs'
     | '/server'
     | '/settings'
+    | '/docs/$slug'
     | '/projects/$projectId'
     | '/server/backups'
     | '/server/logs'
+    | '/docs/'
     | '/server/'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
@@ -230,8 +259,10 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/settings'
     | '/'
+    | '/docs/$slug'
     | '/server/backups'
     | '/server/logs'
+    | '/docs'
     | '/server'
     | '/projects/$projectId/settings'
     | '/projects/$projectId'
@@ -247,12 +278,15 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/showcase'
+    | '/_app/docs'
     | '/_app/server'
     | '/_app/settings'
     | '/_app/'
+    | '/_app/docs/$slug'
     | '/_app/projects/$projectId'
     | '/_app/server/backups'
     | '/_app/server/logs'
+    | '/_app/docs/'
     | '/_app/server/'
     | '/_app/projects/$projectId/settings'
     | '/_app/projects/$projectId/'
@@ -309,6 +343,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/docs': {
+      id: '/_app/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof AppDocsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/server': {
       id: '/_app/server'
       path: '/server'
@@ -322,6 +363,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_app/docs/': {
+      id: '/_app/docs/'
+      path: '/'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof AppDocsIndexRouteImport
+      parentRoute: typeof AppDocsRoute
+    }
+    '/_app/docs/$slug': {
+      id: '/_app/docs/$slug'
+      path: '/$slug'
+      fullPath: '/docs/$slug'
+      preLoaderRoute: typeof AppDocsSlugRouteImport
+      parentRoute: typeof AppDocsRoute
     }
     '/_app/projects/$projectId': {
       id: '/_app/projects/$projectId'
@@ -417,6 +472,19 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AppDocsRouteChildren {
+  AppDocsSlugRoute: typeof AppDocsSlugRoute
+  AppDocsIndexRoute: typeof AppDocsIndexRoute
+}
+
+const AppDocsRouteChildren: AppDocsRouteChildren = {
+  AppDocsSlugRoute: AppDocsSlugRoute,
+  AppDocsIndexRoute: AppDocsIndexRoute,
+}
+
+const AppDocsRouteWithChildren =
+  AppDocsRoute._addFileChildren(AppDocsRouteChildren)
+
 interface AppServerRouteChildren {
   AppServerBackupsRoute: typeof AppServerBackupsRoute
   AppServerLogsRoute: typeof AppServerLogsRoute
@@ -480,6 +548,7 @@ const AppProjectsProjectIdRouteWithChildren =
   AppProjectsProjectIdRoute._addFileChildren(AppProjectsProjectIdRouteChildren)
 
 interface AppRouteChildren {
+  AppDocsRoute: typeof AppDocsRouteWithChildren
   AppServerRoute: typeof AppServerRouteWithChildren
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -487,6 +556,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppDocsRoute: AppDocsRouteWithChildren,
   AppServerRoute: AppServerRouteWithChildren,
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,

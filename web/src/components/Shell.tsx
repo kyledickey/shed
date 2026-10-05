@@ -23,7 +23,9 @@ export function Shell({ brand, nav, actions, children }: ShellProps) {
           <nav className={styles.nav}>{nav}</nav>
           {actions && <div className={styles.actions}>{actions}</div>}
         </header>
-        <main className={styles.panel}>{children}</main>
+        <main id="panel" className={styles.panel} data-scroll-restoration-id="panel">
+          {children}
+        </main>
       </div>
     </div>
   );

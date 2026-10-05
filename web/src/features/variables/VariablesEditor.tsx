@@ -12,6 +12,7 @@ import { isValidKey, parseEnv, serializeEnv } from "../../lib/env";
 import { useRedeployHint } from "../services/redeploy";
 import { VarValue } from "./VarValue";
 import styles from "./Variables.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 type Mode = "table" | "raw";
 type Row = { id: number; key: string; value: string; editing: boolean };
@@ -137,7 +138,11 @@ export function VariablesEditor({
 
   return (
     <LayerCard
-      title="Variables"
+      title={
+        <>
+          Variables <HelpTip topic="variables" />
+        </>
+      }
       meta="References resolve at deploy time."
       actions={
         <>

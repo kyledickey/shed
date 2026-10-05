@@ -1,0 +1,134 @@
+.diagram {
+  display: block;
+  width: 100%;
+  min-width: 600px;
+  height: auto;
+  margin: 0 auto;
+  overflow: visible;
+  font-family: var(--font-sans);
+}
+
+.zone {
+  & rect {
+    fill: var(--tone-soft);
+    stroke: var(--tone-line);
+    stroke-dasharray: 5 4;
+  }
+
+  & text {
+    fill: var(--tone-ink);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+}
+
+.zone[data-tone="neutral"] rect {
+  fill: var(--layer);
+  stroke: var(--line-strong);
+}
+
+.zone[data-tone="neutral"] text {
+  fill: var(--ink-3);
+}
+
+.node {
+  transition: opacity var(--dur-slow) var(--ease);
+
+  & rect {
+    fill: var(--raised);
+    stroke: var(--line-strong);
+    stroke-width: 1;
+  }
+
+  & text {
+    text-anchor: middle;
+  }
+}
+
+.node[data-tone]:not([data-tone="neutral"]) rect {
+  stroke: var(--tone-line);
+}
+
+.emphasis rect {
+  fill: var(--tone-soft);
+  stroke: var(--tone) !important;
+  stroke-width: 1.5;
+}
+
+.dim {
+  opacity: 0.35;
+}
+
+.nodeTitle {
+  fill: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.emphasis .nodeTitle {
+  fill: var(--tone-ink);
+}
+
+.nodeSub {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.edge {
+  & path:not(.head) {
+    fill: none;
+    stroke: var(--tone);
+    stroke-width: 1.5;
+  }
+}
+
+.edge[data-tone="neutral"] path:not(.head) {
+  stroke: var(--ink-4);
+}
+
+.head {
+  fill: var(--tone);
+  stroke: none;
+}
+
+.edge[data-tone="neutral"] .head {
+  fill: var(--ink-4);
+}
+
+.dashed path:not(.head) {
+  stroke-dasharray: 5 4;
+}
+
+.flow path:not(.head) {
+  stroke-dasharray: 6 5;
+  animation: flow 900ms linear infinite;
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+
+.edgeLabel {
+  fill: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--raised);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.note {
+  fill: var(--ink-3);
+  font-size: 11px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}

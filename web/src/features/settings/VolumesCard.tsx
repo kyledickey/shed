@@ -11,6 +11,7 @@ import { Dialog, useToast } from "../../components/Overlay";
 import { useRedeployHint } from "../services/redeploy";
 import { ConfirmDialog } from "./ConfirmDialog";
 import styles from "./Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** VolumesCard lists persistent volumes and adds or removes them. */
 export function VolumesCard({ service }: { service: Service }) {
@@ -22,7 +23,11 @@ export function VolumesCard({ service }: { service: Service }) {
 
   return (
     <LayerCard
-      title="Volumes"
+      title={
+        <>
+          Volumes <HelpTip topic="volumes" />
+        </>
+      }
       meta="Data that survives redeploys."
       actions={
         <Button size="sm" onClick={() => setAdding(true)}>

@@ -5,6 +5,7 @@ import { LayerCard } from "../../components/Card";
 import { Field, Input, Select, Switch } from "../../components/Form";
 import { SettingsCard, useSectionForm } from "./SectionForm";
 import styles from "./Settings.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** SourceCard edits where the code or image comes from; databases show their image read-only. */
 export function SourceCard({ service }: { service: Service }) {
@@ -119,7 +120,11 @@ export function BuildCard({ service }: { service: Service }) {
     <SettingsCard title={fromRepo ? "Build" : "Run"} form={form}>
       {fromRepo && (
         <Field
-          label="Dockerfile path"
+          label={
+            <>
+              Dockerfile path <HelpTip topic="buildDetection" />
+            </>
+          }
           hint="Leave empty to detect automatically: the Dockerfile is used if present, otherwise the app is built with Railpack."
         >
           {(id) => (
@@ -159,17 +164,32 @@ export function DeployCard({ service }: { service: Service }) {
   }));
   const { draft, set } = form;
   return (
-    <SettingsCard title="Deploy" form={form}>
+    <SettingsCard
+      title={
+        <>
+          Deploy <HelpTip topic="pipeline" />
+        </>
+      }
+      form={form}
+    >
       {fromRepo && (
         <>
           <Switch
-            label="Auto deploy on push"
+            label={
+              <>
+                Auto deploy on push <HelpTip topic="autoDeploy" />
+              </>
+            }
             description={`Deploy automatically when ${service.branch} changes.`}
             checked={draft.autoDeploy}
             onChange={(v) => set("autoDeploy", v)}
           />
           <Switch
-            label="Wait for CI"
+            label={
+              <>
+                Wait for CI <HelpTip topic="waitForCi" />
+              </>
+            }
             description="Hold push deployments until GitHub checks pass. Failed checks skip the deploy."
             checked={draft.waitForCi}
             disabled={!draft.autoDeploy}
@@ -179,7 +199,11 @@ export function DeployCard({ service }: { service: Service }) {
       )}
       <div className={styles.twoCol}>
         <Field
-          label="Healthcheck path"
+          label={
+            <>
+              Healthcheck path <HelpTip topic="healthchecks" />
+            </>
+          }
           hint="Must return 2xx or 3xx. Empty only checks that the port accepts connections."
         >
           {(id) => (

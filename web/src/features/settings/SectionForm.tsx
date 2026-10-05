@@ -54,7 +54,7 @@ export function SettingsCard({
   footerStart,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   meta?: ReactNode;
   form: Form;
   /** Extra footer content on the left, e.g. a secondary action. */

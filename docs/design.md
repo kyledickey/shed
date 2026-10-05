@@ -72,8 +72,8 @@ max_backups = 5
 max_age_days = 30
 ```
 
-GitHub App credentials, the session secret, and other runtime state live in
-the database (`settings` table), not the config file.
+GitHub App credentials and other runtime state live in the database
+(`settings` table), not the config file. Sessions are rows of `sessions`.
 
 ## Packages
 
@@ -431,8 +431,7 @@ the Unix epoch. The last bucket is the one containing now if it has samples
 yet; otherwise the window shifts back one step to end at the last complete
 bucket, so the series never ends in a null just because the current bucket is
 young. Each bucket is the average of its samples, or null if it has none. `cpuLimit` and `memoryLimit`
-are the running container's configured limits (0 = unlimited, which is
-always the case today since shed sets none).
+are the running container's configured limits (0 = unlimited).
 
 Host queries bucket the same way; `cpus`, `memoryTotal`, and `diskTotal`
 are read live at query time.

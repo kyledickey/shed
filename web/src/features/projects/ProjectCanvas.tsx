@@ -14,6 +14,7 @@ import { relativeTime } from "../../lib/time";
 import { serviceIcon } from "../services/ServiceHeader";
 import { serviceEdges } from "./graph";
 import styles from "./ProjectCanvas.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 const allData = (results: UseQueryResult<Variables>[]) => results.map((r) => r.data);
 
@@ -47,7 +48,11 @@ export function ProjectMap({ projectId, services }: { projectId: string; service
 
   return (
     <LayerCard
-      title="Service map"
+      title={
+        <>
+          Service map <HelpTip topic="privateNetwork" />
+        </>
+      }
       meta={
         edges.length > 0 && `${edges.length} ${edges.length === 1 ? "connection" : "connections"}`
       }

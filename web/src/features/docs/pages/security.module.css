@@ -1,0 +1,76 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+
+.meter {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  max-width: 320px;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--sunken);
+}
+
+.meterFill {
+  display: block;
+  width: calc(var(--fill) * 100%);
+  height: 100%;
+  background: var(--accent);
+}
+
+.meterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.log {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--raised);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.log li {
+  display: flex;
+  gap: var(--space-3);
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.log li:last-child {
+  border-bottom: 0;
+}
+
+.ok {
+  color: var(--accent-ink);
+}
+
+.reject {
+  color: var(--danger-ink);
+}

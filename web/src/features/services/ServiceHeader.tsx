@@ -10,6 +10,7 @@ import { useRedeployHint } from "./redeploy";
 import { RestoreFenceCallout } from "./RestoreFenceCallout";
 import { ServiceControls } from "./ServiceControls";
 import styles from "./ServiceHeader.module.css";
+import { HelpTip } from "../docs/HelpTip";
 
 /** serviceIcon picks the tile for a service: GitHub for repo apps, a box for image apps. */
 export function serviceIcon(service: Pick<Service, "kind" | "repo">, size = 32) {
@@ -84,7 +85,11 @@ export function ServiceHeader({ service }: { service: Service }) {
         <Callout
           tone="sunflower"
           icon={<TriangleAlert size={16} />}
-          title="Unapplied changes"
+          title={
+            <>
+              Unapplied changes <HelpTip topic="settingsApply" />
+            </>
+          }
           actions={
             <Button size="sm" variant="primary" onClick={onDeploy} loading={deploy.isPending}>
               Deploy changes

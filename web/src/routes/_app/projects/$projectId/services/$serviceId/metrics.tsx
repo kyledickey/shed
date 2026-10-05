@@ -10,6 +10,7 @@ import { Grid, Section } from "../../../../../../components/Layout";
 import { Callout, EmptyState, Skeleton } from "../../../../../../components/Misc";
 import { ChartCard, ChartValue } from "../../../../../../features/metrics/ChartCard";
 import { formatBytes, formatPercent, formatRate } from "../../../../../../lib/format";
+import { HelpTip } from "../../../../../../features/docs/HelpTip";
 
 type MetricsSearch = { range?: MetricsRange };
 
@@ -38,7 +39,11 @@ function MetricsPage() {
 
   return (
     <Section
-      title="Metrics"
+      title={
+        <>
+          Metrics <HelpTip topic="metrics" />
+        </>
+      }
       description="Resource usage of the running container."
       actions={
         <Segmented
