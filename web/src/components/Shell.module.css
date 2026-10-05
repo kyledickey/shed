@@ -1,6 +1,11 @@
 .page {
   height: 100dvh;
   padding: 6px;
+
+  /* Phones: no gap around the frame; it fills the screen edge to edge. */
+  @media (max-width: 760px) {
+    padding: 0;
+  }
 }
 
 .frame {
@@ -11,6 +16,11 @@
   background: var(--shell);
   border: 1px solid var(--line);
   border-radius: calc(var(--r-xl) + 6px);
+
+  @media (max-width: 760px) {
+    border: 0;
+    border-radius: 0;
+  }
 }
 
 .bar {
