@@ -255,7 +255,7 @@ CREATE INDEX restores_service ON restores(service_id, created_at DESC);
 CREATE TABLE restore_fences (            -- a restore is changing the service's data
   service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
   restore_id TEXT NOT NULL,
-  phase TEXT NOT NULL,                   -- retaining | replacing
+  phase TEXT NOT NULL,                   -- retaining | replacing | loading
   image TEXT NOT NULL,                   -- image of the helper containers
   volume_ids TEXT NOT NULL,              -- space-separated IDs of the volumes being replaced
   was_stopped INTEGER NOT NULL,          -- services.stopped before the restore
@@ -568,7 +568,15 @@ manual steps below.
    and the rest of the dump would then be mixed into the old data. The
    dump's `DROP ROLE` and `CREATE ROLE` of the connected user, which always
    fail, are filtered out. Connections are allowed again afterwards, also
-   when the load fails.
+   when the load fails. The service is fenced (phase `loading`) for the
+   load and the fence is lifted when it succeeds. If the load fails or is
+   canceled (shutdown), the database may hold part of the dump, and
+   canceling `docker exec` only aborts the stream: the command keeps
+   running in the container. So before the hold is released, the service's
+   containers are stopped and removed, which ends the load, and the service
+   is left stopped; the fence row is deleted and the error says to restore
+   a backup again or start the service to keep the data. If stopping fails,
+   the fence stays and the next boot stops the container.
 6. Release the hold. Unless the service is stopped, by the user or by a
    fence a failure left in place, the active deployment's container is
    started again (recreated if removed) and routes are applied. If that
@@ -583,7 +591,9 @@ restore fence is resolved: in phase `retaining` the volumes are unchanged,
 so the fence is lifted and the pre-restore volumes are removed; in phase
 `replacing` the pre-restore copies are put back and checked first. If that
 fails, the error is logged and the fence stays, so `Reconcile` leaves the
-service stopped and the next boot tries again. A fenced service that is no
+service stopped and the next boot tries again. In phase `loading` the active
+container is stopped, since the load may still be running in it, and the
+fence row is deleted; the service stays stopped. A fenced service that is no
 longer stopped was started by the user since: its fence is dropped and its
 data and pre-restore volumes are left as they are. On shutdown the running job is canceled and it and
 the queued ones are marked `failed` ("interrupted by shutdown"). Deleting a

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 
@@ -54,16 +55,19 @@ type fakeDocker struct {
 	containers map[string]docker.Container
 	mounts     map[string][]docker.Mount // by container ID
 	next       int
-	dump       string            // what dump scripts print
-	execErr    error             // returned by Exec after reading stdin
-	restored   string            // stdin of the last restore script
-	volumes    map[string][]byte // seed CopyFrom tar by mount path
-	data       map[string]map[string]fakeFile
-	touched    map[string]bool         // named volumes removed or created
-	copyToErr  error                   // returned by every CopyTo
-	copyToHook func(name string) error // called by CopyTo with the container name
-	lossy      map[string]bool         // CopyTo into containers by name drops files
-	extracted  []byte                  // last tar given to CopyTo
+	dump       string // what dump scripts print
+	execErr    error  // returned by Exec after reading stdin
+	// restoreHook is called by restore execs after reading stdin; an error
+	// aborts the exec, as canceling its context does.
+	restoreHook func(ctx context.Context) error
+	restored    string            // stdin of the last restore script
+	volumes     map[string][]byte // seed CopyFrom tar by mount path
+	data        map[string]map[string]fakeFile
+	touched     map[string]bool         // named volumes removed or created
+	copyToErr   error                   // returned by every CopyTo
+	copyToHook  func(name string) error // called by CopyTo with the container name
+	lossy       map[string]bool         // CopyTo into containers by name drops files
+	extracted   []byte                  // last tar given to CopyTo
 	// imageVolume makes created containers get an anonymous volume, as
 	// for images that declare a VOLUME.
 	imageVolume bool
@@ -149,7 +153,7 @@ func (f *fakeDocker) Inspect(_ context.Context, id string) (docker.Container, er
 	return c, nil
 }
 
-func (f *fakeDocker) Exec(_ context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (f *fakeDocker) Exec(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	script := cmd[len(cmd)-1]
 	kind := "dump"
 	if stdin != nil {
@@ -160,7 +164,14 @@ func (f *fakeDocker) Exec(_ context.Context, id string, cmd []string, stdin io.R
 		}
 		f.mu.Lock()
 		f.restored = string(b)
+		hook := f.restoreHook
 		f.mu.Unlock()
+		if hook != nil {
+			if err := hook(ctx); err != nil {
+				f.rec.add("exec %s %s aborted", id, kind)
+				return err
+			}
+		}
 	}
 	f.rec.add("exec %s %s", id, kind)
 	f.mu.Lock()
@@ -173,6 +184,19 @@ func (f *fakeDocker) Exec(_ context.Context, id string, cmd []string, stdin io.R
 	if stdin == nil && strings.Contains(script, "dump") {
 		io.WriteString(stdout, dump)
 	}
+	return nil
+}
+
+func (f *fakeDocker) Stop(_ context.Context, id string, _ time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return fmt.Errorf("container %s: %w", id, cerrdefs.ErrNotFound)
+	}
+	c.Running = false
+	f.containers[id] = c
+	f.rec.add("stop %s", id)
 	return nil
 }
 
@@ -351,6 +375,7 @@ type fakeServices struct {
 	st       *store.Store
 	docker   *fakeDocker
 	holdErr  error
+	stopErr  error // returned by StopAndRemove
 	released int
 	mu       sync.Mutex
 }
@@ -388,6 +413,10 @@ func (h *fakeHeld) StopAndRemove(ctx context.Context) error {
 	d, err := h.Active(ctx)
 	if err != nil {
 		return err
+	}
+	if h.s.stopErr != nil {
+		h.s.rec.add("stop and remove %s failed", h.id)
+		return h.s.stopErr
 	}
 	h.s.rec.add("stop and remove %s", h.id)
 	h.s.docker.mu.Lock()

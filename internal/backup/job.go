@@ -578,11 +578,42 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 		if !running {
 			return errors.New("the service is not running; start it to restore a database dump")
 		}
-		return readArchive(path, identity, func(data io.Reader) error {
-			return execScript(ctx, m.docker, d.ContainerID, sv.Kind+" restore", eng.restore, data, io.Discard)
+		return m.loadDump(ctx, held, sv.ID, r.ID, func() error {
+			return readArchive(path, identity, func(data io.Reader) error {
+				return execScript(ctx, m.docker, d.ContainerID, sv.Kind+" restore", eng.restore, data, io.Discard)
+			})
 		})
 	}
 	return fmt.Errorf("cannot restore a %s backup", b.Method)
+}
+
+// loadDump runs load, which loads a dump into the held service's running
+// database, with the service fenced. If the load fails or is canceled, the
+// database may hold partial data, and a canceled load may still be running
+// in the container, so the service's containers are stopped and removed and
+// the service is left stopped. If they cannot be stopped, the fence stays,
+// and Recover stops them when shed starts again.
+func (m *Manager) loadDump(ctx context.Context, held Held, serviceID, restoreID string, load func() error) error {
+	if _, err := m.store.CreateRestoreFence(ctx, store.RestoreFence{
+		ServiceID: serviceID, RestoreID: restoreID, Phase: store.RestoreLoading,
+	}); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	err := load()
+	if err == nil {
+		return m.unfence(ctx, serviceID, nil, nil)
+	}
+	ctx = context.WithoutCancel(ctx)
+	if serr := held.StopAndRemove(ctx); serr != nil {
+		m.log.Error("restore: stop database after a failed load", "restore", restoreID, "service", serviceID, "err", serr)
+		return fmt.Errorf("%w; stopping the database failed too (%v), so the load may still be running; "+
+			"the service is left stopped, and shed stops it when it starts again", err, serr)
+	}
+	if derr := m.store.DeleteRestoreFence(ctx, serviceID); derr != nil {
+		m.log.Error("backup: delete restore fence", "service", serviceID, "err", derr)
+	}
+	return fmt.Errorf("%w; the database may hold partial data, so the service was stopped: "+
+		"restore a backup, such as the pre-restore one, or start the service to keep the data as it is", err)
 }
 
 // redisFiles writes a tar, to extract at "/", of the redis files that

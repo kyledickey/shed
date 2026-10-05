@@ -726,6 +726,106 @@ func TestRestoreDump(t *testing.T) {
 	}
 }
 
+func TestRestoreDumpFailureStopsDatabase(t *testing.T) {
+	// cancel cancels the running job, as shutdown does, and returns what an
+	// exec whose stream was aborted returns.
+	cancel := func(e *testEnv) func(context.Context) error {
+		return func(ctx context.Context) error {
+			e.m.mu.Lock()
+			e.m.running.cancel(nil)
+			e.m.mu.Unlock()
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	tests := []struct {
+		name       string
+		hook       func(e *testEnv) func(context.Context) error
+		stopErr    error
+		wantError  string
+		wantFenced bool
+	}{
+		{name: "load fails", hook: func(*testEnv) func(context.Context) error {
+			return func(context.Context) error { return &docker.ExitError{Code: 3} }
+		}, wantError: "may hold partial data"},
+		{name: "canceled", hook: cancel},
+		{name: "canceled, stopping fails", hook: cancel, stopErr: errors.New("daemon gone"), wantFenced: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			sv := e.service("postgres", true, "/var/lib/postgresql")
+			b := e.backUp(sv.ID)
+			e.rec = &recorder{}
+			e.docker.rec, e.services.rec = e.rec, e.rec
+			e.docker.restoreHook = tt.hook(e)
+			e.services.stopErr = tt.stopErr
+			if _, err := e.m.Restore(e.ctx, b.ID); err != nil {
+				t.Fatal(err)
+			}
+			e.drain()
+			r := mustLatestRestore(t, e, sv.ID)
+			if r.Status != store.RestoreFailed || !strings.Contains(r.Error, tt.wantError) {
+				t.Errorf("restore = %+v", r)
+			}
+			// The load has ended, or its container is being stopped, before
+			// the hold is released.
+			cid := "ctr-" + sv.ID
+			stop := "stop and remove " + sv.ID
+			if tt.stopErr != nil {
+				stop += " failed"
+			}
+			want := []string{"exec " + cid + " dump", "hold " + sv.ID, "exec " + cid + " restore aborted", stop, "release " + sv.ID}
+			if got := e.rec.list(); !reflect.DeepEqual(got, want) {
+				t.Errorf("events:\n got %q\nwant %q", got, want)
+			}
+			fs, stopped := e.fenceState(sv.ID)
+			if !stopped || (len(fs) > 0) != tt.wantFenced {
+				t.Fatalf("fences %+v, stopped %v; want stopped, fenced %v", fs, stopped, tt.wantFenced)
+			}
+			if !tt.wantFenced {
+				return
+			}
+			// The next start stops the database, in case the load still runs.
+			e.setRunning(sv, true)
+			if err := e.m.Recover(e.ctx); err != nil {
+				t.Fatal(err)
+			}
+			if c, _ := e.docker.Inspect(e.ctx, cid); c.Running {
+				t.Error("Recover left the database running")
+			}
+			if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || !stopped {
+				t.Errorf("after Recover: fences %+v, stopped %v; want none, stopped", fs, stopped)
+			}
+		})
+	}
+}
+
+func TestRestoreDumpSuccessLiftsFence(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("mysql", true, "/var/lib/mysql")
+	b := e.backUp(sv.ID)
+	var fenced bool
+	e.docker.restoreHook = func(context.Context) error {
+		fs, stopped := e.fenceState(sv.ID)
+		fenced = len(fs) == 1 && fs[0].Phase == store.RestoreLoading && stopped
+		return nil
+	}
+	if _, err := e.m.Restore(e.ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.drain()
+	if r := mustLatestRestore(t, e, sv.ID); r.Status != store.RestoreSucceeded {
+		t.Fatalf("restore = %+v", r)
+	}
+	if !fenced {
+		t.Error("service not fenced while the dump loaded")
+	}
+	if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || stopped {
+		t.Errorf("fences %+v, stopped %v; want none, running", fs, stopped)
+	}
+}
+
 func TestRestoreRedis(t *testing.T) {
 	e := newEnv(t)
 	sv := e.service("redis", true, "/data")

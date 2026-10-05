@@ -9,7 +9,9 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -218,7 +220,17 @@ func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error 
 			"service", f.ServiceID, "restore", f.RestoreID, "volumes", preRestoreNames(vols))
 		return m.store.DeleteRestoreFence(ctx, f.ServiceID)
 	}
-	if f.Phase == store.RestoreReplacing {
+	switch f.Phase {
+	case store.RestoreLoading:
+		// The database may hold part of the dump, and the load may still be
+		// running in its container. Stop it and leave the service stopped.
+		if err := m.stopActive(ctx, f.ServiceID); err != nil {
+			return fmt.Errorf("%w; the service stays stopped", err)
+		}
+		m.log.Warn("restore: a restart interrupted loading a dump; the service stays stopped",
+			"service", f.ServiceID, "restore", f.RestoreID)
+		return m.store.DeleteRestoreFence(ctx, f.ServiceID)
+	case store.RestoreReplacing:
 		if err := m.putBack(ctx, f.RestoreID, f.Image, vols); err != nil {
 			return fmt.Errorf("%w; the service stays stopped, and its previous data is kept in the volumes %s",
 				err, strings.Join(preRestoreNames(vols), ", "))
@@ -226,6 +238,26 @@ func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error 
 		m.log.Info("restore: put back the data of an interrupted restore", "service", f.ServiceID, "restore", f.RestoreID)
 	}
 	return m.unfence(ctx, f.ServiceID, vols, nil)
+}
+
+// stopTimeout is how long a database stopped by Recover gets to exit before
+// it is killed.
+const stopTimeout = 30 * time.Second
+
+// stopActive stops the container of a service's active deployment, if it
+// has one.
+func (m *Manager) stopActive(ctx context.Context, serviceID string) error {
+	d, err := m.store.ActiveDeployment(ctx, serviceID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && d.ContainerID == "" {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	if err := m.docker.Stop(ctx, d.ContainerID, stopTimeout); err != nil && !docker.IsNotFound(err) {
+		return fmt.Errorf("backup: %w", err)
+	}
+	return nil
 }
 
 // readManifest reads a whole tar and returns its manifest.

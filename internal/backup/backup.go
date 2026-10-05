@@ -65,6 +65,7 @@ type Docker interface {
 	Inspect(ctx context.Context, id string) (docker.Container, error)
 	Exec(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error
 	Create(ctx context.Context, spec docker.RunSpec) (string, error)
+	Stop(ctx context.Context, id string, timeout time.Duration) error
 	Remove(ctx context.Context, id string) error
 	List(ctx context.Context, labels map[string]string) ([]docker.Container, error)
 	CopyFrom(ctx context.Context, id, path string) (io.ReadCloser, error)

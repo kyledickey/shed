@@ -289,6 +289,10 @@ const (
 	// RestoreReplacing means the copies are complete and the volumes are
 	// being replaced, so they may hold partial data.
 	RestoreReplacing RestorePhase = "replacing"
+	// RestoreLoading means a dump is being loaded into the running
+	// database, so its data may be partial, and the load may still be
+	// running in the database's container.
+	RestoreLoading RestorePhase = "loading"
 )
 
 // RestoreFence keeps a service stopped while a restore changes its data. It
