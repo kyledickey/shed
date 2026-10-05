@@ -115,8 +115,10 @@ func (d *Deployer) pruneHistory(serviceID string) {
 }
 
 // RuntimeLogs writes the last tail lines of the output of a service's active
-// container to w, then follows it until ctx ends or the container stops. It
-// returns ErrNoContainer if the service has no active container.
+// container to w, then follows it until ctx ends or the container stops. The
+// values of the variables the container was started with are masked, not
+// those saved since. It returns ErrNoContainer if the service has no active
+// container.
 func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error {
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && dep.ContainerID == "") {
@@ -125,23 +127,37 @@ func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, 
 	if err != nil {
 		return err
 	}
-	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil {
-		return err
-	}
-	project, err := d.store.Project(ctx, svc.ProjectID)
-	if err != nil {
-		return err
-	}
-	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
-	if err != nil {
-		return err
-	}
-	secrets, err := d.logSecrets(ctx, svc, env)
-	if err != nil {
+	var secrets []string
+	if dep.Runtime != nil {
+		secrets = secretValues(dep.Runtime.Env, dep.Runtime.SecretKeys)
+	} else if secrets, err = d.currentSecrets(ctx, serviceID, dep); err != nil {
 		return err
 	}
 	redactor := build.NewRedactor(w, secrets)
 	err = d.docker.Logs(ctx, dep.ContainerID, tail, true, redactor)
 	return errors.Join(err, redactor.Flush())
+}
+
+// currentSecrets returns the values to mask in the logs of a deployment
+// activated before runtimes were recorded, resolved from the current
+// variables.
+func (d *Deployer) currentSecrets(ctx context.Context, serviceID string, dep store.Deployment) ([]string, error) {
+	svc, err := d.store.Service(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	project, err := d.store.Project(ctx, svc.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	svc.Port = dep.Port
+	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := d.secretKeys(ctx, svc, env)
+	if err != nil {
+		return nil, err
+	}
+	return secretValues(env, keys), nil
 }

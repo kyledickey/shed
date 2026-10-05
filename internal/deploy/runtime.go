@@ -93,13 +93,31 @@ func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (strin
 	return d.docker.Run(ctx, spec)
 }
 
-// containerSpec describes the container of a deployment on its project
-// network.
-func containerSpec(svc store.Service, dep store.Deployment, env map[string]string, vols []store.Volume) docker.RunSpec {
+// runtimeOf returns the container configuration of svc with the resolved
+// variables env, masking the variables under secretKeys in logs, and the
+// volumes vols.
+func runtimeOf(svc store.Service, env map[string]string, secretKeys []string, vols []store.Volume) store.DeploymentRuntime {
+	rt := store.DeploymentRuntime{
+		Cmd:        command(svc),
+		Env:        env,
+		SecretKeys: secretKeys,
+		CPUs:       svc.CPULimit,
+		Memory:     svc.MemoryLimit,
+		PublicPort: svc.PublicPort,
+	}
+	for _, v := range vols {
+		rt.Volumes = append(rt.Volumes, store.RuntimeVolume{ID: v.ID, MountPath: v.MountPath})
+	}
+	return rt
+}
+
+// containerSpec describes the container of a deployment, run with rt, on its
+// project network.
+func containerSpec(svc store.Service, dep store.Deployment, rt store.DeploymentRuntime) docker.RunSpec {
 	spec := docker.RunSpec{
 		Name:  containerName(svc.ID, dep.ID),
 		Image: dep.Image,
-		Cmd:   command(svc),
+		Cmd:   rt.Cmd,
 		Labels: map[string]string{
 			labelProject:    svc.ProjectID,
 			labelService:    svc.ID,
@@ -107,17 +125,17 @@ func containerSpec(svc store.Service, dep store.Deployment, env map[string]strin
 		},
 		Network: networkName(svc.ProjectID),
 		Aliases: []string{svc.Name},
-		CPUs:    svc.CPULimit,
-		Memory:  svc.MemoryLimit,
+		CPUs:    rt.CPUs,
+		Memory:  rt.Memory,
 	}
-	for _, k := range slices.Sorted(maps.Keys(env)) {
-		spec.Env = append(spec.Env, k+"="+env[k])
+	for _, k := range slices.Sorted(maps.Keys(rt.Env)) {
+		spec.Env = append(spec.Env, k+"="+rt.Env[k])
 	}
-	for _, v := range vols {
+	for _, v := range rt.Volumes {
 		spec.Mounts = append(spec.Mounts, docker.Mount{Volume: volumeName(v.ID), Target: v.MountPath})
 	}
-	if svc.PublicPort > 0 && svc.Port > 0 {
-		spec.Publish = []docker.PortBinding{{HostPort: svc.PublicPort, ContainerPort: svc.Port}}
+	if rt.PublicPort > 0 && dep.Port > 0 {
+		spec.Publish = []docker.PortBinding{{HostPort: rt.PublicPort, ContainerPort: dep.Port}}
 	}
 	return spec
 }
@@ -458,7 +476,7 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 	if err != nil {
 		return "", err
 	}
-	if exclusive(svc, vols) {
+	if exclusive(svc, vols) || (dep.Runtime != nil && (len(dep.Runtime.Volumes) > 0 || dep.Runtime.PublicPort > 0)) {
 		if err := d.clearStrays(ctx, svc.ID, dep.ID); err != nil {
 			return "", fmt.Errorf("not starting %s while another of its containers may use its storage: %w", svc.Name, err)
 		}
@@ -482,23 +500,56 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return c.ID, nil
 	}
 
-	// Recreate the container as the deployment ran it, on its recorded port.
-	svc.Port = dep.Port
-	project, err := d.store.Project(ctx, svc.ProjectID)
-	if err != nil {
-		return "", err
-	}
-	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+	rt, err := d.deployedRuntime(ctx, svc, dep, vols)
 	if err != nil {
 		return "", err
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
-	id, err := d.runContainer(ctx, containerSpec(svc, dep, env, vols))
+	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt))
 	if err != nil {
 		return "", err
 	}
 	dep.ContainerID = id
 	return id, d.store.UpdateDeployment(ctx, dep)
+}
+
+// deployedRuntime returns the configuration to recreate the container of the
+// active deployment dep with: the one it was started with, less the volumes
+// deleted since, whose data is removed rather than recreated empty. vols are
+// the service's current volumes. A deployment activated before runtimes were
+// recorded is recreated from the service's current settings instead.
+func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep store.Deployment, vols []store.Volume) (store.DeploymentRuntime, error) {
+	if dep.Runtime == nil {
+		d.log.Warn("deployment has no recorded runtime; recreating it from the current settings",
+			"service", svc.Name, "deployment", dep.ID)
+		svc.Port = dep.Port
+		project, err := d.store.Project(ctx, svc.ProjectID)
+		if err != nil {
+			return store.DeploymentRuntime{}, err
+		}
+		env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+		if err != nil {
+			return store.DeploymentRuntime{}, err
+		}
+		keys, err := d.secretKeys(ctx, svc, env)
+		if err != nil {
+			return store.DeploymentRuntime{}, err
+		}
+		return runtimeOf(svc, env, keys, vols), nil
+	}
+	rt := *dep.Runtime
+	rt.Volumes = nil
+	for _, v := range dep.Runtime.Volumes {
+		if slices.ContainsFunc(vols, func(cur store.Volume) bool { return cur.ID == v.ID }) {
+			rt.Volumes = append(rt.Volumes, v)
+			continue
+		}
+		d.log.Info("not mounting deleted volume", "service", svc.Name, "volume", volumeName(v.ID), "path", v.MountPath)
+		if err := d.docker.RemoveVolume(ctx, volumeName(v.ID)); err != nil {
+			d.log.Warn("remove deleted volume", "volume", volumeName(v.ID), "err", err)
+		}
+	}
+	return rt, nil
 }
 
 // DeleteService stops a service's deployments, removes its containers,

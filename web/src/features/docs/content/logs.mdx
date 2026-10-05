@@ -113,7 +113,8 @@ shed masks secrets with `***` before they reach a build log or a runtime stream.
 
 - **What counts as a secret.** The resolved value of every non-empty variable you _stored_ on the service, and for builds also the clone URL, its token, and their base64 form. Injected values like `PORT` are not secrets unless you stored a variable of the same name.
 - **Short values are a trap.** A stored `POSTGRES_USER=postgres` or `POSTGRES_DB=app` masks every `postgres` and `app` in that service's logs. Check your stored variable values before relying on short ones.
-- **Literal only.** A base64 or URL-encoded copy of a secret is a different string and is not masked. Neither are older log lines already on disk: runtime redaction uses the variables as they are now.
+- **Deployed values.** The runtime stream masks the values the active container was started with, recorded when its deployment went live. Saving a new value doesn't unmask the old one while the old container still runs it; the new value is masked from the deployment that starts with it. A deployment that went live before shed recorded this falls back to the variables as they are now.
+- **Literal only.** A base64 or URL-encoded copy of a secret is a different string and is not masked. Neither are log lines already written to a build log before the variable was stored.
 - **Where.** Build output, the container's boot output copied into the build log, deployment error messages, and the runtime stream. Not Docker's raw log.
 
 Output arrives in arbitrary writes, so a secret can be cut in two. Replacing inside each write would let it through. shed buffers instead: after each write it emits everything except the last _longest secret minus one_ characters, because only those could begin a match that is not complete yet. It takes the earliest match, longest secret first, and writes what remains when the stream ends. Try it:

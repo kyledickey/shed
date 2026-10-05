@@ -25,15 +25,16 @@ import (
 
 // fakeDocker keeps containers in memory.
 type fakeDocker struct {
-	mu         sync.Mutex
-	next       int
-	containers map[string]*docker.Container
-	runs       []docker.RunSpec
-	restarts   []string
-	aliases    map[string][]string // network aliases by container ID
-	exposed    []int               // ports every image exposes
-	output     string              // what every container prints
-	exitCode   int                 // if set, new containers exit at once with it
+	mu             sync.Mutex
+	next           int
+	containers     map[string]*docker.Container
+	runs           []docker.RunSpec
+	restarts       []string
+	aliases        map[string][]string // network aliases by container ID
+	exposed        []int               // ports every image exposes
+	output         string              // what every container prints
+	exitCode       int                 // if set, new containers exit at once with it
+	removedVolumes []string
 }
 
 func newFakeDocker() *fakeDocker {
@@ -87,8 +88,14 @@ func (f *fakeDocker) resolve(name string) []string {
 func (f *fakeDocker) EnsureNetwork(context.Context, string) error        { return nil }
 func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { return nil }
 func (f *fakeDocker) EnsureVolume(context.Context, string) error         { return nil }
-func (f *fakeDocker) RemoveVolume(context.Context, string) error         { return nil }
 func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
+
+func (f *fakeDocker) RemoveVolume(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedVolumes = append(f.removedVolumes, name)
+	return nil
+}
 func (f *fakeDocker) ResolveImage(context.Context, string) (string, error) {
 	return "sha256:original", nil
 }

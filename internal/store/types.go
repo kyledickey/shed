@@ -135,6 +135,35 @@ type Deployment struct {
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
+	// Runtime is the container configuration of the active deployment. It
+	// is nil for deployments that are not active and for ones activated
+	// before it was recorded.
+	Runtime *DeploymentRuntime
+}
+
+// DeploymentRuntime is the container configuration a deployment was started
+// with, kept so its container can be recreated as it ran, whatever has been
+// saved in the service's settings since.
+type DeploymentRuntime struct {
+	// Cmd is the container command; nil means the image default.
+	Cmd []string `json:"cmd,omitempty"`
+	// Env holds the resolved variables.
+	Env map[string]string `json:"env,omitempty"`
+	// SecretKeys are the keys of Env whose values are masked in logs.
+	SecretKeys []string `json:"secretKeys,omitempty"`
+	// CPUs is the CPU quota in cores and Memory the memory limit in bytes;
+	// zero means unlimited.
+	CPUs   float64 `json:"cpus,omitempty"`
+	Memory int64   `json:"memory,omitempty"`
+	// PublicPort is the published host TCP port; zero means none.
+	PublicPort int             `json:"publicPort,omitempty"`
+	Volumes    []RuntimeVolume `json:"volumes,omitempty"`
+}
+
+// RuntimeVolume is a volume mounted into a deployment's container.
+type RuntimeVolume struct {
+	ID        string `json:"id"`
+	MountPath string `json:"mountPath"`
 }
 
 // MetricSample is a service's resource usage at one instant, summed over its

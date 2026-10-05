@@ -195,7 +195,8 @@ CREATE TABLE deployments (
   error TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   started_at TEXT,
-  finished_at TEXT
+  finished_at TEXT,
+  runtime TEXT NOT NULL DEFAULT '' -- JSON container config of the active deployment
 );
 CREATE INDEX deployments_service ON deployments(service_id, created_at DESC);
 -- At most one active deployment per service.
@@ -356,8 +357,8 @@ the same service.
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
-3. **Start**: resolve variables, record the service's port on the deployment,
-   and create and start the new container, without the service's network
+3. **Start**: resolve variables, record the service's port and container
+   configuration on the deployment (persisted on activation), and create and start the new container, without the service's network
    alias. Services with volumes or a public port stop the old container first
    if it is running (volumes can't be shared safely, e.g. database data dirs);
    others overlap for zero downtime.
@@ -394,6 +395,16 @@ ensures the active deployment's container of every service that is not
 stopped is running, and applies routes. It restores one deployment per
 service, the newest active one, and removes the service's other containers,
 such as a predecessor left behind by a crash during a switchover.
+
+The active deployment's `runtime` stores its command, resolved variables,
+masked variable keys, CPU/memory limits, public port, and volume IDs and mount
+paths. Activation writes it and clears the superseded deployment's runtime
+in the same transaction, so resolved variables remain only on the active record.
+A missing container is recreated from this snapshot, including during boot,
+start, or release of a hold. Saved settings wait for a new deployment. Volumes
+deleted since are not mounted and their Docker volumes are removed; newly added
+volumes wait for deployment. Deployments activated before migration 011 have no
+snapshot and fall back to current settings with a warning when recreated.
 
 ### Stopping a service
 
@@ -1037,8 +1048,10 @@ secrets it receives; secret mounts do not make untrusted build scripts safe.
 Container startup and runtime log streams mask literal resolved values of stored
 service variables, including matches split across writes. Injected metadata
 (ports and service names) is not treated as secret unless explicitly configured
-as a service variable. Runtime redaction uses the current variable configuration;
-changing variables cannot retroactively remove secrets from older saved logs.
+as a service variable. Runtime redaction uses the active deployment's recorded
+values, so saving a new value does not unmask the one still running. Deployments
+without a runtime snapshot fall back to current variables. Changing variables
+cannot retroactively remove secrets from older saved logs.
 
 ### Replacement storage safety
 

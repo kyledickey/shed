@@ -121,3 +121,63 @@ func TestMigrationKeepsNewestActiveDeployment(t *testing.T) {
 		}
 	}
 }
+
+func TestActivateDeploymentRuntime(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	a := mustService(t, s, Service{ProjectID: p.ID, Name: "a", Kind: "app"})
+	create := func() Deployment {
+		t.Helper()
+		d, err := s.CreateDeployment(ctx, Deployment{ServiceID: a.ID, Status: StatusDeploying, Trigger: TriggerManual})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	runtime := func(id string) *DeploymentRuntime {
+		t.Helper()
+		d, err := s.Deployment(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.Runtime
+	}
+
+	old := create()
+	old.Runtime = &DeploymentRuntime{
+		Cmd: []string{"sh", "-c", "serve"}, Env: map[string]string{"API_SECRET": "one"},
+		SecretKeys: []string{"API_SECRET"}, CPUs: 0.5, Memory: 1 << 20, PublicPort: 5432,
+		Volumes: []RuntimeVolume{{ID: "v1", MountPath: "/data"}},
+	}
+	if err := s.ActivateDeployment(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	got := runtime(old.ID)
+	if got == nil || got.Env["API_SECRET"] != "one" || got.Volumes[0].MountPath != "/data" || got.CPUs != 0.5 || got.PublicPort != 5432 {
+		t.Fatalf("runtime = %+v", got)
+	}
+	// Other updates keep the runtime.
+	old.Status, old.ContainerID, old.Runtime = StatusActive, "c9", nil
+	if err := s.UpdateDeployment(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if runtime(old.ID) == nil {
+		t.Error("UpdateDeployment cleared the runtime")
+	}
+	// A superseded deployment no longer keeps resolved variables.
+	next := create()
+	next.Runtime = &DeploymentRuntime{Env: map[string]string{"API_SECRET": "two"}}
+	if err := s.ActivateDeployment(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if got := runtime(old.ID); got != nil {
+		t.Errorf("superseded runtime = %+v, want nil", got)
+	}
+	if got := runtime(next.ID); got == nil || got.Env["API_SECRET"] != "two" {
+		t.Errorf("active runtime = %+v", got)
+	}
+	if got := runtime(create().ID); got != nil {
+		t.Errorf("new deployment runtime = %+v, want nil", got)
+	}
+}

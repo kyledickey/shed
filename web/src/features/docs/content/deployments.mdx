@@ -91,7 +91,7 @@ Stop, start, and restart act on the active deployment's container. They aren't d
 | Action    | What happens                                                                                                                                                                                                                   |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `stop`    | Cancels any deployment in progress (canceled, "service stopped"), sets the stopped flag, stops the container with a 30-second grace period but doesn't remove it, and drops the service's routes. The deployment stays active. |
-| `start`   | Clears the flag, starts the active deployment's container (recreating it from the recorded image and port if it's gone), and restores routes. Refused if nothing was ever deployed.                                            |
+| `start`   | Clears the flag, starts the active deployment's container (recreating it as deployed if it's gone, see below), and restores routes. Refused if nothing was ever deployed.                                                      |
 | `restart` | Restarts the active container, then reapplies routes, because the container may come back at a different address. Refused if the service is stopped or has nothing deployed.                                                   |
 
 A stopped service stays stopped across a shed restart or reboot. You can still deploy it: when the new deployment goes live, it clears the flag. All three are refused with a conflict while the service is fenced by a restore or held for a backup.
@@ -101,8 +101,15 @@ A stopped service stays stopped across a shed restart or reboot. You can still d
 Containers use the `unless-stopped` restart policy, so Docker brings them back after a reboot by itself. shed still checks its own books on every start, because a crash can leave the database and Docker disagreeing. Before it accepts requests, shed does four things:
 
 1. Marks every deployment still `queued`, `waiting`, `building`, or `deploying` as `failed` with the error `interrupted by restart`, and removes its containers. Pipelines don't resume; deploy again.
-2. Ensures the active deployment of every service that is not stopped and not fenced has a running container, recreating a missing one from its recorded image and port.
+2. Ensures the active deployment of every service that is not stopped and not fenced has a running container, recreating a missing one as deployed (see below).
 3. Keeps one deployment per service, the newest active one, and removes the service's other containers. That is how a predecessor left behind by a crash mid-switchover disappears.
 4. Applies the proxy routes.
 
 A graceful shutdown works the same way from the other side: running pipelines are interrupted and recorded with the error `interrupted by shutdown`.
+
+## Recreating a missing container
+
+When the active deployment goes live, shed records the configuration its container was started with: the image, port, command, resolved variables, CPU and memory limits, public port, and volumes. A container that has gone missing, at boot, on start, or after a restore, is recreated from that record, not from settings saved since. A start command, variable, or limit you saved without deploying takes effect only with the next deployment, so a typo in it can't break a service that was running.
+
+- **Deleted volumes stay deleted.** A volume deleted since the deployment is not mounted, and its data is removed rather than recreated empty. A volume added since is mounted from the next deployment.
+- **Older deployments.** A deployment that went live before shed kept this record is recreated from the service's current settings, as before.

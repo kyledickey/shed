@@ -2,19 +2,36 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 const deploymentCols = `id, service_id, status, trigger, commit_sha, commit_message, commit_author,
-	image, port, container_id, error, created_at, started_at, finished_at`
+	image, port, container_id, error, created_at, started_at, finished_at, runtime`
 
 func scanDeployment(r scanner) (Deployment, error) {
 	var d Deployment
+	var runtime string
 	err := r.Scan(&d.ID, &d.ServiceID, &d.Status, &d.Trigger, &d.CommitSHA, &d.CommitMessage,
 		&d.CommitAuthor, &d.Image, &d.Port, &d.ContainerID, &d.Error, (*timestamp)(&d.CreatedAt),
-		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt})
+		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt}, &runtime)
+	if err == nil && runtime != "" {
+		d.Runtime = new(DeploymentRuntime)
+		if err := json.Unmarshal([]byte(runtime), d.Runtime); err != nil {
+			return d, fmt.Errorf("store: runtime of deployment %s: %w", d.ID, err)
+		}
+	}
 	return d, err
+}
+
+// formatRuntime returns the stored form of rt: JSON, or empty for nil.
+func formatRuntime(rt *DeploymentRuntime) (string, error) {
+	if rt == nil {
+		return "", nil
+	}
+	b, err := json.Marshal(rt)
+	return string(b), err
 }
 
 // updateDeployment overwrites the mutable fields of a deployment; its
@@ -29,12 +46,14 @@ func updateArgs(d Deployment) []any {
 }
 
 // CreateDeployment stores d under a new ID and creation time, which it
-// returns along with the other fields.
+// returns along with the other fields. Its runtime is not stored; only
+// ActivateDeployment records one.
 func (s *Store) CreateDeployment(ctx context.Context, d Deployment) (Deployment, error) {
 	d.ID = NewID()
 	d.CreatedAt = now()
+	d.Runtime = nil
 	err := s.exec(ctx, `INSERT INTO deployments (`+deploymentCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
 		d.ID, d.ServiceID, d.Status, d.Trigger, d.CommitSHA, d.CommitMessage, d.CommitAuthor,
 		d.Image, d.Port, d.ContainerID, d.Error, formatTime(d.CreatedAt),
 		optionalTime(d.StartedAt), optionalTime(d.FinishedAt))
@@ -70,7 +89,8 @@ func (s *Store) Deployments(ctx context.Context, serviceID string, limit int) ([
 
 // UpdateDeployment overwrites the mutable fields of the deployment d.ID: its
 // status, commit details, image, port, container, error, and start and
-// finish times. It returns ErrNotFound for an unknown deployment.
+// finish times. It leaves the runtime alone. It returns ErrNotFound for an
+// unknown deployment.
 func (s *Store) UpdateDeployment(ctx context.Context, d Deployment) error {
 	if err := s.execOne(ctx, updateDeployment, updateArgs(d)...); err != nil {
 		return fmt.Errorf("store: update deployment %s: %w", d.ID, err)
@@ -78,10 +98,12 @@ func (s *Store) UpdateDeployment(ctx context.Context, d Deployment) error {
 	return nil
 }
 
-// ActivateDeployment records d, with its status set to active, as the active
-// deployment of its service. In the same transaction it marks the service's
-// previous active deployment, if any, removed, so a service never has two
-// active deployments. It returns ErrNotFound for an unknown deployment.
+// ActivateDeployment records d, with its status set to active and its
+// runtime, as the active deployment of its service. In the same transaction
+// it marks the service's previous active deployment, if any, removed and
+// clears its runtime, so a service never has two active deployments and
+// resolved variables are kept only for the one that runs. It returns
+// ErrNotFound for an unknown deployment.
 func (s *Store) ActivateDeployment(ctx context.Context, d Deployment) error {
 	if err := s.activateDeployment(ctx, d); err != nil {
 		return fmt.Errorf("store: activate deployment %s: %w", d.ID, err)
@@ -95,7 +117,11 @@ func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET status = ?
+	runtime, err := formatRuntime(d.Runtime)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET status = ?, runtime = ''
 		WHERE service_id = ? AND status = ? AND id <> ?`,
 		StatusRemoved, d.ServiceID, StatusActive, d.ID); err != nil {
 		return mapError(err)
@@ -108,6 +134,9 @@ func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET runtime = ? WHERE id = ?`, runtime, d.ID); err != nil {
+		return mapError(err)
 	}
 	return tx.Commit()
 }

@@ -25,7 +25,8 @@ type job struct {
 	project store.Project
 	out     io.Writer // the build log, safe for concurrent use
 
-	secrets []string
+	masked  []string // keys of the variables masked in logs
+	secrets []string // values masked in logs
 
 	container   string            // ID of the new container, once created
 	stoppedPrev *store.Deployment // the previous deployment, if its container was stopped early
@@ -68,9 +69,10 @@ func (j *job) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if j.secrets, err = j.logSecrets(ctx, j.svc, env); err != nil {
+	if j.masked, err = j.secretKeys(ctx, j.svc, env); err != nil {
 		return err
 	}
+	j.secrets = secretValues(env, j.masked)
 	if err := j.buildImage(ctx, env); err != nil {
 		return err
 	}
@@ -82,6 +84,7 @@ func (j *job) execute(ctx context.Context) error {
 			if env, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA); err != nil {
 				return err
 			}
+			j.secrets = append(j.secrets, secretValues(env, j.masked)...)
 		}
 	}
 	if err := j.start(ctx, env); err != nil {
@@ -220,7 +223,11 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 
 	j.step("Starting container")
 	j.dep.Port = j.svc.Port
-	spec := containerSpec(j.svc, j.dep, env, vols)
+	// The runtime is recorded on activation, so a missing container is
+	// recreated as it runs now, whatever is saved later.
+	rt := runtimeOf(j.svc, env, j.masked, vols)
+	j.dep.Runtime = &rt
+	spec := containerSpec(j.svc, j.dep, rt)
 	// Private traffic must not reach the new container before it is healthy,
 	// so it gets the service's hostname only in switchOver.
 	spec.Aliases = nil
