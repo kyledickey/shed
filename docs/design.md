@@ -288,6 +288,18 @@ CREATE TABLE restore_fences (            -- a restore is changing the service's 
   was_stopped INTEGER NOT NULL,          -- services.stopped before the restore
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE pending_pushes (             -- newest undeployed push per app service
+  service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,                       -- changes with every newer push
+  repo TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  commit_message TEXT NOT NULL DEFAULT '',
+  commit_author TEXT NOT NULL DEFAULT '',
+  received_at TEXT NOT NULL,
+  prior_deployment_id TEXT NOT NULL DEFAULT '' -- latest deployment when stored
+);
 ```
 
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
@@ -711,9 +723,8 @@ object from the destination it was uploaded to.
 `RestartService`, and container recreation (`Reconcile`, the release of a
 hold) refuse the service with `deploy.ErrFenced`, and a new restore into it
 with `backup.ErrFenced`; the API answers 409. Stopping and deleting the
-service still work. A push for a fenced service is skipped with a warning in
-shed's log and the webhook still answers 202; nothing is recorded as a
-deployment. The fence goes away only when its restore finishes, when boot
+service still work. A push for a fenced service is stored pending and the webhook answers
+202. It deploys once the fence is cleared unless superseded meanwhile. The fence goes away only when its restore finishes, when boot
 recovery puts the previous data back (or, in phase `loading`, stops the
 container), or when the user clears it with
 `POST /api/services/{id}/restore-fence/clear`. Clearing deletes the row and
@@ -790,9 +801,22 @@ SameSite=Lax, Secure when `server.url` is https, 30 days.
 
 `POST /api/github/webhook`, HMAC-SHA256 verified. On `push` to
 `refs/heads/<branch>`, every `app` service with matching `repo`, `branch`, and
-`auto_deploy` gets a `push` deployment with the head commit's sha, message,
-and author. Services fenced by a failed restore are skipped and logged. Other
-events are acknowledged and ignored.
+`auto_deploy` gets the push stored as its pending push. A newer push replaces
+an older undeployed one. shed then tries to deploy it with the head commit's
+sha, message, and author, and removes it once the deployment is created.
+Held or fenced services keep the push; the webhook still answers 202. A storage
+failure answers 503. `ReplayPushes` retries at startup after reconcile and
+every 10 seconds, logging each failure once per push and reason.
+
+A pending push is dropped if the service is deleted, no longer deploys that
+repo and branch on push, or its latest deployment differs from the recorded
+`prior_deployment_id`. This comparison uses IDs, not timestamps. Storing a push,
+checking and enqueueing it, and the API's other deployment requests share a lock,
+so newer pushes and manual deployments cannot interleave with that check.
+If deleting an enqueued push fails, its own deployment supersedes it on retry.
+Other events are acknowledged and ignored. GitHub does not automatically
+redeliver failures; pushes sent while shed is unreachable must be redelivered
+from GitHub or deployed manually.
 
 ## HTTP API
 
@@ -1125,12 +1149,12 @@ serialized. Failed deletion clears the admission guard so deletion can be retrie
 A service held for a backup or restore (`Deployer.Hold`) rejects deploys,
 redeploys, runtime controls, its own deletion, its project's deletion, and
 deletion of its volumes with `ErrServiceBusy` (409) until released. Pushes that
-arrive during a hold return 503 to GitHub and must be redelivered or deployed
-manually.
+arrive during a hold are stored pending (202) and deploy after release unless
+superseded meanwhile (see "Webhooks").
 
 A service with a restore fence rejects deploys, redeploys, start, and restart
 with `ErrFenced` (409), checked under the same lock as the other admission
-guards; pushes for it are skipped and logged (see "Restore fences"). Volume deletion is serialized with the other runtime operations.
+guards; pushes for it remain pending (see "Webhooks"). Volume deletion is serialized with the other runtime operations.
 
 ### Expansion and log memory limits
 
@@ -1191,7 +1215,7 @@ successful deferred deletion.
 ### Webhook delivery deduplication
 
 Successfully authenticated push payloads are hashed and tracked per matching
-service. Repeated deliveries skip deployments already enqueued; concurrent
-processing or enqueue failures return 503, allowing retries without duplicating
-successful enqueues. The in-memory cache holds at most 1,024 entries for up to
+service. Repeated deliveries skip pushes already stored; concurrent
+processing or storage failures return 503, allowing manual retries without
+duplicating stored pushes. Deployment failures leave the push pending. The in-memory cache holds at most 1,024 entries for up to
 24 hours and clears on restart; old completed entries may be evicted at capacity.

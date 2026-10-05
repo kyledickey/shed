@@ -57,17 +57,29 @@ When you push, GitHub POSTs to `/api/github/webhook`. This endpoint takes no ses
 
 A push to `refs/heads/<branch>` deploys every `app` service whose `repo` and `branch` match and whose `autoDeploy` is on. The repo matches case-insensitively, as GitHub treats it; the branch matches exactly. Each deployment gets the trigger `push` and the head commit's SHA, first message line, and author.
 
-| Response | When                                                                                                                    |
-| -------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `409`    | The GitHub App isn't configured yet.                                                                                    |
-| `401`    | The signature is missing, malformed, or doesn't match.                                                                  |
-| `429`    | More than 4 deliveries in flight, or the bucket (burst of 8, then 1 per second) is empty.                               |
-| `413`    | The payload is over 1 MiB. Deploy manually.                                                                             |
-| `400`    | The body can't be read or parsed.                                                                                       |
-| `202`    | Accepted. Also returned for events other than push, deleted branches, tags, and pushes nothing tracks.                  |
-| `503`    | A delivery is still being scheduled, or enqueueing failed, including a service held for a backup. GitHub can redeliver. |
+| Response | When                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------ |
+| `409`    | The GitHub App isn't configured yet.                                                                   |
+| `401`    | The signature is missing, malformed, or doesn't match.                                                 |
+| `429`    | More than 4 deliveries in flight, or the bucket (burst of 8, then 1 per second) is empty.              |
+| `413`    | The payload is over 1 MiB. Deploy manually.                                                            |
+| `400`    | The body can't be read or parsed.                                                                      |
+| `202`    | Accepted. Also returned for events other than push, deleted branches, tags, and pushes nothing tracks. |
+| `503`    | The same delivery is still being processed, or shed couldn't store the push. Redeliver it from GitHub. |
 
-Deliveries are deduplicated per service by a hash of the payload, for up to 24 hours and 1,024 entries in memory, cleared on restart. A redelivery after a 503 therefore deploys only the services that missed out the first time. A service fenced by a failed restore is skipped, with a log line, and doesn't make the delivery fail.
+GitHub does not redeliver a failed delivery on its own. Open the App's settings on GitHub, then **Advanced → Recent Deliveries**, and redeliver it from there. GitHub only redelivers deliveries from the past 3 days. Deliveries are deduplicated per service by a hash of the payload, for up to 24 hours and 1,024 entries in memory, cleared on restart. A redelivery after a 503 therefore deploys only the services that missed out the first time.
+
+## Pushes that can't deploy yet
+
+shed stores each push in its database before deploying it, one per service: a newer push replaces an older one that hasn't deployed yet. If the service can't take a deployment right now, the delivery still gets `202` and the push waits:
+
+- the service is held for a backup or restore,
+- it is fenced by a failed restore, until you clear the fence,
+- it is being deleted, or shed is shutting down.
+
+shed tries waiting pushes again every 10 seconds and when it starts, so a push that arrived just before a restart deploys after it. A waiting push is dropped, with a log line, if the service no longer deploys that repo and branch on push (you turned `autoDeploy` off or changed the source), if the service is deleted, or if any deployment of the service was created after the push arrived, such as a manual deploy or a redeploy, so that an old push never replaces newer work. shed tells this by remembering which deployment was the service's latest when the push arrived, not by comparing times, and it creates pushes' and manual deployments one at a time, so a deploy you start while a push is deploying always comes after it.
+
+A push sent while shed itself is down, or unreachable, never arrives, and shed can't know about it. Redeliver it from **Recent Deliveries**, or deploy the branch manually.
 
 ## Waiting for CI
 

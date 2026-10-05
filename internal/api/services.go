@@ -102,7 +102,10 @@ func (s *Server) createService(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 	}
-	if _, err := s.deployer.Deploy(ctx, svc.ID, store.TriggerCreate, commit); err != nil {
+	s.pushMu.Lock()
+	_, err = s.deployer.Deploy(ctx, svc.ID, store.TriggerCreate, commit)
+	s.pushMu.Unlock()
+	if err != nil {
 		s.log.Error("start first deployment", "service", svc.ID, "err", err)
 	}
 	return s.writeService(ctx, w, svc, http.StatusCreated)

@@ -199,6 +199,7 @@ func run() error {
 	var background sync.WaitGroup
 	background.Go(func() { collector.Run(ctx) })
 	background.Go(func() { backups.Run(ctx) })
+	background.Go(func() { server.ReplayPushes(ctx) })
 	background.Go(func() { server.SyncRoutes(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.

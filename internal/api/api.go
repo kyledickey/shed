@@ -110,6 +110,10 @@ type Server struct {
 	setupToken string // guarded by tokenMu; empty once GitHub is configured
 
 	routes *routeState
+
+	pushRetry time.Duration
+	pushMu    sync.Mutex        // serializes pushes with the API's other deployments
+	pushErrs  map[string]string // last logged failure by service ID; guarded by pushMu
 }
 
 // New returns a Server. It loads the GitHub App from the store, or, if none is
@@ -129,6 +133,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		httpClient: cfg.HTTPClient,
 		log:        cfg.Log,
 		routes:     newRouteState(),
+		pushRetry:  pushRetryInterval,
+		pushErrs:   make(map[string]string),
 	}
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err

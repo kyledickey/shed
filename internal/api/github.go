@@ -357,7 +357,6 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	commit := deploy.Commit{SHA: ev.SHA, Message: ev.Message, Author: ev.Author}
 	digest := sha256.Sum256(body)
 	for _, svc := range services {
 		key := deliveryKey{body: digest, service: svc.ID}
@@ -368,16 +367,21 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		if busy {
 			return errorf(http.StatusServiceUnavailable, "delivery is already being scheduled; retry later")
 		}
-		_, err := s.deployer.Deploy(r.Context(), svc.ID, store.TriggerPush, commit)
+		// Store the push before deploying it, so that it is deployed later
+		// if the service is held or fenced now, or shed restarts first.
+		err := s.receivePush(r.Context(), store.PendingPush{
+			ServiceID: svc.ID, Repo: ev.Repo, Branch: ev.Branch,
+			CommitSHA: ev.SHA, CommitMessage: ev.Message, CommitAuthor: ev.Author,
+		})
 		s.deliveries.finish(key, err == nil)
-		if errors.Is(err, deploy.ErrFenced) {
-			s.log.Warn("push not deployed: a failed restore fenced the service", "service", svc.ID, "sha", ev.SHA)
-			continue
+		if errors.Is(err, store.ErrNotFound) {
+			continue // deleted meanwhile
 		}
 		if err != nil {
-			s.log.Error("deploy on push", "service", svc.ID, "err", err)
-			return errorf(http.StatusServiceUnavailable, "could not schedule delivery; retry later")
+			s.log.Error("store push", "service", svc.ID, "err", err)
+			return errorf(http.StatusServiceUnavailable, "could not store delivery; redeliver it later")
 		}
+		s.deployPush(r.Context(), svc.ID)
 	}
 	s.log.Info("push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
 	w.WriteHeader(http.StatusAccepted)

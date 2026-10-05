@@ -34,7 +34,8 @@ import (
 type fakeDeployer struct {
 	mu         sync.Mutex
 	deploy     []store.Trigger
-	routeFails int // how many more ApplyRoutes calls fail
+	commits    []string // SHA of each deployment
+	routeFails int      // how many more ApplyRoutes calls fail
 	routeCalls int
 	controls   []string        // "stop <id>", "start <id>", "restart <id>"
 	controlErr error           // returned by the service controls
@@ -78,7 +79,20 @@ func (f *fakeDeployer) Deploy(_ context.Context, serviceID string, trigger store
 		return store.Deployment{}, f.deployErr
 	}
 	f.deploy = append(f.deploy, trigger)
+	f.commits = append(f.commits, c.SHA)
 	return store.Deployment{ServiceID: serviceID, Trigger: trigger, CommitSHA: c.SHA, Status: store.StatusQueued}, nil
+}
+
+func (f *fakeDeployer) setDeployErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deployErr = err
+}
+
+func (f *fakeDeployer) deployed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.commits...)
 }
 
 func (f *fakeDeployer) triggers() []store.Trigger {
@@ -524,29 +538,6 @@ func TestWebhook(t *testing.T) {
 	}
 	if got := f.deployer.triggers(); len(got) != 1 || got[0] != store.TriggerPush {
 		t.Errorf("deploys = %v, want [push]", got)
-	}
-}
-
-func TestWebhookSkipsFencedService(t *testing.T) {
-	f := newFixture(t)
-	createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
-	f.deployer.deployErr = deploy.ErrFenced
-	body := `{"ref":"refs/heads/main","after":"abc123","repository":{"full_name":"octo/app"},
-		"head_commit":{"id":"abc123","message":"Fix it","author":{"name":"Mona"}}}`
-	mac := hmac.New(sha256.New, []byte("s3cret"))
-	mac.Write([]byte(body))
-	req := httptest.NewRequest("POST", "/api/github/webhook", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("status = %d, want 202; body: %s", rec.Code, rec.Body)
-	}
-	if got := f.deployer.triggers(); len(got) != 0 {
-		t.Errorf("deploys = %v, want none", got)
 	}
 }
 

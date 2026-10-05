@@ -17,7 +17,7 @@ You start a restore with `POST /api/backups/{id}/restore`. It creates a `restore
 
 1. **Pre-restore backup.** shed takes a backup of the current state with the trigger `pre-restore`, using the policy's compression and upload settings. It runs inside the restore's job. If it fails, the restore fails, and nothing has changed.
 2. **Check the archive.** The archive is opened from the local file, or downloaded from S3 into `<restoreID>.download.partial`, and decoded all the way through to prove it decrypts and decompresses. Volume archives are also scanned for unsafe entries: absolute names, names leaving the root, entries beneath a symlink of the archive, and hard links leaving their volume. Any one rejects the whole archive.
-3. **Hold the service.** shed holds it for the rest of the restore. Deployments in progress are canceled. Deploy, redeploy, start, stop, restart, delete, and volume deletion are rejected, and the API answers 409. Pushes that arrive during a hold get 503 from the webhook, so GitHub reports the delivery as failed; redeliver it or deploy by hand.
+3. **Hold the service.** shed holds it for the rest of the restore. Deployments in progress are canceled. Deploy, redeploy, start, stop, restart, delete, and volume deletion are rejected, and the API answers 409. Pushes that arrive during a hold get 202 and wait; the newest one deploys once the hold ends (see [pushes that can't deploy yet](/docs/github#pushes-that-cant-deploy-yet)).
 4. **Replace the data.** Volumes and redis take the volume path. postgres, mysql, and mongo take the dump path.
 5. **Release the hold.** Unless the service is stopped (by you, or by a fence a failure left in place), its active container is started again, recreated if it was removed, and routes are applied. If that fails after the data was restored, the restore is recorded as failed with that error.
 
@@ -78,13 +78,13 @@ The service is fenced in phase `loading` while the dump loads, and the fence is 
 
 A `restore_fences` row means a restore is changing, or failed while changing, the service's data. While it exists, shed refuses everything that could start or replace the service, and the row is authoritative: it survives restarts.
 
-| Blocked while fenced                                    | Result                                                                                             |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Deploy and redeploy (manual deploys, rollbacks)         | 409 Conflict                                                                                       |
-| Start and restart                                       | 409 Conflict                                                                                       |
-| Container recreation (boot reconcile, releasing a hold) | Refused                                                                                            |
-| A new restore into the service                          | 409 Conflict                                                                                       |
-| A GitHub push for the service                           | Skipped with a warning in shed's log. The webhook still answers 202 and no deployment is recorded. |
+| Blocked while fenced                                    | Result                                                                                                  |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Deploy and redeploy (manual deploys, rollbacks)         | 409 Conflict                                                                                            |
+| Start and restart                                       | 409 Conflict                                                                                            |
+| Container recreation (boot reconcile, releasing a hold) | Refused                                                                                                 |
+| A new restore into the service                          | 409 Conflict                                                                                            |
+| A GitHub push for the service                           | Stored and answered 202. It deploys once you clear the fence, unless a newer deployment was made first. |
 
 Stopping and deleting the service still work. The service API exposes the fence as `restoreFence`, with `restoreId`, `phase` (`retaining`, `replacing`, or `loading`), and `createdAt`.
 

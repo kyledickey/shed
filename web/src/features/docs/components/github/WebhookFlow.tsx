@@ -48,10 +48,10 @@ const gates: { title: string; sub: string; out: string; outSub: string; bad?: bo
     outSub: "that service only",
   },
   {
-    title: "Deployment enqueued",
-    sub: "trigger: push",
+    title: "Push stored, then deployed",
+    sub: "trigger: push · newest per service",
     out: "202",
-    outSub: "or 503 so GitHub redelivers",
+    outSub: "or 503 if it can’t be stored",
     bad: false,
   },
 ];

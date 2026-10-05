@@ -57,7 +57,11 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) error 
 			return err
 		}
 	}
+	// Under s.pushMu, so that a pending push cannot pass its check against
+	// the latest deployment and then supersede this one.
+	s.pushMu.Lock()
 	dep, err := s.deployer.Deploy(r.Context(), svc.ID, store.TriggerManual, commit)
+	s.pushMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -73,7 +77,9 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) redeploy(w http.ResponseWriter, r *http.Request) error {
+	s.pushMu.Lock() // see createDeployment
 	dep, err := s.deployer.Redeploy(r.Context(), r.PathValue("id"))
+	s.pushMu.Unlock()
 	if err != nil {
 		return err
 	}
