@@ -351,7 +351,9 @@ the same service.
    `shed/<serviceID>:<deploymentID>`. Image apps and databases pull their
    image and record its immutable local image ID. Containers and rollbacks use
    that ID even after the configured tag moves. Redeploys of old deployments
-   reuse the recorded image and skip this step; legacy tag-only records for
+   reuse the recorded image and skip this step. The image must still be on the
+   host: redeploy checks before queueing (409 if unavailable), and the pipeline
+   checks again before stopping the previous container. Legacy tag-only records for
    pulled images cannot be redeployed safely and must be deployed afresh.
    Railpack writes its generated plan and info into the private build workspace,
    outside the repository-controlled source tree.
@@ -394,7 +396,10 @@ On boot, `deploy.Reconcile` marks orphaned in-progress deployments `failed`,
 ensures the active deployment's container of every service that is not
 stopped is running, and applies routes. It restores one deployment per
 service, the newest active one, and removes the service's other containers,
-such as a predecessor left behind by a crash during a switchover.
+such as a predecessor left behind by a crash during a switchover. A missing
+container is recreated only if its image is on the host; otherwise no network,
+volume, or container is created, the error is logged, and the service shows
+`crashed`.
 
 The active deployment's `runtime` stores its command, resolved variables,
 masked variable keys, CPU/memory limits, public port, and volume IDs and mount
@@ -830,7 +835,7 @@ GET    /api/services/{id}                       → Service
 PATCH  /api/services/{id}       ServicePatch    → Service
 DELETE /api/services/{id}                       204  (containers, volumes, images)
 POST   /api/services/{id}/stop                  → Service  (cancel deploys, stop container, unroute)
-POST   /api/services/{id}/start                 → Service  (409 if nothing was ever deployed or fenced)
+POST   /api/services/{id}/start                 → Service  (409 if never deployed, fenced, or both container and image are gone)
 POST   /api/services/{id}/restart               → Service  (409 if stopped, nothing deployed, or fenced)
 POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed restore's fence, keep data; 409 while held)
 
@@ -842,10 +847,10 @@ DELETE /api/domains/{id}                        204 (Shed-Routes: pending if rou
 POST   /api/services/{id}/volumes   {mountPath} → Volume
 DELETE /api/volumes/{id}                        204  (removes data)
 
-GET    /api/services/{id}/deployments           → Deployment[]  (newest first, 50)
+GET    /api/services/{id}/deployments           → Deployment[]  (newest first, 50; imageAvailable when Docker is reachable)
 POST   /api/services/{id}/deployments           → Deployment    (deploy branch head / image; 409 if fenced)
 GET    /api/deployments/{id}                    → Deployment
-POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image = rollback; 409 if fenced)
+POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image = rollback; 409 if fenced or image unavailable)
 POST   /api/deployments/{id}/cancel             → Deployment
 GET    /api/deployments/{id}/logs               SSE build log (replays file, follows while building)
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
@@ -935,6 +940,7 @@ type Deployment = {
   trigger: "push" | "manual" | "redeploy" | "create";
   commitSha: string; commitMessage: string; commitAuthor: string;
   image: string; error: string;
+  imageAvailable?: boolean; // only in lists: image remains on this server
   createdAt: string; startedAt: string | null; finishedAt: string | null;
 };
 

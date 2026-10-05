@@ -49,7 +49,8 @@ func (d *Deployer) StopService(ctx context.Context, serviceID string) error {
 // StartService starts the active deployment's container of a stopped
 // service, recreating it if it is gone, and routes its domains to it again.
 // It returns ErrNoContainer if the service has no active deployment,
-// ErrServiceBusy while it is held, and ErrFenced while it is fenced.
+// ErrServiceBusy while it is held, ErrFenced while it is fenced, and
+// ErrImageUnavailable if the container is gone and so is its image.
 func (d *Deployer) StartService(ctx context.Context, serviceID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()

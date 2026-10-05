@@ -24,9 +24,23 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	images := make([]string, 0, len(deps))
+	for _, d := range deps {
+		images = append(images, d.Image)
+	}
+	available, err := s.deployer.AvailableImages(r.Context(), id, images)
+	if err != nil {
+		s.log.Warn("check deployment images", "service", id, "err", err)
+		available = nil
+	}
 	out := make([]deploymentJSON, 0, len(deps))
 	for _, d := range deps {
-		out = append(out, toDeployment(d))
+		j := toDeployment(d)
+		if available != nil && d.Image != "" {
+			ok := available[d.Image]
+			j.ImageAvailable = &ok
+		}
+		out = append(out, j)
 	}
 	return writeJSON(w, http.StatusOK, out)
 }

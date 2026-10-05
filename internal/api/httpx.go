@@ -71,6 +71,8 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status, msg = http.StatusConflict, "already exists"
 	case errors.Is(err, deploy.ErrNotInProgress):
 		status, msg = http.StatusConflict, "deployment is not in progress"
+	case errors.Is(err, deploy.ErrImageUnavailable):
+		status, msg = http.StatusConflict, "the deployment's image is no longer on the server; deploy again to build or pull it"
 	case errors.Is(err, deploy.ErrNoImage):
 		status, msg = http.StatusConflict, "deployment has no image to redeploy"
 	case errors.Is(err, deploy.ErrNoContainer):

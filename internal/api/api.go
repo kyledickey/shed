@@ -27,6 +27,7 @@ import (
 type Deployer interface {
 	Deploy(ctx context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error)
 	Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error)
+	AvailableImages(ctx context.Context, serviceID string, images []string) (map[string]bool, error)
 	Cancel(ctx context.Context, deploymentID string) (store.Deployment, error)
 	ServiceStatuses(ctx context.Context, projectID string) (map[string]deploy.ServiceStatus, error)
 	ApplyRoutes(ctx context.Context) error

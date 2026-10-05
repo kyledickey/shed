@@ -87,6 +87,10 @@ func (f *fakeDeployer) triggers() []store.Trigger {
 	return append([]store.Trigger(nil), f.deploy...)
 }
 
+func (f *fakeDeployer) AvailableImages(context.Context, string, []string) (map[string]bool, error) {
+	return nil, nil
+}
+
 func (f *fakeDeployer) Redeploy(context.Context, string) (store.Deployment, error) {
 	return store.Deployment{}, deploy.ErrNoImage
 }

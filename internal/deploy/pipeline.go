@@ -131,10 +131,13 @@ func (j *job) waitForCI(ctx context.Context) error {
 }
 
 // buildImage builds repo apps and pulls the image of everything else. A
-// redeploy already has its image.
+// redeploy already has its image, which must still be on the host.
 func (j *job) buildImage(ctx context.Context, env map[string]string) error {
 	if j.dep.Image != "" {
 		j.step("Reusing image %s", j.dep.Image)
+		if err := j.checkImage(ctx, j.dep.Image); err != nil {
+			return fmt.Errorf("%w; deploy the service again to build or pull it", err)
+		}
 		return nil
 	}
 	j.setStatus(store.StatusBuilding)

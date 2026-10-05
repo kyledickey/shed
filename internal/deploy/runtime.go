@@ -396,7 +396,8 @@ func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
 // Reconcile brings Docker in line with the store after a restart: deployments
 // that were in progress are marked failed, the active deployment's container
 // of every service that is neither stopped nor fenced is started (or
-// recreated if it is gone), and routes are applied. It does not respect holds, so it must finish
+// recreated if it is gone and its image is still on the host), and routes are
+// applied. A service that cannot be started is logged and left crashed. It does not respect holds, so it must finish
 // before anything calls Hold.
 func (d *Deployer) Reconcile(ctx context.Context) error {
 	stale, err := d.store.DeploymentsByStatus(ctx,
@@ -460,10 +461,12 @@ func (d *Deployer) removeDeploymentContainers(ctx context.Context, deploymentID 
 }
 
 // ensureRunning starts the container of an active deployment, recreating it
-// from the deployment's image if it no longer exists, and returns its ID. For
-// a service whose containers cannot run side by side, every container of
-// another deployment must be removed first, or nothing is started. Nothing
-// is started for a fenced service either; that returns ErrFenced.
+// from the deployment's image and recorded runtime if it no longer exists,
+// and returns its ID. For a service whose containers cannot run side by
+// side, every container of another deployment must be removed first, or
+// nothing is started. Nothing is started for a fenced service either; that
+// returns ErrFenced. A container that must be recreated from an image that is
+// no longer on the host returns ErrImageUnavailable.
 func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (string, error) {
 	svc, err := d.store.Service(ctx, dep.ServiceID)
 	if err != nil {
@@ -500,6 +503,11 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return c.ID, nil
 	}
 
+	// Without its image, as on a new host, the container cannot be
+	// recreated; nothing else, such as its volumes, is created either.
+	if err := d.checkImage(ctx, dep.Image); err != nil {
+		return "", fmt.Errorf("recreate container of %s: %w", svc.Name, err)
+	}
 	rt, err := d.deployedRuntime(ctx, svc, dep, vols)
 	if err != nil {
 		return "", err

@@ -76,7 +76,9 @@ Redeploying an old deployment is how rollbacks work. It creates a new deployment
 
 A redeploy reuses the image but not the configuration. It starts with the service's _current_ variables, port, and limits. Rolling back code doesn't roll back settings.
 
-The image must be named immutably. Built images (`shed/<serviceID>:<deploymentID>`) and pulled images pinned by ID or digest qualify. Older records that stored only a mutable tag such as `postgres:18-alpine` are refused, since the tag may have moved; deploy those afresh. shed also keeps only the five newest built images per service, so deployments older than that usually can't start.
+The image must be named immutably. Built images (`shed/<serviceID>:<deploymentID>`) and pulled images pinned by ID or digest qualify. Older records that stored only a mutable tag such as `postgres:18-alpine` are refused, since the tag may have moved; deploy those afresh.
+
+The image must also still be on the server. shed keeps only the five newest built images per service, plus the active one, while history keeps 50 deployments, so most old deployments can't be redeployed. shed checks before queueing: a redeploy of a missing image is refused with a conflict, nothing is queued, and the running container is left alone. The pipeline checks again before it stops anything, in case the image was removed meanwhile. To get an old commit back, deploy it again so it is rebuilt.
 
 ## History and retention
 
@@ -91,7 +93,7 @@ Stop, start, and restart act on the active deployment's container. They aren't d
 | Action    | What happens                                                                                                                                                                                                                   |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `stop`    | Cancels any deployment in progress (canceled, "service stopped"), sets the stopped flag, stops the container with a 30-second grace period but doesn't remove it, and drops the service's routes. The deployment stays active. |
-| `start`   | Clears the flag, starts the active deployment's container (recreating it as deployed if it's gone, see below), and restores routes. Refused if nothing was ever deployed.                                                      |
+| `start`   | Clears the flag, starts the active deployment's container (recreating it as deployed if it's gone, see below), and restores routes. Refused if nothing was ever deployed, or if the container and its image are both gone.     |
 | `restart` | Restarts the active container, then reapplies routes, because the container may come back at a different address. Refused if the service is stopped or has nothing deployed.                                                   |
 
 A stopped service stays stopped across a shed restart or reboot. You can still deploy it: when the new deployment goes live, it clears the flag. All three are refused with a conflict while the service is fenced by a restore or held for a backup.
@@ -112,4 +114,9 @@ A graceful shutdown works the same way from the other side: running pipelines ar
 When the active deployment goes live, shed records the configuration its container was started with: the image, port, command, resolved variables, CPU and memory limits, public port, and volumes. A container that has gone missing, at boot, on start, or after a restore, is recreated from that record, not from settings saved since. A start command, variable, or limit you saved without deploying takes effect only with the next deployment, so a typo in it can't break a service that was running.
 
 - **Deleted volumes stay deleted.** A volume deleted since the deployment is not mounted, and its data is removed rather than recreated empty. A volume added since is mounted from the next deployment.
+- **The image must be on the server.** shed never builds or pulls while recreating. If the image is gone, nothing is created, not even the volumes, and the error is logged. The service shows as crashed; start fails with a conflict. Deploy it again.
 - **Older deployments.** A deployment that went live before shed kept this record is recreated from the service's current settings, as before.
+
+## Moving to a new server
+
+Recovery on boot repairs a server that still has its Docker images and volumes. It doesn't move shed to a new one: shed.db holds the records, not the images or the data. With only [shed.db](/docs/restores#recovering-sheddb) restored on a fresh server, no service's image is there, so nothing is started, no empty volume is created, and every service shows as crashed. That is deliberate: a database started on an empty volume would look healthy and hide the loss. Each service comes back only when you deploy it again, and its data only from a volume backup.

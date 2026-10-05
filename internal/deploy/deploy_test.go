@@ -35,6 +35,8 @@ type fakeDocker struct {
 	output         string              // what every container prints
 	exitCode       int                 // if set, new containers exit at once with it
 	removedVolumes []string
+	goneImages     map[string]bool // removed images
+	ensuredVolumes []string
 }
 
 func newFakeDocker() *fakeDocker {
@@ -87,8 +89,14 @@ func (f *fakeDocker) resolve(name string) []string {
 
 func (f *fakeDocker) EnsureNetwork(context.Context, string) error        { return nil }
 func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { return nil }
-func (f *fakeDocker) EnsureVolume(context.Context, string) error         { return nil }
 func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
+
+func (f *fakeDocker) EnsureVolume(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensuredVolumes = append(f.ensuredVolumes, name)
+	return nil
+}
 
 func (f *fakeDocker) RemoveVolume(_ context.Context, name string) error {
 	f.mu.Lock()
@@ -96,7 +104,12 @@ func (f *fakeDocker) RemoveVolume(_ context.Context, name string) error {
 	f.removedVolumes = append(f.removedVolumes, name)
 	return nil
 }
-func (f *fakeDocker) ResolveImage(context.Context, string) (string, error) {
+func (f *fakeDocker) ResolveImage(_ context.Context, ref string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.goneImages[ref] {
+		return "", fmt.Errorf("no such image %s: %w", ref, cerrdefs.ErrNotFound)
+	}
 	return "sha256:original", nil
 }
 func (f *fakeDocker) ExposedPorts(context.Context, string) ([]int, error) {
@@ -104,8 +117,32 @@ func (f *fakeDocker) ExposedPorts(context.Context, string) ([]int, error) {
 	defer f.mu.Unlock()
 	return f.exposed, nil
 }
-func (f *fakeDocker) RemoveImage(context.Context, string) error                  { return nil }
-func (f *fakeDocker) ListImages(context.Context, string) ([]docker.Image, error) { return nil, nil }
+
+// RemoveImage marks the image gone.
+func (f *fakeDocker) RemoveImage(_ context.Context, ref string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.goneImages == nil {
+		f.goneImages = make(map[string]bool)
+	}
+	f.goneImages[ref] = true
+	return nil
+}
+
+// ListImages returns the images of repo that containers were run from and
+// that were not removed since.
+func (f *fakeDocker) ListImages(_ context.Context, repo string) ([]docker.Image, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var images []docker.Image
+	for i, spec := range f.runs {
+		if strings.HasPrefix(spec.Image, repo+":") && !f.goneImages[spec.Image] &&
+			!slices.ContainsFunc(images, func(img docker.Image) bool { return img.Ref == spec.Image }) {
+			images = append(images, docker.Image{Ref: spec.Image, Created: time.Unix(int64(i), 0)})
+		}
+	}
+	return images, nil
+}
 
 // Logs writes the output, then, if following, blocks until the container
 // stops or ctx ends.

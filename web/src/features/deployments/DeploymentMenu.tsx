@@ -2,7 +2,7 @@ import { Copy, Ellipsis, RotateCcw, ScrollText, Square, Undo2 } from "lucide-rea
 import { isPending, type Deployment } from "../../api/types";
 import { Button } from "../../components/Button";
 import { Menu, MenuItem, MenuSeparator } from "../../components/Overlay";
-import { redeployLabel, type DeploymentActions } from "./actions";
+import { imageGone, imageGoneLabel, redeployLabel, type DeploymentActions } from "./actions";
 
 /** DeploymentMenu is the overflow menu on a deployment history row. */
 export function DeploymentMenu({
@@ -29,9 +29,10 @@ export function DeploymentMenu({
       {redeploy && (
         <MenuItem
           icon={d.status === "removed" ? <Undo2 size={14} /> : <RotateCcw size={14} />}
+          disabled={imageGone(d)}
           onClick={() => actions.redeploy(d)}
         >
-          {redeploy}
+          {imageGone(d) ? imageGoneLabel : redeploy}
         </MenuItem>
       )}
       {d.commitSha && (

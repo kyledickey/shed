@@ -13,7 +13,7 @@ import { BuildLogView } from "../../components/logs/BuildLogView";
 import { Callout } from "../../components/Misc";
 import { Dialog } from "../../components/Overlay";
 import { formatDate, formatDuration } from "../../lib/time";
-import { redeployLabel, type DeploymentActions } from "./actions";
+import { imageGone, imageGoneLabel, redeployLabel, type DeploymentActions } from "./actions";
 import { CommitMeta, deploymentTitle } from "./CommitMeta";
 import styles from "./DeploymentDetailDialog.module.css";
 import { WaitingForCi } from "./LatestDeployment";
@@ -106,10 +106,14 @@ export function DeploymentDetailDialog({
               </Button>
             )}
             {redeploy && (
-              <Button onClick={() => actions.redeploy(d)} loading={actions.isRedeploying(d)}>
+              <Button
+                onClick={() => actions.redeploy(d)}
+                loading={actions.isRedeploying(d)}
+                disabled={imageGone(d)}
+              >
                 {!actions.isRedeploying(d) &&
                   (d.status === "removed" ? <Undo2 size={14} /> : <RotateCcw size={14} />)}
-                {redeploy}
+                {imageGone(d) ? imageGoneLabel : redeploy}
               </Button>
             )}
           </>

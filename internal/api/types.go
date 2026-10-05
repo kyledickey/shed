@@ -73,18 +73,20 @@ type restoreFenceJSON struct {
 }
 
 type deploymentJSON struct {
-	ID            string                 `json:"id"`
-	ServiceID     string                 `json:"serviceId"`
-	Status        store.DeploymentStatus `json:"status"`
-	Trigger       store.Trigger          `json:"trigger"`
-	CommitSHA     string                 `json:"commitSha"`
-	CommitMessage string                 `json:"commitMessage"`
-	CommitAuthor  string                 `json:"commitAuthor"`
-	Image         string                 `json:"image"`
-	Error         string                 `json:"error"`
-	CreatedAt     time.Time              `json:"createdAt"`
-	StartedAt     *time.Time             `json:"startedAt"`
-	FinishedAt    *time.Time             `json:"finishedAt"`
+	// ImageAvailable is set only in deployment lists.
+	ImageAvailable *bool                  `json:"imageAvailable,omitempty"`
+	ID             string                 `json:"id"`
+	ServiceID      string                 `json:"serviceId"`
+	Status         store.DeploymentStatus `json:"status"`
+	Trigger        store.Trigger          `json:"trigger"`
+	CommitSHA      string                 `json:"commitSha"`
+	CommitMessage  string                 `json:"commitMessage"`
+	CommitAuthor   string                 `json:"commitAuthor"`
+	Image          string                 `json:"image"`
+	Error          string                 `json:"error"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	StartedAt      *time.Time             `json:"startedAt"`
+	FinishedAt     *time.Time             `json:"finishedAt"`
 }
 
 type domainJSON struct {

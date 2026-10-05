@@ -245,7 +245,9 @@ func (d *Deployer) Deploy(ctx context.Context, serviceID string, trigger store.T
 }
 
 // Redeploy queues a new deployment that runs the image of an earlier one,
-// skipping CI and the build. It is how rollbacks work.
+// skipping CI and the build. It is how rollbacks work. It returns ErrNoImage
+// if the deployment has no image to reuse, and ErrImageUnavailable if its
+// image is no longer on this host.
 func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error) {
 	old, err := d.store.Deployment(ctx, deploymentID)
 	if err != nil {
@@ -253,6 +255,11 @@ func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Dep
 	}
 	if old.Image == "" || (!strings.HasPrefix(old.Image, "sha256:") && !strings.Contains(old.Image, "@sha256:") && !strings.HasPrefix(old.Image, imageRepo(old.ServiceID)+":")) {
 		return store.Deployment{}, ErrNoImage
+	}
+	// Refuse now rather than after the pipeline has stopped the running
+	// container of a service that cannot run two at once.
+	if err := d.checkImage(ctx, old.Image); err != nil {
+		return store.Deployment{}, err
 	}
 	return d.enqueue(ctx, store.Deployment{
 		ServiceID:     old.ServiceID,

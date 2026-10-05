@@ -15,6 +15,18 @@ export function redeployLabel(d: Deployment): string | null {
   return d.status === "removed" ? "Roll back to this" : "Redeploy";
 }
 
+/**
+ * imageGone reports whether the server no longer has the deployment's image,
+ * so a redeploy would be refused. Only deployment lists say; elsewhere it is
+ * unknown and treated as present.
+ */
+export function imageGone(d: Deployment): boolean {
+  return d.imageAvailable === false;
+}
+
+/** imageGoneLabel replaces the redeploy label when the image is gone. */
+export const imageGoneLabel = "Image no longer on server";
+
 /** useDeploymentActions wraps redeploy, cancel and copy with toasts. */
 export function useDeploymentActions(service: Service) {
   const redeploy = useRedeploy(service.id);

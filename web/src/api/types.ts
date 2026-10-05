@@ -113,6 +113,8 @@ export type Deployment = {
   commitMessage: string;
   commitAuthor: string;
   image: string;
+  /** Whether the image is on the server; only set in deployment lists. */
+  imageAvailable?: boolean;
   error: string;
   createdAt: string;
   startedAt: string | null;
