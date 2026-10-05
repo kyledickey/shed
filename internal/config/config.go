@@ -84,6 +84,9 @@ type Proxy struct {
 	ACMEEmail string `koanf:"acme_email"`
 	// BaseDomain is the parent domain of generated service domains.
 	BaseDomain string `koanf:"base_domain"`
+	// Cloudflare trusts Cloudflare's edge to report the client IP, for
+	// domains proxied through Cloudflare.
+	Cloudflare bool `koanf:"cloudflare"`
 }
 
 // Auth configures dashboard access.

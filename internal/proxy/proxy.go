@@ -40,6 +40,10 @@ type Config struct {
 	// LogFile is the file Caddy logs to. Caddy rotates it itself. Empty
 	// discards Caddy's logs.
 	LogFile string
+	// Cloudflare trusts requests from Cloudflare's edge to carry the client
+	// IP in CF-Connecting-IP and X-Forwarded-* headers. Requests from other
+	// addresses are unaffected.
+	Cloudflare bool
 }
 
 // Proxy is an embedded reverse proxy.

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -22,15 +23,28 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
+// spoofTransport sends forwarding headers that only a trusted proxy may set.
+type spoofTransport struct{ http.RoundTripper }
+
+func (s spoofTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("X-Forwarded-For", "198.51.100.1")
+	r.Header.Set("CF-Connecting-IP", "198.51.100.2")
+	r.Header.Set("X-Forwarded-Host", "evil.example")
+	return s.RoundTripper.RoundTrip(r)
+}
+
 // TestApply runs a real Caddy on loopback ports. Caddy has process-global
 // state, so this is the only test that starts it.
 func TestApply(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "hello from upstream, host=%s", r.Host)
+		fmt.Fprintf(w, "hello from upstream, host=%s, xfh=%s, xff=%s", r.Host, r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Forwarded-For"))
 	}))
 	defer upstream.Close()
 
-	cfg := Config{HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir()}
+	// Cloudflare is on so Caddy validates the trusted proxy config. Loopback
+	// clients are not in its ranges, so requests here are unaffected.
+	cfg := Config{HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir(), Cloudflare: true}
 	p := New(cfg)
 	t.Cleanup(func() { p.Stop() })
 
@@ -44,7 +58,7 @@ func TestApply(t *testing.T) {
 
 	client := &http.Client{
 		Timeout:       10 * time.Second,
-		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Transport:     spoofTransport{&http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	get := func(url string) (int, string, http.Header) {
@@ -68,6 +82,14 @@ func TestApply(t *testing.T) {
 	status, body, _ := get(fmt.Sprintf("https://localhost:%d/", cfg.HTTPSPort))
 	if status != http.StatusOK || !strings.HasPrefix(body, "hello from upstream") {
 		t.Errorf("https routed request = %d %q", status, body)
+	}
+	// Loopback is not a Cloudflare address, so the spoofed headers are ignored.
+	if strings.Contains(body, "evil.example") {
+		t.Errorf("upstream got the spoofed X-Forwarded-Host: %q", body)
+	}
+	_, xff, _ := strings.Cut(body, "xff=")
+	if ip, err := netip.ParseAddr(xff); err != nil || !ip.IsLoopback() {
+		t.Errorf("upstream X-Forwarded-For = %q, want the loopback client", xff)
 	}
 
 	status, _, hdr := get(fmt.Sprintf("http://localhost:%d/x", cfg.HTTPPort))

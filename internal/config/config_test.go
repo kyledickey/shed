@@ -38,6 +38,7 @@ url = "https://shed.example.com"
 [proxy]
 enabled = false
 acme_email = "ops@example.com"
+cloudflare = true
 
 [auth]
 allowed_users = ["alice", "bob"]
@@ -52,7 +53,7 @@ level = "debug"
 	if cfg.Server.URL != "https://shed.example.com" || cfg.Server.Listen != "127.0.0.1:3000" {
 		t.Errorf("Server = %+v", cfg.Server)
 	}
-	if cfg.Proxy.Enabled || cfg.Proxy.ACMEEmail != "ops@example.com" || cfg.Proxy.HTTPPort != 80 {
+	if cfg.Proxy.Enabled || cfg.Proxy.ACMEEmail != "ops@example.com" || cfg.Proxy.HTTPPort != 80 || !cfg.Proxy.Cloudflare {
 		t.Errorf("Proxy = %+v", cfg.Proxy)
 	}
 	if !reflect.DeepEqual(cfg.Auth.AllowedUsers, []string{"alice", "bob"}) {
