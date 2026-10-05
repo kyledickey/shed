@@ -64,8 +64,8 @@ const projectTabs: { value: ProjectTab; label: string; icon: ReactNode }[] = [
 const rootTabs: { value: RootTab; label: string; icon: ReactNode }[] = [
   { value: "projects", label: "Projects", icon: <Layers size={15} /> },
   { value: "server", label: "Server", icon: <Server size={15} /> },
-  { value: "docs", label: "Docs", icon: <BookOpen size={15} /> },
   { value: "settings", label: "Settings", icon: <Settings size={15} /> },
+  { value: "docs", label: "Docs", icon: <BookOpen size={15} /> },
 ];
 
 /** visibleServiceTabs hides Backups from services that have no volume to back up. */
