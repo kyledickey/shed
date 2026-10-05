@@ -59,6 +59,20 @@ jobs:
           go run aead.dev/minisign/cmd/minisign@v0.3.0 -S -W -s "$keyfile" -m checksums.txt
           go run aead.dev/minisign/cmd/minisign@v0.3.0 -V -P "$MINISIGN_PUBLIC_KEY" -m checksums.txt
 
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          # The tag's section of CHANGELOG.md, without its heading.
+          awk -v tag="$TAG" '
+            /^## / { if (found) exit; found = ($2 == tag); next }
+            found
+          ' CHANGELOG.md | sed -e '/./,$!d' > dist/notes.md
+          if [ ! -s dist/notes.md ]; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md has no section for $TAG"
+            exit 1
+          fi
+          cat dist/notes.md
+
       - name: Publish release
         run: |
           set -euo pipefail
@@ -66,5 +80,5 @@ jobs:
           if [[ "$TAG" == *-* ]]; then
             prerelease=(--prerelease)
           fi
-          gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes "${prerelease[@]}" \
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/notes.md "${prerelease[@]}" \
             dist/shed_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig deploy/install.sh

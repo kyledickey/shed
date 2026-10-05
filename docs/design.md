@@ -878,6 +878,10 @@ with:
   the `MINISIGN_SECRET_KEY` repository secret
 - `install.sh`
 
+The release notes are the tag's `## vX.Y.Z - date` section of `CHANGELOG.md`;
+the release fails if there is none, so add the entry before tagging. The
+dashboard shows those notes for the latest release.
+
 Tags with a pre-release suffix (`v1.2.0-rc.1`) publish pre-releases, which
 the update check ignores. `.github/workflows/ci.yml` runs gofmt, vet,
 `go test -race`, the dashboard checks, tests, and build (failing if
