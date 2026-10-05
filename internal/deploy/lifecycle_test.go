@@ -101,8 +101,8 @@ func TestFailedReplacementRemovalDoesNotShareStorage(t *testing.T) {
 	if c, ok := f.docker.container(old.ContainerID); !ok || c.Running {
 		t.Fatal("previous container restarted without exclusive storage")
 	}
-	if c, ok := f.docker.container(dep.ContainerID); !ok || !c.Running {
-		t.Fatal("test did not retain running candidate")
+	if _, ok := f.docker.container(dep.ContainerID); !ok {
+		t.Fatal("test did not retain the candidate")
 	}
 }
 

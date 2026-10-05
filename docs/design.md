@@ -371,7 +371,9 @@ the same service.
    the network and stop/remove it.
 6. On failure at any step: mark `failed`, record `error`, remove the new
    container, and restart the previous container if step 3 stopped it and
-   removal of the replacement is confirmed.
+   every other container of the service is confirmed removed (by label, so
+   a replacement whose start failed ambiguously is found even without its
+   ID).
 
 The build log has a `==> ` heading per step with detail lines under it: the
 container's name, image, network and private address, volumes, published
@@ -1037,7 +1039,14 @@ container of the service must be listed as stopped. Any failure fails the
 deployment before its container is created.
 
 If removing a failed replacement cannot be confirmed, recovery leaves the
-predecessor stopped rather than risking concurrent use of its persistent volume.
+predecessor stopped rather than risking concurrent use of its persistent volume,
+and the failed deployment's error says so. A failed container start is treated
+as ambiguous, since Docker may have started the container anyway: the
+container is removed, and if that fails its ID is still returned so the
+pipeline can retry. Before restarting the predecessor, every container labeled
+with the service other than the predecessor's is stopped and removed, using a
+context that outlives the canceled deployment; any failure leaves the service
+down.
 Starting the active container of such a service (on boot, `start`, or the end
 of a backup hold) likewise first removes every container of the service from
 another deployment; if that fails, the service stays down and the error is

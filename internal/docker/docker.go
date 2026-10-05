@@ -5,6 +5,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/netip"
@@ -262,15 +263,22 @@ type RunSpec struct {
 
 // Run creates and starts a container and returns its ID. The container is
 // restarted unless explicitly stopped.
+//
+// A failed start can be ambiguous: Docker may have started the container
+// although the request failed, for example when the connection dropped. Run
+// then removes the container. If that removal fails too, Run returns the
+// container's ID along with the error, since the container may be running.
 func (c *Client) Run(ctx context.Context, spec RunSpec) (string, error) {
 	id, err := c.Create(ctx, spec)
 	if err != nil {
 		return "", err
 	}
 	if _, err := c.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
-		// Do not leave a created-but-never-started container behind.
-		_ = c.Remove(context.WithoutCancel(ctx), id)
-		return "", fmt.Errorf("docker: start container %s: %w", spec.Name, err)
+		startErr := fmt.Errorf("docker: start container %s: %w", spec.Name, err)
+		if rmErr := c.Remove(context.WithoutCancel(ctx), id); rmErr != nil {
+			return id, errors.Join(startErr, rmErr)
+		}
+		return "", startErr
 	}
 	return id, nil
 }

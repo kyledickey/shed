@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -20,8 +21,8 @@ func TestLeftoverCandidateBlocksExclusiveDeploy(t *testing.T) {
 	f.healthy = func() bool { return false }
 	failed := f.wait(t, f.deploy(t).ID, terminal)
 	f.settle(t)
-	if c, ok := f.docker.container(failed.ContainerID); !ok || !c.Running {
-		t.Fatal("test did not retain running candidate")
+	if _, ok := f.docker.container(failed.ContainerID); !ok {
+		t.Fatal("test did not retain the candidate")
 	}
 
 	// The leftover candidate cannot be removed, so nothing else may start.
@@ -102,5 +103,71 @@ func TestRecoveryKeepsStorageExclusive(t *testing.T) {
 	}
 	if _, ok := f.docker.container(candidate); ok {
 		t.Error("interrupted candidate not removed")
+	}
+}
+
+// ambiguousStartDocker starts containers but reports that the start failed,
+// as when the connection to Docker drops mid-request, without returning the
+// container's ID.
+type ambiguousStartDocker struct{ *fakeDocker }
+
+func (d ambiguousStartDocker) Run(ctx context.Context, spec docker.RunSpec) (string, error) {
+	if _, err := d.fakeDocker.Run(ctx, spec); err != nil {
+		return "", err
+	}
+	return "", errors.New("start container: connection reset")
+}
+
+// ambiguousStartStuckDocker is ambiguousStartDocker whose containers cannot
+// be removed.
+type ambiguousStartStuckDocker struct{ ambiguousStartDocker }
+
+func (ambiguousStartStuckDocker) Remove(context.Context, string) error {
+	return errors.New("daemon unavailable")
+}
+
+func TestAmbiguousStartFailureKeepsStorageExclusive(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		docker      func(*fakeDocker) Docker
+		wantRestart bool
+	}{
+		{"removed", func(f *fakeDocker) Docker { return ambiguousStartDocker{f} }, true},
+		{"stuck", func(f *fakeDocker) Docker { return ambiguousStartStuckDocker{ambiguousStartDocker{f}} }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			if _, err := f.st.CreateVolume(context.Background(), f.svc.ID, "/data"); err != nil {
+				t.Fatal(err)
+			}
+			old := f.wait(t, f.deploy(t).ID, terminal)
+			f.settle(t)
+			f.d.docker = tc.docker(f.docker)
+			dep := f.wait(t, f.deploy(t).ID, terminal)
+			f.settle(t)
+			if dep.Status != store.StatusFailed {
+				t.Fatalf("status = %s (%q), want failed", dep.Status, dep.Error)
+			}
+
+			containers, _ := f.docker.List(context.Background(), map[string]string{labelService: f.svc.ID})
+			var running []string
+			for _, c := range containers {
+				if c.Running {
+					running = append(running, c.ID)
+				}
+			}
+			if tc.wantRestart {
+				if len(running) != 1 || running[0] != old.ContainerID {
+					t.Errorf("running = %v, want only the previous container %s", running, old.ContainerID)
+				}
+				return
+			}
+			if c, ok := f.docker.container(old.ContainerID); !ok || c.Running {
+				t.Error("previous container restarted beside a replacement that may be running")
+			}
+			if !strings.Contains(dep.Error, "previous deployment left stopped") {
+				t.Errorf("error = %q, want it to say the previous deployment is stopped", dep.Error)
+			}
+		})
 	}
 }

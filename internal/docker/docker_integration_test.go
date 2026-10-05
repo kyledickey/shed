@@ -307,3 +307,20 @@ func TestNetworkAliases(t *testing.T) {
 		t.Error("alias still resolves after disconnecting")
 	}
 }
+
+func TestRunRemovesContainerThatFailsToStart(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	name := "shed-test-nostart-" + suffix(t)
+	id, err := c.Run(ctx, RunSpec{Name: name, Image: testImage, Cmd: []string{"/no/such/binary"}})
+	if err == nil {
+		_ = c.Remove(ctx, id)
+		t.Fatal("Run succeeded with a missing command")
+	}
+	if id != "" {
+		t.Errorf("Run returned ID %q although the container was removed", id)
+	}
+	if _, err := c.Inspect(ctx, name); !IsNotFound(err) {
+		t.Errorf("inspect after failed start: %v, want not found", err)
+	}
+}

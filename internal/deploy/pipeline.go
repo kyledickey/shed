@@ -27,8 +27,8 @@ type job struct {
 
 	secrets []string
 
-	container   string // ID of the new container, once created
-	stoppedPrev string // ID of the previous container, if it was stopped early
+	container   string            // ID of the new container, once created
+	stoppedPrev *store.Deployment // the previous deployment, if its container was stopped early
 }
 
 // run executes the pipeline for dep and records the outcome.
@@ -226,11 +226,13 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	spec.Aliases = nil
 	j.describe(spec)
 	id, err := j.runContainer(ctx, spec)
+	// A failed start may still leave the container behind, so fail must
+	// remove it.
+	j.container = id
 	if err != nil {
 		return err
 	}
 	j.printf("Started container %s", shortID(id))
-	j.container = id
 	j.dep.ContainerID = id
 	j.save()
 	return nil
@@ -267,7 +269,7 @@ func (j *job) takeOver(ctx context.Context) error {
 	for _, c := range containers {
 		if !idle(c) {
 			// Starting the previous container again could share storage too.
-			j.stoppedPrev = ""
+			j.stoppedPrev = nil
 			return fmt.Errorf("container %s of the service is still %s, so its storage is not free", c.Name, c.State)
 		}
 	}
@@ -293,7 +295,7 @@ func (j *job) stopPrevious(ctx context.Context, prev store.Deployment) error {
 		return fmt.Errorf("stop previous container %s: %w", c.Name, err)
 	}
 	j.printf("Stopped container %s", c.Name)
-	j.stoppedPrev = prev.ContainerID
+	j.stoppedPrev = &prev
 	return nil
 }
 
@@ -536,20 +538,21 @@ func (j *job) fail(ctx context.Context, err error) {
 	j.log.Info("deployment ended", "deployment", j.dep.ID, "status", status, "reason", msg)
 
 	cleanup := context.WithoutCancel(ctx)
-	candidateRemoved := true
 	if j.container != "" {
 		if err := j.docker.Remove(cleanup, j.container); err != nil && !docker.IsNotFound(err) {
-			candidateRemoved = false
 			j.log.Error("remove failed container", "container", j.container, "err", err)
 		}
 	}
-	if j.stoppedPrev != "" && !candidateRemoved {
-		j.printf("Previous container remains stopped because removal of the replacement could not be confirmed")
-		j.log.Error("cannot safely restart previous container", "container", j.stoppedPrev)
-	}
-	if j.stoppedPrev != "" && candidateRemoved {
-		if err := j.docker.Start(cleanup, j.stoppedPrev); err != nil {
-			j.log.Error("restart previous container", "container", j.stoppedPrev, "err", err)
+	if prev := j.stoppedPrev; prev != nil {
+		// The new container may exist even if its ID is unknown, as when a
+		// start failed ambiguously, so restart the previous one only once no
+		// other container of the service is left to share its storage.
+		if err := j.clearStrays(cleanup, j.svc.ID, prev.ID); err != nil {
+			j.printf("Previous deployment %s remains stopped: %v", prev.ID, err)
+			j.log.Error("cannot safely restart previous container", "container", prev.ContainerID, "err", err)
+			msg += "; previous deployment left stopped because the replacement could not be confirmed removed"
+		} else if err := j.docker.Start(cleanup, prev.ContainerID); err != nil {
+			j.log.Error("restart previous container", "container", prev.ContainerID, "err", err)
 		}
 	}
 
