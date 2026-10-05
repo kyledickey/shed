@@ -2,6 +2,11 @@
 
 const MASK = "***";
 
+/** MIN_SECRET is the shortest value that is masked, as in shed. */
+export const MIN_SECRET = 8;
+
+const maskable = (s: string) => s.length >= MIN_SECRET;
+
 /** StreamRedactor masks literal secrets in text written to it in arbitrary pieces. */
 export class StreamRedactor {
   private secrets: string[];
@@ -10,7 +15,7 @@ export class StreamRedactor {
   readonly tail: number;
 
   constructor(secrets: string[]) {
-    this.secrets = secrets.filter((s) => s !== "").sort((a, b) => b.length - a.length);
+    this.secrets = secrets.filter(maskable).sort((a, b) => b.length - a.length);
     this.tail = this.secrets.length > 0 ? this.secrets[0]!.length - 1 : 0;
   }
 
@@ -63,8 +68,8 @@ export class StreamRedactor {
 /** redactEach replaces secrets inside each piece on its own, so a secret split across pieces survives. */
 export function redactEach(piece: string, secrets: string[]): string {
   let out = piece;
-  for (const s of [...secrets].sort((a, b) => b.length - a.length)) {
-    if (s !== "") out = out.split(s).join(MASK);
+  for (const s of secrets.filter(maskable).sort((a, b) => b.length - a.length)) {
+    out = out.split(s).join(MASK);
   }
   return out;
 }

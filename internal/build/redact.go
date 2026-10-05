@@ -11,6 +11,11 @@ import (
 
 const redacted = "***"
 
+// minSecretLen is the shortest value that is masked. Shorter values, such as
+// "1", "true", or "3000", are too common in ordinary output to mask without
+// mangling it, and too short to be real secrets.
+const minSecretLen = 8
+
 // secrets returns the substrings of a clone URL that must not appear in logs.
 func secrets(repoURL string) []string {
 	list := []string{repoURL}
@@ -39,8 +44,9 @@ type Redactor struct {
 }
 
 // NewRedactor returns a writer that masks literal secret values across writes.
+// Values shorter than 8 bytes are not masked.
 func NewRedactor(w io.Writer, secrets []string) *Redactor {
-	secrets = slices.Clone(secrets)
+	secrets = slices.DeleteFunc(slices.Clone(secrets), func(s string) bool { return len(s) < minSecretLen })
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	tail := 0
 	if len(secrets) > 0 {
@@ -107,9 +113,7 @@ func (r *Redactor) drain(final bool) error {
 // Redact masks literal secret values in s.
 func (r *Redactor) Redact(s string) string {
 	for _, secret := range r.secrets {
-		if secret != "" {
-			s = strings.ReplaceAll(s, secret, redacted)
-		}
+		s = strings.ReplaceAll(s, secret, redacted)
 	}
 	return s
 }

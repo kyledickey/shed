@@ -2,20 +2,20 @@ import { useMemo, useState } from "react";
 import { Badge } from "../../../../components/Badge";
 import { Field, Input, Segmented, Textarea } from "../../../../components/Form";
 import { Demo, DocTable } from "../../kit";
-import { chunk, redactEach, StreamRedactor } from "../../lib/redact";
+import { chunk, MIN_SECRET, redactEach, StreamRedactor } from "../../lib/redact";
 import styles from "./logs.module.css";
 
 type Size = "4" | "8" | "16" | "all";
 
-const SAMPLE = `connecting with password=hunter2
-retry: auth failed for hunter2
-token=hunter2 expires soon`;
+const SAMPLE = `connecting with password=hunter22
+retry: auth failed for hunter22
+token=hunter22 expires soon`;
 
 const show = (s: string) => (s === "" ? "" : s.replaceAll("\n", "↵"));
 
 /** RedactionLab masks text you type, entirely in the browser. */
 export function RedactionLab() {
-  const [secret, setSecret] = useState("hunter2");
+  const [secret, setSecret] = useState("hunter22");
   const [text, setText] = useState(SAMPLE);
   const [size, setSize] = useState<Size>("8");
 
@@ -34,7 +34,8 @@ export function RedactionLab() {
 
   const naive = run.rows.map((r) => r.naive).join("");
   const streamed = run.rows.map((r) => r.emitted).join("") + run.flushed;
-  const leaked = secret !== "" && naive.includes(secret);
+  const short = secret.length < MIN_SECRET;
+  const leaked = !short && naive.includes(secret);
 
   return (
     <Demo title="Try the redactor">
@@ -116,8 +117,8 @@ export function RedactionLab() {
         <div className={styles.output}>
           <span className={styles.outputTitle}>
             Streaming redactor
-            <Badge size="sm" tone={secret === "" ? "neutral" : "grass"}>
-              {secret === "" ? "no secret set" : "masked"}
+            <Badge size="sm" tone={short ? "neutral" : "grass"}>
+              {short ? `under ${MIN_SECRET} characters, not masked` : "masked"}
             </Badge>
           </span>
           <pre className={styles.outputBody}>{streamed}</pre>

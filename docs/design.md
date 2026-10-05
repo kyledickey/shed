@@ -1211,6 +1211,9 @@ values, so saving a new value does not unmask the one still running. Deployments
 without a runtime snapshot fall back to current variables. Changing variables
 cannot retroactively remove secrets from older saved logs.
 
+Redaction skips values shorter than 8 bytes: masking values like `1` or
+`true` would mangle timestamps, numbers, and JSON throughout the log.
+
 ### Replacement storage safety
 
 A deployment that needs exclusive volumes or a published host port must confirm
