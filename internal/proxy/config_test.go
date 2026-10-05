@@ -187,8 +187,12 @@ func TestBuildConfigOptions(t *testing.T) {
 			if h := at(t, srv, "client_ip_headers", 0); h != "CF-Connecting-IP" {
 				t.Errorf("client_ip_headers = %v", h)
 			}
-			if v := at(t, srv, "routes", 0, "handle", 0, "headers", "request", "set", "X-Forwarded-For", 0); v != "{http.vars.client_ip}" {
+			hdrs := at(t, srv, "routes", 0, "handle", 0, "headers", "request", "set")
+			if v := at(t, hdrs, "X-Forwarded-For", 0); v != "{http.vars.client_ip}" {
 				t.Errorf("X-Forwarded-For = %v", v)
+			}
+			if v := at(t, hdrs, "X-Forwarded-Host", 0); v != "{http.request.hostport}" {
+				t.Errorf("X-Forwarded-Host = %v", v)
 			}
 		}
 	})

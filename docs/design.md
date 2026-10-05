@@ -805,7 +805,9 @@ Automatic HTTPS with `acme_email`. Generated domains are
 With `proxy.cloudflare`, the server trusts Cloudflare's published edge ranges
 (a static list in `internal/proxy`) as proxies and reads the client IP from
 `CF-Connecting-IP`; requests from other addresses use the peer address.
-Upstreams then get `X-Forwarded-For` set to that one client IP.
+Upstreams then get `X-Forwarded-For` set to that one client IP and
+`X-Forwarded-Host` set to the request host, since Cloudflare passes a visitor's
+`X-Forwarded-Host` through.
 
 ## GitHub
 

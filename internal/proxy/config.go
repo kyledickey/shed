@@ -48,9 +48,12 @@ func buildConfig(cfg Config, routes []Route) ([]byte, error) {
 			"upstreams": []obj{{"dial": r.Upstream}},
 		}
 		if cfg.Cloudflare {
-			// Cloudflare appends to any X-Forwarded-For the visitor sent, so
-			// replace the chain with the one address Caddy resolved.
-			proxy["headers"] = obj{"request": obj{"set": obj{"X-Forwarded-For": []string{"{http.vars.client_ip}"}}}}
+			// Cloudflare appends to any X-Forwarded-For the visitor sent and
+			// passes X-Forwarded-Host through, so set both from what Caddy saw.
+			proxy["headers"] = obj{"request": obj{"set": obj{
+				"X-Forwarded-For":  []string{"{http.vars.client_ip}"},
+				"X-Forwarded-Host": []string{"{http.request.hostport}"},
+			}}}
 		}
 		handlers = append(handlers, obj{
 			"match":    []obj{{"host": []string{r.Host}}},
