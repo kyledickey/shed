@@ -306,7 +306,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	s.applyRoutes(ctx)
+	s.applyDomainRoutes(ctx, w)
 	return writeJSON(w, http.StatusCreated, toDomain(d))
 }
 
@@ -346,17 +346,9 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) error {
 	if err := s.store.DeleteDomain(r.Context(), r.PathValue("id")); err != nil {
 		return err
 	}
-	s.applyRoutes(r.Context())
+	s.applyDomainRoutes(r.Context(), w)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
-}
-
-// applyRoutes updates the proxy after a domain change. A failure does not
-// undo the change, so it is only logged.
-func (s *Server) applyRoutes(ctx context.Context) {
-	if err := s.deployer.ApplyRoutes(ctx); err != nil {
-		s.log.Error("apply routes", "err", err)
-	}
 }
 
 func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) error {

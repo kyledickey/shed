@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,8 @@ import (
 type fakeDeployer struct {
 	mu         sync.Mutex
 	deploy     []store.Trigger
+	routeFails int // how many more ApplyRoutes calls fail
+	routeCalls int
 	controls   []string        // "stop <id>", "start <id>", "restart <id>"
 	controlErr error           // returned by the service controls
 	deployErr  error           // returned by Deploy
@@ -93,7 +96,16 @@ func (f *fakeDeployer) Cancel(context.Context, string) (store.Deployment, error)
 func (f *fakeDeployer) ServiceStatuses(context.Context, string) (map[string]deploy.ServiceStatus, error) {
 	return map[string]deploy.ServiceStatus{}, nil
 }
-func (f *fakeDeployer) ApplyRoutes(context.Context) error                { return nil }
+func (f *fakeDeployer) ApplyRoutes(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.routeCalls++
+	if f.routeFails > 0 {
+		f.routeFails--
+		return errors.New("proxy: load config: boom")
+	}
+	return nil
+}
 func (f *fakeDeployer) DeleteService(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteProject(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { return nil }

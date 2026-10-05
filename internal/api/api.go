@@ -107,6 +107,8 @@ type Server struct {
 	setupMu    sync.Mutex // serializes completing the GitHub setup
 	tokenMu    sync.Mutex
 	setupToken string // guarded by tokenMu; empty once GitHub is configured
+
+	routes *routeState
 }
 
 // New returns a Server. It loads the GitHub App from the store, or, if none is
@@ -125,6 +127,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		web:        cfg.Web,
 		httpClient: cfg.HTTPClient,
 		log:        cfg.Log,
+		routes:     newRouteState(),
 	}
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err

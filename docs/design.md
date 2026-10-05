@@ -826,8 +826,8 @@ POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed rest
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
 
-POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate)
-DELETE /api/domains/{id}                        204
+POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
+DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
 POST   /api/services/{id}/volumes   {mountPath} → Volume
 DELETE /api/volumes/{id}                        204  (removes data)
 
@@ -1079,6 +1079,15 @@ fails instead of publishing routes without the other services).
 
 Once routing succeeds, activation and cleanup finish even if the deployment is
 canceled concurrently, so a routed candidate is not removed mid-activation.
+
+After a domain is created or deleted, the API applies routes with a 30-second
+context deadline. The change is already stored, so a failure does not fail the
+request: the response carries `Shed-Routes: pending`, the error is logged, and
+`Server.SyncRoutes` (started after `Reconcile`) retries immediately, then with
+backoff from 2 seconds doubling to 1 minute until it succeeds. It does nothing
+while routes are applied. Attempts are numbered so an older attempt's success
+cannot clear a newer failure. Route failures inside the deploy pipeline are
+not tracked by this loop.
 
 ### Dashboard hostname reservation
 
