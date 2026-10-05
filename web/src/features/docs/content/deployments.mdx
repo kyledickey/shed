@@ -90,11 +90,11 @@ The dashboard and `GET /api/services/{id}/deployments` list the newest 50.
 
 Stop, start, and restart act on the active deployment's container. They aren't deployments and write no build log.
 
-| Action    | What happens                                                                                                                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `stop`    | Cancels any deployment in progress (canceled, "service stopped"), sets the stopped flag, stops the container with a 30-second grace period but doesn't remove it, and drops the service's routes. The deployment stays active. |
-| `start`   | Clears the flag, starts the active deployment's container (recreating it as deployed if it's gone, see below), and restores routes. Refused if nothing was ever deployed, or if the container and its image are both gone.     |
-| `restart` | Restarts the active container, then reapplies routes, because the container may come back at a different address. Refused if the service is stopped or has nothing deployed.                                                   |
+| Action    | What happens                                                                                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stop`    | Cancels any deployment in progress (canceled, "service stopped"), sets the stopped flag, stops the container with a 30-second grace period but doesn't remove it, and drops the service's routes. The deployment stays active.                    |
+| `start`   | Clears the flag, starts the active deployment's container (recreating it as deployed if it's gone, see below), and restores routes. Refused if nothing was ever deployed, or if recreating its container would require a missing image or volume. |
+| `restart` | Restarts the active container, then reapplies routes, because the container may come back at a different address. Refused if the service is stopped or has nothing deployed.                                                                      |
 
 A stopped service stays stopped across a shed restart or reboot. You can still deploy it: when the new deployment goes live, it clears the flag. All three are refused with a conflict while the service is fenced by a restore or held for a backup.
 
@@ -114,6 +114,7 @@ A graceful shutdown works the same way from the other side: running pipelines ar
 When the active deployment goes live, shed records the configuration its container was started with: the image, port, command, resolved variables, CPU and memory limits, public port, and volumes. A container that has gone missing, at boot, on start, or after a restore, is recreated from that record, not from settings saved since. A start command, variable, or limit you saved without deploying takes effect only with the next deployment, so a typo in it can't break a service that was running.
 
 - **Deleted volumes stay deleted.** A volume deleted since the deployment is not mounted, and its data is removed rather than recreated empty. A volume added since is mounted from the next deployment.
+- **Deployed volumes must still exist.** If a volume is missing from Docker, shed refuses to recreate the container and reports the service as crashed. Start returns 409. Restore the volume from a backup, or deploy again to explicitly start with an empty volume. Volumes deleted in shed are not required.
 - **The image must be on the server.** shed never builds or pulls while recreating. If the image is gone, nothing is created, not even the volumes, and the error is logged. The service shows as crashed; start fails with a conflict. Deploy it again.
 - **Older deployments.** A deployment that went live before shed kept this record is recreated from the service's current settings, as before.
 

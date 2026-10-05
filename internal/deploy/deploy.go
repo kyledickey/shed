@@ -37,6 +37,7 @@ type Docker interface {
 	ReconnectNetwork(ctx context.Context, name, id string, aliases []string) error
 	DisconnectNetwork(ctx context.Context, name, id string) error
 	EnsureVolume(ctx context.Context, name string) error
+	VolumeExists(ctx context.Context, name string) (bool, error)
 	RemoveVolume(ctx context.Context, name string) error
 	PullImage(ctx context.Context, ref string, w io.Writer) error
 	ResolveImage(ctx context.Context, ref string) (string, error)
@@ -122,6 +123,11 @@ var (
 	// restarting a service that a failed restore left fenced, because its
 	// data may be partial. ClearRestoreFence lifts the refusal.
 	ErrFenced = errors.New("deploy: service is fenced by a failed restore")
+	// ErrVolumeMissing is returned when the container of an active
+	// deployment must be recreated but a volume it mounted is gone from
+	// Docker, such as on a new host. Its data is not recreated empty; a new
+	// deployment or a restore does that explicitly.
+	ErrVolumeMissing = errors.New("deploy: a volume of the deployment is missing on this host")
 )
 
 // Cancellation causes, which decide how an interrupted deployment is

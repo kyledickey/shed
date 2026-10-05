@@ -396,9 +396,10 @@ func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
 // Reconcile brings Docker in line with the store after a restart: deployments
 // that were in progress are marked failed, the active deployment's container
 // of every service that is neither stopped nor fenced is started (or
-// recreated if it is gone and its image is still on the host), and routes are
-// applied. A service that cannot be started is logged and left crashed. It does not respect holds, so it must finish
-// before anything calls Hold.
+// recreated if it is gone and its image and volumes are still on the host),
+// and routes are applied. A service that cannot be started is logged and left
+// crashed. It does not respect holds, so it must finish before anything calls
+// Hold.
 func (d *Deployer) Reconcile(ctx context.Context) error {
 	stale, err := d.store.DeploymentsByStatus(ctx,
 		store.StatusQueued, store.StatusWaiting, store.StatusBuilding, store.StatusDeploying)
@@ -466,7 +467,8 @@ func (d *Deployer) removeDeploymentContainers(ctx context.Context, deploymentID 
 // side, every container of another deployment must be removed first, or
 // nothing is started. Nothing is started for a fenced service either; that
 // returns ErrFenced. A container that must be recreated from an image that is
-// no longer on the host returns ErrImageUnavailable.
+// no longer on the host returns ErrImageUnavailable, and one whose deployed
+// volumes are not all on the host returns ErrVolumeMissing.
 func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (string, error) {
 	svc, err := d.store.Service(ctx, dep.ServiceID)
 	if err != nil {
@@ -511,6 +513,11 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 	rt, err := d.deployedRuntime(ctx, svc, dep, vols)
 	if err != nil {
 		return "", err
+	}
+	// runContainer would create a missing volume empty, as if its data had
+	// never existed.
+	if err := d.checkVolumes(ctx, rt.Volumes); err != nil {
+		return "", fmt.Errorf("recreate container of %s: %w", svc.Name, err)
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
 	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt))
@@ -558,6 +565,22 @@ func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep s
 		}
 	}
 	return rt, nil
+}
+
+// checkVolumes returns an error wrapping ErrVolumeMissing if any of the
+// Docker volumes of vols does not exist, or the error that kept it from
+// finding out.
+func (d *Deployer) checkVolumes(ctx context.Context, vols []store.RuntimeVolume) error {
+	for _, v := range vols {
+		ok, err := d.docker.VolumeExists(ctx, volumeName(v.ID))
+		if err != nil {
+			return fmt.Errorf("deploy: check volume %s: %w", volumeName(v.ID), err)
+		}
+		if !ok {
+			return fmt.Errorf("%w: %s (mounted at %s)", ErrVolumeMissing, volumeName(v.ID), v.MountPath)
+		}
+	}
+	return nil
 }
 
 // DeleteService stops a service's deployments, removes its containers,

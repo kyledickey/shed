@@ -409,7 +409,8 @@ ensures the active deployment's container of every service that is not
 stopped is running, and applies routes. It restores one deployment per
 service, the newest active one, and removes the service's other containers,
 such as a predecessor left behind by a crash during a switchover. A missing
-container is recreated only if its image is on the host; otherwise no network,
+container is recreated only if its image and deployed volumes (except ones
+deleted in shed) are on the host; otherwise no network,
 volume, or container is created, the error is logged, and the service shows
 `crashed`.
 
@@ -859,7 +860,7 @@ GET    /api/services/{id}                       → Service
 PATCH  /api/services/{id}       ServicePatch    → Service
 DELETE /api/services/{id}                       204  (containers, volumes, images)
 POST   /api/services/{id}/stop                  → Service  (cancel deploys, stop container, unroute)
-POST   /api/services/{id}/start                 → Service  (409 if never deployed, fenced, or both container and image are gone)
+POST   /api/services/{id}/start                 → Service  (409 if never deployed, fenced, or recreation lacks its image or volumes)
 POST   /api/services/{id}/restart               → Service  (409 if stopped, nothing deployed, or fenced)
 POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed restore's fence, keep data; 409 while held)
 
