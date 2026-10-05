@@ -7,6 +7,8 @@ type ShellProps = {
   brand: ReactNode;
   nav: ReactNode;
   actions?: ReactNode;
+  /** A slim status bar under the panel. */
+  footer?: ReactNode;
   children: ReactNode;
 };
 
@@ -14,7 +16,7 @@ type ShellProps = {
  * Shell is the app frame: a rounded, bordered shell on the page canvas with
  * a top bar (brand, horizontal tabs, actions) and an inset content panel.
  */
-export function Shell({ brand, nav, actions, children }: ShellProps) {
+export function Shell({ brand, nav, actions, footer, children }: ShellProps) {
   return (
     <div className={styles.page}>
       <div className={styles.frame}>
@@ -26,6 +28,7 @@ export function Shell({ brand, nav, actions, children }: ShellProps) {
         <main id="panel" className={styles.panel} data-scroll-restoration-id="panel">
           {children}
         </main>
+        {footer && <footer className={styles.status}>{footer}</footer>}
       </div>
     </div>
   );

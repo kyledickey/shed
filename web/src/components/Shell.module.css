@@ -66,6 +66,18 @@
   scrollbar-color: var(--line-strong) transparent;
 }
 
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+  min-height: 30px;
+  padding: 6px 6px 0;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
 .logo {
   display: block;
   flex: none;

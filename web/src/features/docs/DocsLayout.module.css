@@ -15,10 +15,9 @@
 
 .tree {
   position: sticky;
-  /* The site's header sits above the page; the dashboard has none. */
-  top: calc(var(--docs-header, 0px) + var(--space-8));
+  top: var(--space-8);
   align-self: start;
-  max-height: calc(100dvh - var(--docs-header, 0px) - 120px);
+  max-height: calc(100dvh - 150px);
   overflow-y: auto;
   scrollbar-width: none;
   display: flex;

@@ -5,7 +5,13 @@ import { routeTree } from "./routeTree.gen";
 export function createSiteRouter(history?: RouterHistory) {
   // Scroll restoration renders an inline script on the server that the client
   // doesn't, which would break hydration; it's only needed in the browser.
-  return createRouter({ routeTree, history, scrollRestoration: typeof window !== "undefined" });
+  return createRouter({
+    routeTree,
+    history,
+    scrollRestoration: typeof window !== "undefined",
+    // The shell panel scrolls, not the window.
+    scrollToTopSelectors: ["#panel"],
+  });
 }
 
 declare module "@tanstack/react-router" {
