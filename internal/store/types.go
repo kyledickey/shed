@@ -317,8 +317,9 @@ const (
 )
 
 // RestoreFence keeps a service stopped while a restore changes its data. It
-// is stored, so it outlasts a restart of shed: the service stays stopped
-// until the restore completes or its previous data is put back.
+// is stored, so it outlasts a restart of shed: the service cannot be started
+// or deployed until the restore completes, its previous data is put back, or
+// the user clears the fence.
 type RestoreFence struct {
 	ServiceID string
 	RestoreID string

@@ -50,9 +50,12 @@ export function useDeleteService(service: Service) {
   });
 }
 
-// Stop, start, and restart respond with the updated service. Stopping also
-// cancels deployments in progress.
-function useServiceControl(id: string, action: "stop" | "start" | "restart") {
+// Stop, start, restart, and clearing a restore fence respond with the updated
+// service. Stopping also cancels deployments in progress.
+function useServiceControl(
+  id: string,
+  action: "stop" | "start" | "restart" | "restore-fence/clear",
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post<Service>(`/services/${id}/${action}`),
@@ -68,6 +71,7 @@ function useServiceControl(id: string, action: "stop" | "start" | "restart") {
 export const useStopService = (id: string) => useServiceControl(id, "stop");
 export const useStartService = (id: string) => useServiceControl(id, "start");
 export const useRestartService = (id: string) => useServiceControl(id, "restart");
+export const useClearRestoreFence = (id: string) => useServiceControl(id, "restore-fence/clear");
 
 export function useSaveVariables(serviceId: string) {
   const qc = useQueryClient();

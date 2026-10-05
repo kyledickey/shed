@@ -34,6 +34,7 @@ import (
 // implements it.
 type Store interface {
 	Service(ctx context.Context, id string) (store.Service, error)
+	SetServiceStopped(ctx context.Context, id string, stopped bool) error
 	Volumes(ctx context.Context, serviceID string) ([]store.Volume, error)
 	ActiveDeployment(ctx context.Context, serviceID string) (store.Deployment, error)
 	ServicesWithVolumes(ctx context.Context) ([]store.Service, error)
@@ -58,6 +59,7 @@ type Store interface {
 	SetRestorePhase(ctx context.Context, serviceID string, phase store.RestorePhase) error
 	LiftRestoreFence(ctx context.Context, serviceID string) error
 	DeleteRestoreFence(ctx context.Context, serviceID string) error
+	RestoreFence(ctx context.Context, serviceID string) (store.RestoreFence, error)
 	RestoreFences(ctx context.Context) ([]store.RestoreFence, error)
 	Snapshot(ctx context.Context, path string) error
 }
@@ -136,6 +138,9 @@ var (
 	ErrBusy = errors.New("backup: a backup or restore is already in progress")
 	// ErrNoVolumes is returned when backing up a service without volumes.
 	ErrNoVolumes = errors.New("backup: service has no volumes")
+	// ErrFenced is returned when restoring into a service that an earlier
+	// failed restore left fenced. The fence must be cleared first.
+	ErrFenced = errors.New("backup: service is fenced by a failed restore")
 	// ErrStopped is returned for requests after Run has returned.
 	ErrStopped = errors.New("backup: manager is stopped")
 )
@@ -256,7 +261,7 @@ func (m *Manager) checkService(ctx context.Context, serviceID string) error {
 // finishes the restores that were interrupted while their service was
 // fenced. Those services get their previous data back if their volumes may
 // hold partial data; a service whose data cannot be put back stays stopped
-// and fenced, and the error is logged. Call Recover before anything starts
+// and fenced until the fence is cleared, and the error is logged. Call Recover before anything starts
 // services, in particular before the deployer reconciles, and before Run.
 func (m *Manager) Recover(ctx context.Context) error {
 	if _, err := m.store.FailInterruptedBackups(ctx, errRestart); err != nil {
@@ -557,8 +562,9 @@ func (m *Manager) Backups(ctx context.Context, serviceID string, limit int) ([]s
 
 // Restore queues a restore of a service backup into its service. It returns
 // an error wrapping ErrInvalid for backups of shed.db, backups that did not
-// succeed, and backups whose archive is gone, and ErrBusy if a restore of the
-// service is already queued or running or the service is paused.
+// succeed, and backups whose archive is gone, ErrBusy if a restore of the
+// service is already queued or running or the service is paused, and
+// ErrFenced if a failed restore left the service fenced.
 func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, error) {
 	b, err := m.store.Backup(ctx, backupID)
 	if err != nil {
@@ -579,6 +585,14 @@ func (m *Manager) Restore(ctx context.Context, backupID string) (store.Restore, 
 	}
 	if m.paused[b.ServiceID] > 0 || m.busy(b.ServiceID, true) {
 		return store.Restore{}, ErrBusy
+	}
+	// A new restore would copy the fenced, possibly partial data over the
+	// pre-restore volumes that may hold the previous data.
+	switch _, err := m.store.RestoreFence(ctx, b.ServiceID); {
+	case err == nil:
+		return store.Restore{}, ErrFenced
+	case !errors.Is(err, store.ErrNotFound):
+		return store.Restore{}, fmt.Errorf("backup: %w", err)
 	}
 	r, err := m.store.CreateRestore(ctx, store.Restore{
 		ServiceID: b.ServiceID,

@@ -48,8 +48,8 @@ func (d *Deployer) StopService(ctx context.Context, serviceID string) error {
 
 // StartService starts the active deployment's container of a stopped
 // service, recreating it if it is gone, and routes its domains to it again.
-// It returns ErrNoContainer if the service has no active deployment and
-// ErrServiceBusy while it is held.
+// It returns ErrNoContainer if the service has no active deployment,
+// ErrServiceBusy while it is held, and ErrFenced while it is fenced.
 func (d *Deployer) StartService(ctx context.Context, serviceID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
@@ -58,6 +58,9 @@ func (d *Deployer) StartService(ctx context.Context, serviceID string) error {
 		return err
 	}
 	if err := d.checkHeld(serviceID); err != nil {
+		return err
+	}
+	if err := d.checkFence(ctx, serviceID); err != nil {
 		return err
 	}
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
@@ -85,7 +88,8 @@ func (d *Deployer) StartService(ctx context.Context, serviceID string) error {
 
 // RestartService restarts the active deployment's container of a service. It
 // returns ErrServiceStopped if the service is stopped, ErrNoContainer if it
-// has no active container, and ErrServiceBusy while it is held.
+// has no active container, ErrServiceBusy while it is held, and ErrFenced
+// while it is fenced.
 func (d *Deployer) RestartService(ctx context.Context, serviceID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
@@ -94,6 +98,9 @@ func (d *Deployer) RestartService(ctx context.Context, serviceID string) error {
 		return err
 	}
 	if err := d.checkHeld(serviceID); err != nil {
+		return err
+	}
+	if err := d.checkFence(ctx, serviceID); err != nil {
 		return err
 	}
 	if svc.Stopped {
@@ -116,6 +123,48 @@ func (d *Deployer) RestartService(ctx context.Context, serviceID string) error {
 	d.applyRoutesLogged(ctx)
 	d.log.Info("service restarted", "service", serviceID)
 	return nil
+}
+
+// ClearRestoreFence removes the fence that a failed restore left on a
+// service, keeping the data the service has now. The service stays stopped
+// until it is started or deployed. A service without a fence is left as it
+// is. It returns ErrServiceBusy while the service is held, such as during a
+// restore.
+func (d *Deployer) ClearRestoreFence(ctx context.Context, serviceID string) error {
+	d.controlMu.Lock()
+	defer d.controlMu.Unlock()
+	if _, err := d.store.Service(ctx, serviceID); err != nil {
+		return err
+	}
+	if err := d.checkHeld(serviceID); err != nil {
+		return err
+	}
+	f, err := d.store.RestoreFence(ctx, serviceID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := d.store.DeleteRestoreFence(ctx, serviceID); err != nil {
+		return err
+	}
+	d.log.Warn("restore fence cleared; keeping the service's current data",
+		"service", serviceID, "restore", f.RestoreID, "phase", f.Phase)
+	return nil
+}
+
+// checkFence returns ErrFenced if a failed restore left a service fenced.
+func (d *Deployer) checkFence(ctx context.Context, serviceID string) error {
+	_, err := d.store.RestoreFence(ctx, serviceID)
+	switch {
+	case err == nil:
+		return ErrFenced
+	case errors.Is(err, store.ErrNotFound):
+		return nil
+	default:
+		return err
+	}
 }
 
 // errReleased is returned by the methods of a Held after Release.

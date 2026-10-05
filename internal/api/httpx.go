@@ -52,6 +52,11 @@ func (s *Server) handle(h handlerFunc) http.Handler {
 	})
 }
 
+// msgFenced explains why a fenced service cannot be started, deployed, or
+// restored into.
+const msgFenced = "a restore of this service failed and its data may be incomplete; " +
+	"restart shed to retry recovering it, or clear the restore fence to keep the data as it is"
+
 // writeError maps err to a status and sends it as {"error": message}.
 // Unexpected errors are logged and reported generically.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
@@ -74,6 +79,8 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status, msg = http.StatusConflict, "service is stopped; start it instead"
 	case errors.Is(err, deploy.ErrServiceBusy):
 		status, msg = http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"
+	case errors.Is(err, deploy.ErrFenced), errors.Is(err, backup.ErrFenced):
+		status, msg = http.StatusConflict, msgFenced
 	case errors.Is(err, deploy.ErrDeleting):
 		status, msg = http.StatusConflict, "service is being deleted"
 	case errors.Is(err, deploy.ErrStopped), errors.Is(err, backup.ErrStopped):

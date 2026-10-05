@@ -61,7 +61,15 @@ type serviceJSON struct {
 	Domains          []domainJSON         `json:"domains"`
 	Volumes          []volumeJSON         `json:"volumes"`
 	LatestDeployment *deploymentJSON      `json:"latestDeployment"`
+	RestoreFence     *restoreFenceJSON    `json:"restoreFence"`
 	CreatedAt        time.Time            `json:"createdAt"`
+}
+
+// restoreFenceJSON is the fence a failed restore left on a service.
+type restoreFenceJSON struct {
+	RestoreID string             `json:"restoreId"`
+	Phase     store.RestorePhase `json:"phase"`
+	CreatedAt time.Time          `json:"createdAt"`
 }
 
 type deploymentJSON struct {

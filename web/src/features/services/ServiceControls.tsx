@@ -20,6 +20,7 @@ type Run = (
  * ServiceControls are the run actions for the service's current state:
  * Restart and Stop while running, Start and Redeploy while stopped, Cancel
  * while a deployment is in progress, and Deploy when nothing is running.
+ * A service fenced by a restore gets none: it can't run until the fence goes.
  */
 export function ServiceControls({ service }: { service: Service }) {
   const toast = useToast();
@@ -41,6 +42,8 @@ export function ServiceControls({ service }: { service: Service }) {
       },
       onError: (err) => toast.add({ title: failed, description: errorMessage(err), type: "error" }),
     });
+
+  if (service.restoreFence) return null;
 
   if (latest && isPending(latest.status)) {
     return (

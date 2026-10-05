@@ -203,7 +203,7 @@ func (m *Manager) verify(ctx context.Context, cid string, vols []store.Volume, w
 // recoverFence finishes a restore that a restart of shed interrupted while
 // its service was fenced. Volumes whose replacement may have begun get their
 // previous data back. The fence is lifted once the volumes hold complete
-// data; if that cannot be done, the service stays stopped.
+// data; if that cannot be done, the service stays stopped and fenced.
 func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error {
 	sv, err := m.store.Service(ctx, f.ServiceID)
 	if err != nil {
@@ -215,10 +215,18 @@ func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error 
 	}
 	vols := slices.DeleteFunc(all, func(v store.Volume) bool { return !slices.Contains(f.VolumeIDs, v.ID) })
 	if !sv.Stopped {
-		// The user started the service since: its current data stays.
-		m.log.Warn("restore: service started during an unfinished restore; keeping its previous data",
-			"service", f.ServiceID, "restore", f.RestoreID, "volumes", preRestoreNames(vols))
-		return m.store.DeleteRestoreFence(ctx, f.ServiceID)
+		// Only a shed that did not enforce fences could start a fenced
+		// service. Its data may have changed since, so it is neither put
+		// back nor kept: the service is stopped, and stays fenced until the
+		// user clears the fence.
+		if err := m.stopActive(ctx, f.ServiceID); err != nil {
+			return err
+		}
+		if err := m.store.SetServiceStopped(ctx, f.ServiceID, true); err != nil {
+			return fmt.Errorf("backup: %w", err)
+		}
+		return fmt.Errorf("backup: service was started during an unfinished restore; it was stopped and stays fenced, "+
+			"and its previous data is kept in the volumes %s", strings.Join(preRestoreNames(vols), ", "))
 	}
 	switch f.Phase {
 	case store.RestoreLoading:

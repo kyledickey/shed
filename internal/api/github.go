@@ -370,6 +370,10 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		}
 		_, err := s.deployer.Deploy(r.Context(), svc.ID, store.TriggerPush, commit)
 		s.deliveries.finish(key, err == nil)
+		if errors.Is(err, deploy.ErrFenced) {
+			s.log.Warn("push not deployed: a failed restore fenced the service", "service", svc.ID, "sha", ev.SHA)
+			continue
+		}
 		if err != nil {
 			s.log.Error("deploy on push", "service", svc.ID, "err", err)
 			return errorf(http.StatusServiceUnavailable, "could not schedule delivery; retry later")

@@ -60,6 +60,18 @@ export type Service = {
   domains: Domain[];
   volumes: Volume[];
   latestDeployment: Deployment | null;
+  /** Set while a restore runs, or after one failed and left the data possibly partial. */
+  restoreFence: RestoreFence | null;
+  createdAt: string;
+};
+
+/**
+ * A fenced service cannot be deployed, started, or restarted until the
+ * restore finishes or the fence is cleared.
+ */
+export type RestoreFence = {
+  restoreId: string;
+  phase: "retaining" | "replacing" | "loading";
   createdAt: string;
 };
 

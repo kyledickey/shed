@@ -580,7 +580,9 @@ manual steps below.
    1. Fence the service: in one transaction, insert a `restore_fences` row
       (phase `retaining`) and set `services.stopped`, remembering its old
       value. Nothing starts a stopped service, including `Reconcile` after a
-      restart, so the fence holds across restarts.
+      restart, so the fence holds across restarts. While the row exists,
+      deploys, redeploys, start, restart, and container recreation are
+      refused too (see "Restore fences" below).
    2. Stop and remove the active container (the deployment stays `active`).
    3. Copy each volume to a fresh `shed-vol-<volumeID>-pre-restore` volume
       and check the copy, then set the phase to `replacing`.
@@ -604,8 +606,8 @@ manual steps below.
    is lifted and the service starts again. If emptying, extracting, or the
    check fails, the pre-restore copies are put back (empty, copy, check) and
    the fence is lifted; the error says so. If putting back fails too, the
-   fence and the pre-restore volumes are kept, so the service stays stopped,
-   and the error names the volumes holding the previous data. If the restore
+   fence and the pre-restore volumes are kept, so the service stays stopped
+   and fenced, and the error names the volumes holding the previous data. If the restore
    is canceled while replacing (shutdown), the fence is kept and the next
    start puts the data back.
 
@@ -659,8 +661,10 @@ fails, the error is logged and the fence stays, so `Reconcile` leaves the
 service stopped and the next boot tries again. In phase `loading` the active
 container is stopped, since the load may still be running in it, and the
 fence row is deleted; the service stays stopped. A fenced service that is no
-longer stopped was started by the user since: its fence is dropped and its
-data and pre-restore volumes are left as they are. On shutdown the running job is canceled and it and
+longer stopped (only a shed that did not enforce fences could start it) has
+its active container stopped and `stopped` set again; its fence, data, and
+pre-restore volumes are kept and the error is logged. Recovery never drops a
+fence because the service looks started. On shutdown the running job is canceled and it and
 the queued ones are marked `failed` ("interrupted by shutdown"). Deleting a
 service or project first pauses its services in the backup manager: running
 backups and queued jobs are canceled ("canceled: service is being deleted"),
@@ -671,6 +675,25 @@ service is deleted, any remaining jobs are canceled ("service deleted") and
 service. S3 objects are kept as the off-site copy, and the user can remove
 them by hand. Deleting a single backup removes its local file and its S3
 object from the destination it was uploaded to.
+
+**Restore fences.** A `restore_fences` row is authoritative: while it exists,
+`Deploy` and `Redeploy` (pushes, manual deploys, rollbacks), `StartService`,
+`RestartService`, and container recreation (`Reconcile`, the release of a
+hold) refuse the service with `deploy.ErrFenced`, and a new restore into it
+with `backup.ErrFenced`; the API answers 409. Stopping and deleting the
+service still work. A push for a fenced service is skipped with a warning in
+shed's log and the webhook still answers 202; nothing is recorded as a
+deployment. The fence goes away only when its restore finishes, when boot
+recovery puts the previous data back (or, in phase `loading`, stops the
+container), or when the user clears it with
+`POST /api/services/{id}/restore-fence/clear`. Clearing deletes the row and
+nothing else: the service stays stopped with the data it has now, and the
+pre-restore volumes, if any, are left for the user to inspect or remove by
+hand (the next restore of the service overwrites them). Clearing is refused
+with `ErrServiceBusy` (409) while the service is held, so the fence of a
+restore in progress cannot be cleared. Clearing a service without a fence
+does nothing. The service API exposes the fence as `restoreFence`, and the
+dashboard shows it with a confirmed "Keep current data" action.
 
 **Downloads.** A download is the archive decrypted but still compressed,
 read from the local file or else from S3, named
@@ -738,7 +761,8 @@ SameSite=Lax, Secure when `server.url` is https, 30 days.
 `POST /api/github/webhook`, HMAC-SHA256 verified. On `push` to
 `refs/heads/<branch>`, every `app` service with matching `repo`, `branch`, and
 `auto_deploy` gets a `push` deployment with the head commit's sha, message,
-and author. Other events are acknowledged and ignored.
+and author. Services fenced by a failed restore are skipped and logged. Other
+events are acknowledged and ignored.
 
 ## HTTP API
 
@@ -781,8 +805,9 @@ GET    /api/services/{id}                       → Service
 PATCH  /api/services/{id}       ServicePatch    → Service
 DELETE /api/services/{id}                       204  (containers, volumes, images)
 POST   /api/services/{id}/stop                  → Service  (cancel deploys, stop container, unroute)
-POST   /api/services/{id}/start                 → Service  (409 if nothing was ever deployed)
-POST   /api/services/{id}/restart               → Service  (409 if stopped or nothing deployed)
+POST   /api/services/{id}/start                 → Service  (409 if nothing was ever deployed or fenced)
+POST   /api/services/{id}/restart               → Service  (409 if stopped, nothing deployed, or fenced)
+POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed restore's fence, keep data; 409 while held)
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
@@ -793,9 +818,9 @@ POST   /api/services/{id}/volumes   {mountPath} → Volume
 DELETE /api/volumes/{id}                        204  (removes data)
 
 GET    /api/services/{id}/deployments           → Deployment[]  (newest first, 50)
-POST   /api/services/{id}/deployments           → Deployment    (deploy branch head / image)
+POST   /api/services/{id}/deployments           → Deployment    (deploy branch head / image; 409 if fenced)
 GET    /api/deployments/{id}                    → Deployment
-POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image = rollback)
+POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image = rollback; 409 if fenced)
 POST   /api/deployments/{id}/cancel             → Deployment
 GET    /api/deployments/{id}/logs               SSE build log (replays file, follows while building)
 GET    /api/services/{id}/logs                  SSE runtime logs (tail 500, follow)
@@ -810,7 +835,7 @@ GET    /api/backups/system                      → SystemBackups
 PUT    /api/backups/system/policy  BackupPolicyInput → BackupPolicy
 POST   /api/backups/system                      202 → Backup
 GET    /api/backups/{id}/download               archive, decrypted, still zstd-compressed (Content-Disposition)
-POST   /api/backups/{id}/restore                202 → Restore  (409 if busy; 400 for shed.db, unsuccessful, or vanished backups)
+POST   /api/backups/{id}/restore                202 → Restore  (409 if busy or fenced; 400 for shed.db, unsuccessful, or vanished backups)
 DELETE /api/backups/{id}                        204  (local file and S3 object; 409 while queued/running/uploading or being restored)
 GET    /api/backups/settings                    → BackupSettings
 PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
@@ -863,6 +888,12 @@ type Service = {
   domains: Domain[];
   volumes: Volume[];
   latestDeployment: Deployment | null;
+  restoreFence: RestoreFence | null;   // set while a restore runs or after one failed
+  createdAt: string;
+};
+type RestoreFence = {
+  restoreId: string;
+  phase: "retaining" | "replacing" | "loading";
   createdAt: string;
 };
 
@@ -1046,7 +1077,11 @@ A service held for a backup or restore (`Deployer.Hold`) rejects deploys,
 redeploys, runtime controls, its own deletion, its project's deletion, and
 deletion of its volumes with `ErrServiceBusy` (409) until released. Pushes that
 arrive during a hold return 503 to GitHub and must be redelivered or deployed
-manually. Volume deletion is serialized with the other runtime operations.
+manually.
+
+A service with a restore fence rejects deploys, redeploys, start, and restart
+with `ErrFenced` (409), checked under the same lock as the other admission
+guards; pushes for it are skipped and logged (see "Restore fences"). Volume deletion is serialized with the other runtime operations.
 
 ### Expansion and log memory limits
 

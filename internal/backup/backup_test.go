@@ -1189,8 +1189,9 @@ func TestRecoverFences(t *testing.T) {
 		// Replacing: the previous data is put back.
 		{name: "replacing", phase: store.RestoreReplacing, wantVolume: "previous"},
 		{name: "replacing, put back fails", phase: store.RestoreReplacing, failCopy: true, wantVolume: "", wantFenced: true, wantStopped: true},
-		// The user started the service since: its data stays.
-		{name: "started by the user", phase: store.RestoreReplacing, userStarted: true, wantVolume: "partial"},
+		// Started since, as an older shed allowed: the data is left alone,
+		// and the service is stopped and stays fenced.
+		{name: "started by the user", phase: store.RestoreReplacing, userStarted: true, wantVolume: "partial", wantFenced: true, wantStopped: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1237,6 +1238,24 @@ func TestRecoverFences(t *testing.T) {
 				t.Errorf("%d helper containers left", n)
 			}
 		})
+	}
+}
+
+func TestRestoreRefusesFencedService(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv")
+	e.docker.volumes["/srv"] = volumeTar("/srv", map[string]string{"f": "x"})
+	b := e.backUp(sv.ID)
+	if _, err := e.st.CreateRestoreFence(e.ctx, store.RestoreFence{
+		ServiceID: sv.ID, RestoreID: "r1", Phase: store.RestoreReplacing, Image: "img-app",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.m.Restore(e.ctx, b.ID); !errors.Is(err, ErrFenced) {
+		t.Errorf("restore into a fenced service: err = %v, want ErrFenced", err)
+	}
+	if _, err := e.st.LatestRestore(e.ctx, sv.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("restore recorded: err = %v, want ErrNotFound", err)
 	}
 }
 

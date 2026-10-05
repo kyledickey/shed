@@ -423,6 +423,14 @@ func (s *Server) serviceView(ctx context.Context, svc store.Service, statuses ma
 	case !errors.Is(err, store.ErrNotFound):
 		return serviceJSON{}, err
 	}
+	var fence *restoreFenceJSON
+	f, err := s.store.RestoreFence(ctx, svc.ID)
+	switch {
+	case err == nil:
+		fence = &restoreFenceJSON{RestoreID: f.RestoreID, Phase: f.Phase, CreatedAt: f.CreatedAt}
+	case !errors.Is(err, store.ErrNotFound):
+		return serviceJSON{}, err
+	}
 	status := statuses[svc.ID]
 	if status == "" {
 		status = deploy.StatusOffline
@@ -450,6 +458,7 @@ func (s *Server) serviceView(ctx context.Context, svc store.Service, statuses ma
 		Domains:          make([]domainJSON, 0, len(domains)),
 		Volumes:          make([]volumeJSON, 0, len(vols)),
 		LatestDeployment: latest,
+		RestoreFence:     fence,
 		CreatedAt:        svc.CreatedAt,
 	}
 	for _, d := range domains {

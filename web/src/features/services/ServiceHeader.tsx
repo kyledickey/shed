@@ -7,6 +7,7 @@ import { Button } from "../../components/Button";
 import { Callout, GitHubIcon, ServiceIcon } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { useRedeployHint } from "./redeploy";
+import { RestoreFenceCallout } from "./RestoreFenceCallout";
 import { ServiceControls } from "./ServiceControls";
 import styles from "./ServiceHeader.module.css";
 
@@ -78,7 +79,8 @@ export function ServiceHeader({ service }: { service: Service }) {
           <ServiceControls service={service} />
         </div>
       </header>
-      {hint.pending && (
+      <RestoreFenceCallout service={service} />
+      {hint.pending && !service.restoreFence && (
         <Callout
           tone="sunflower"
           icon={<TriangleAlert size={16} />}

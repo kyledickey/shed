@@ -377,8 +377,8 @@ func (d *Deployer) pruneImages(ctx context.Context, serviceID, active string) {
 
 // Reconcile brings Docker in line with the store after a restart: deployments
 // that were in progress are marked failed, the active deployment's container
-// of every service that is not stopped is started (or recreated if it is
-// gone), and routes are applied. It does not respect holds, so it must finish
+// of every service that is neither stopped nor fenced is started (or
+// recreated if it is gone), and routes are applied. It does not respect holds, so it must finish
 // before anything calls Hold.
 func (d *Deployer) Reconcile(ctx context.Context) error {
 	stale, err := d.store.DeploymentsByStatus(ctx,
@@ -444,10 +444,14 @@ func (d *Deployer) removeDeploymentContainers(ctx context.Context, deploymentID 
 // ensureRunning starts the container of an active deployment, recreating it
 // from the deployment's image if it no longer exists, and returns its ID. For
 // a service whose containers cannot run side by side, every container of
-// another deployment must be removed first, or nothing is started.
+// another deployment must be removed first, or nothing is started. Nothing
+// is started for a fenced service either; that returns ErrFenced.
 func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (string, error) {
 	svc, err := d.store.Service(ctx, dep.ServiceID)
 	if err != nil {
+		return "", err
+	}
+	if err := d.checkFence(ctx, svc.ID); err != nil {
 		return "", err
 	}
 	vols, err := d.store.Volumes(ctx, svc.ID)

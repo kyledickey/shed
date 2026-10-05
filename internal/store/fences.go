@@ -105,6 +105,16 @@ func (s *Store) DeleteRestoreFence(ctx context.Context, serviceID string) error 
 	return nil
 }
 
+// RestoreFence returns the fence of a service. It returns ErrNotFound if the
+// service has no fence.
+func (s *Store) RestoreFence(ctx context.Context, serviceID string) (RestoreFence, error) {
+	f, err := queryOne(ctx, s, scanFence, `SELECT `+fenceCols+` FROM restore_fences WHERE service_id = ?`, serviceID)
+	if err != nil {
+		return RestoreFence{}, fmt.Errorf("store: restore fence of service %s: %w", serviceID, err)
+	}
+	return f, nil
+}
+
 // RestoreFences returns every fence, oldest first.
 func (s *Store) RestoreFences(ctx context.Context) ([]RestoreFence, error) {
 	fs, err := queryAll(ctx, s, scanFence, `SELECT `+fenceCols+` FROM restore_fences ORDER BY created_at, rowid`)

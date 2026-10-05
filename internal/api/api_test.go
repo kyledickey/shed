@@ -35,6 +35,7 @@ type fakeDeployer struct {
 	deploy     []store.Trigger
 	controls   []string        // "stop <id>", "start <id>", "restart <id>"
 	controlErr error           // returned by the service controls
+	deployErr  error           // returned by Deploy
 	deleteErr  error           // returned by DeleteService and DeleteProject
 	onDelete   func(id string) // called by them with "delete <id>"
 }
@@ -63,10 +64,16 @@ func (f *fakeDeployer) StartService(_ context.Context, id string) error {
 func (f *fakeDeployer) RestartService(_ context.Context, id string) error {
 	return f.control("restart", id)
 }
+func (f *fakeDeployer) ClearRestoreFence(_ context.Context, id string) error {
+	return f.control("restore-fence/clear", id)
+}
 
 func (f *fakeDeployer) Deploy(_ context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deployErr != nil {
+		return store.Deployment{}, f.deployErr
+	}
 	f.deploy = append(f.deploy, trigger)
 	return store.Deployment{ServiceID: serviceID, Trigger: trigger, CommitSHA: c.SHA, Status: store.StatusQueued}, nil
 }
@@ -423,6 +430,10 @@ func TestServiceControls(t *testing.T) {
 		{"stop", svc.ID, deploy.ErrServiceBusy, http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"},
 		{"start", svc.ID, deploy.ErrServiceBusy, http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"},
 		{"restart", svc.ID, deploy.ErrDeleting, http.StatusConflict, "service is being deleted"},
+		{"start", svc.ID, deploy.ErrFenced, http.StatusConflict, msgFenced},
+		{"restart", svc.ID, deploy.ErrFenced, http.StatusConflict, msgFenced},
+		{"restore-fence/clear", svc.ID, nil, http.StatusOK, ""},
+		{"restore-fence/clear", svc.ID, deploy.ErrServiceBusy, http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"},
 		{"stop", svc.ID, deploy.ErrStopped, http.StatusServiceUnavailable, "shutting down"},
 		{"stop", "nope", store.ErrNotFound, http.StatusNotFound, "not found"},
 		{"stop", "nope", nil, http.StatusNotFound, "not found"},
@@ -497,6 +508,47 @@ func TestWebhook(t *testing.T) {
 	}
 	if got := f.deployer.triggers(); len(got) != 1 || got[0] != store.TriggerPush {
 		t.Errorf("deploys = %v, want [push]", got)
+	}
+}
+
+func TestWebhookSkipsFencedService(t *testing.T) {
+	f := newFixture(t)
+	createApp(t, f.st)
+	f.github.Set(newGitHubClient(t, "s3cret"))
+	f.deployer.deployErr = deploy.ErrFenced
+	body := `{"ref":"refs/heads/main","after":"abc123","repository":{"full_name":"octo/app"},
+		"head_commit":{"id":"abc123","message":"Fix it","author":{"name":"Mona"}}}`
+	mac := hmac.New(sha256.New, []byte("s3cret"))
+	mac.Write([]byte(body))
+	req := httptest.NewRequest("POST", "/api/github/webhook", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want 202; body: %s", rec.Code, rec.Body)
+	}
+	if got := f.deployer.triggers(); len(got) != 0 {
+		t.Errorf("deploys = %v, want none", got)
+	}
+}
+
+func TestServiceRestoreFence(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	if got := f.decode(f.do("GET", "/api/services/"+svc.ID, ""), http.StatusOK); got["restoreFence"] != nil {
+		t.Errorf("restoreFence = %v, want null", got["restoreFence"])
+	}
+	if _, err := f.st.CreateRestoreFence(context.Background(), store.RestoreFence{
+		ServiceID: svc.ID, RestoreID: "r1", Phase: store.RestoreReplacing,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.decode(f.do("GET", "/api/services/"+svc.ID, ""), http.StatusOK)
+	fence, ok := got["restoreFence"].(map[string]any)
+	if !ok || fence["restoreId"] != "r1" || fence["phase"] != "replacing" || fence["createdAt"] == nil {
+		t.Errorf("restoreFence = %v", got["restoreFence"])
 	}
 }
 

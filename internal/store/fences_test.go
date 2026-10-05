@@ -53,6 +53,9 @@ func TestRestoreFences(t *testing.T) {
 			if len(fs) != 1 || !reflect.DeepEqual(fs[0], f) {
 				t.Errorf("RestoreFences() = %+v, want [%+v]", fs, f)
 			}
+			if got, err := s.RestoreFence(ctx, tt.sv.ID); err != nil || !reflect.DeepEqual(got, f) {
+				t.Errorf("RestoreFence() = %+v, %v, want %+v", got, err, f)
+			}
 			if err := s.LiftRestoreFence(ctx, tt.sv.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -67,6 +70,9 @@ func TestRestoreFences(t *testing.T) {
 
 	if err := s.LiftRestoreFence(ctx, running.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("LiftRestoreFence without a fence = %v, want ErrNotFound", err)
+	}
+	if _, err := s.RestoreFence(ctx, running.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("RestoreFence without a fence = %v, want ErrNotFound", err)
 	}
 	if err := s.SetRestorePhase(ctx, running.ID, RestoreReplacing); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetRestorePhase without a fence = %v, want ErrNotFound", err)

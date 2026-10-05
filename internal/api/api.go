@@ -33,6 +33,7 @@ type Deployer interface {
 	StopService(ctx context.Context, serviceID string) error
 	StartService(ctx context.Context, serviceID string) error
 	RestartService(ctx context.Context, serviceID string) error
+	ClearRestoreFence(ctx context.Context, serviceID string) error
 	DeleteService(ctx context.Context, serviceID string) error
 	DeleteProject(ctx context.Context, projectID string) error
 	DeleteVolume(ctx context.Context, volumeID string) error
@@ -164,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/services/{id}/stop", s.controlService(Deployer.StopService))
 	authed("POST /api/services/{id}/start", s.controlService(Deployer.StartService))
 	authed("POST /api/services/{id}/restart", s.controlService(Deployer.RestartService))
+	authed("POST /api/services/{id}/restore-fence/clear", s.controlService(Deployer.ClearRestoreFence))
 
 	authed("GET /api/services/{id}/variables", s.getVariables)
 	authed("PUT /api/services/{id}/variables", s.putVariables)

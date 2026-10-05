@@ -118,6 +118,10 @@ var (
 	// ErrServiceBusy is returned while a service is held for a backup or
 	// restore.
 	ErrServiceBusy = errors.New("deploy: service is busy with a backup or restore")
+	// ErrFenced is returned when deploying, redeploying, starting, or
+	// restarting a service that a failed restore left fenced, because its
+	// data may be partial. ClearRestoreFence lifts the refusal.
+	ErrFenced = errors.New("deploy: service is fenced by a failed restore")
 )
 
 // Cancellation causes, which decide how an interrupted deployment is
@@ -226,7 +230,8 @@ func (d *Deployer) Stop() {
 }
 
 // Deploy queues a new deployment of a service and returns it. Older
-// deployments of the service that are still in progress are canceled.
+// deployments of the service that are still in progress are canceled. It
+// returns ErrFenced while the service is fenced by a failed restore.
 func (d *Deployer) Deploy(ctx context.Context, serviceID string, trigger store.Trigger, c Commit) (store.Deployment, error) {
 	return d.enqueue(ctx, store.Deployment{
 		ServiceID:     serviceID,
@@ -269,6 +274,9 @@ func (d *Deployer) enqueue(ctx context.Context, dep store.Deployment) (store.Dep
 		return store.Deployment{}, err
 	}
 	if err := d.admission(svc); err != nil {
+		return store.Deployment{}, err
+	}
+	if err := d.checkFence(ctx, svc.ID); err != nil {
 		return store.Deployment{}, err
 	}
 	dep.Status = store.StatusQueued
