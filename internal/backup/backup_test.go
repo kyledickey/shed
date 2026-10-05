@@ -639,16 +639,36 @@ func TestRestoreVolume(t *testing.T) {
 	if !slices.ContainsFunc(pre, func(ev string) bool { return strings.HasPrefix(ev, "copy from") }) {
 		t.Errorf("no pre-restore backup before the hold: %q", events)
 	}
+	data, cache := volName["/srv/data"], volName["/srv/cache"]
 	want := []string{
 		"hold " + sv.ID,
 		"stop and remove " + sv.ID,
-		"remove volume " + volName["/srv/data"],
-		"ensure volume " + volName["/srv/data"],
-		"remove volume " + volName["/srv/cache"],
-		"ensure volume " + volName["/srv/cache"],
-		"create shed-restore-" + r.ID + " img-app " + volName["/srv/data"] + ":/srv/data:ro=false," + volName["/srv/cache"] + ":/srv/cache:ro=false",
-		"copy to helper3 /",
+		// The current data is copied aside and checked first.
+		"remove volume " + data + "-pre-restore",
+		"ensure volume " + data + "-pre-restore",
+		"remove volume " + cache + "-pre-restore",
+		"ensure volume " + cache + "-pre-restore",
+		"create shed-restore-" + r.ID + "-src img-app " + data + ":/srv/data:ro=true," + cache + ":/srv/cache:ro=true",
+		"create shed-restore-" + r.ID + "-dst img-app " + data + "-pre-restore:/srv/data:ro=false," + cache + "-pre-restore:/srv/cache:ro=false",
+		"copy from helper3 /srv/data",
+		"copy from helper3 /srv/cache",
+		"copy to helper4 /",
+		"copy from helper4 /srv/data",
+		"copy from helper4 /srv/cache",
+		"remove helper4",
 		"remove helper3",
+		// Only then are the volumes replaced, and checked.
+		"remove volume " + data,
+		"ensure volume " + data,
+		"remove volume " + cache,
+		"ensure volume " + cache,
+		"create shed-restore-" + r.ID + " img-app " + data + ":/srv/data:ro=false," + cache + ":/srv/cache:ro=false",
+		"copy to helper5 /",
+		"copy from helper5 /srv/data",
+		"copy from helper5 /srv/cache",
+		"remove helper5",
+		"remove volume " + data + "-pre-restore",
+		"remove volume " + cache + "-pre-restore",
 		"release " + sv.ID,
 	}
 	if got := events[hold:]; !reflect.DeepEqual(got, want) {
@@ -660,6 +680,15 @@ func TestRestoreVolume(t *testing.T) {
 	}
 	if want := []string{"srv/data/=", "srv/data/f=original", "srv/cache/=", "srv/cache/c=cache"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("extracted %q, want %q", names, want)
+	}
+	if got := e.docker.volumeFiles(data); !reflect.DeepEqual(got, map[string]string{"f": "original"}) {
+		t.Errorf("restored volume holds %q", got)
+	}
+	if fs, _ := e.st.RestoreFences(e.ctx); len(fs) != 0 {
+		t.Errorf("fences left: %+v", fs)
+	}
+	if sv, _ := e.st.Service(e.ctx, sv.ID); sv.Stopped {
+		t.Error("service left stopped after a successful restore")
 	}
 
 	bs, _ := e.st.Backups(e.ctx, sv.ID, 0)
@@ -701,6 +730,7 @@ func TestRestoreRedis(t *testing.T) {
 	e := newEnv(t)
 	sv := e.service("redis", true, "/data")
 	vols, _ := e.st.Volumes(e.ctx, sv.ID)
+	e.docker.volumes["/data"] = volumeTar("/data", map[string]string{"dump.rdb": "REDIS-newer"})
 	e.docker.dump = "REDIS0012..."
 	b := e.backUp(sv.ID)
 	e.rec = &recorder{}
@@ -715,16 +745,236 @@ func TestRestoreRedis(t *testing.T) {
 	}
 	vol := volumeName(vols[0])
 	events := e.rec.list()
-	want := []string{
-		"hold " + sv.ID, "stop and remove " + sv.ID, "remove volume " + vol, "ensure volume " + vol,
-		"create shed-restore-" + mustLatestRestore(t, e, sv.ID).ID + " img-redis " + vol + ":/data:ro=false",
-	}
-	if got := events[1 : 1+len(want)]; !reflect.DeepEqual(got, want) {
-		t.Errorf("events:\n got %q\nwant %q", events, want)
+	retained := slices.Index(events, "ensure volume "+vol+"-pre-restore")
+	replaced := slices.Index(events, "create shed-restore-"+mustLatestRestore(t, e, sv.ID).ID+" img-redis "+vol+":/data:ro=false")
+	if retained < 0 || replaced < retained {
+		t.Errorf("volume not copied aside before it was replaced: %q", events)
 	}
 	got := readTar(t, bytes.NewReader(e.docker.extracted))
 	if len(got) != 4 || got[0].name != "data/dump.rdb" || got[0].body != "REDIS0012..." {
 		t.Errorf("extracted %+v", got)
+	}
+	want := map[string]string{"dump.rdb": "REDIS0012...", "appendonlydir/appendonly.aof.1.base.rdb": "REDIS0012...",
+		"appendonlydir/appendonly.aof.manifest": redisManifestBody}
+	if files := e.docker.volumeFiles(vol); !reflect.DeepEqual(files, want) {
+		t.Errorf("volume holds %q, want %q", files, want)
+	}
+}
+
+// fenceState returns the fences of the test service and whether it is
+// stopped.
+func (e *testEnv) fenceState(serviceID string) ([]store.RestoreFence, bool) {
+	e.t.Helper()
+	fs, err := e.st.RestoreFences(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	sv, err := e.st.Service(e.ctx, serviceID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return slices.DeleteFunc(fs, func(f store.RestoreFence) bool { return f.ServiceID != serviceID }), sv.Stopped
+}
+
+// failingRestore sets up an app with a backup of /srv holding f=original,
+// whose current data is f=current, and queues a restore of the backup.
+func failingRestore(t *testing.T) (*testEnv, store.Service, store.Restore) {
+	t.Helper()
+	e := newEnv(t)
+	sv := e.service("app", true, "/srv")
+	e.docker.volumes["/srv"] = volumeTar("/srv", map[string]string{"f": "original"})
+	b := e.backUp(sv.ID)
+	e.docker.volumes["/srv"] = volumeTar("/srv", map[string]string{"f": "current"})
+	r, err := e.m.Restore(e.ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e, sv, r
+}
+
+func TestRestoreFailurePutsBackPreviousData(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(e *testEnv, r store.Restore)
+		want  string // in the restore's error
+	}{
+		{
+			name: "extraction fails",
+			setup: func(e *testEnv, r store.Restore) {
+				e.docker.copyToHook = func(name string) error {
+					if name == "shed-restore-"+r.ID {
+						return errors.New("disk full")
+					}
+					return nil
+				}
+			},
+			want: "disk full",
+		},
+		{
+			name:  "extraction loses files",
+			setup: func(e *testEnv, r store.Restore) { e.docker.lossy["shed-restore-"+r.ID] = true },
+			want:  `1 of 2 entries are missing or differ, such as "srv/f"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, sv, r := failingRestore(t)
+			tt.setup(e, r)
+			e.drain()
+			got := mustLatestRestore(t, e, sv.ID)
+			if got.Status != store.RestoreFailed || !strings.Contains(got.Error, tt.want) ||
+				!strings.Contains(got.Error, "the previous data was put back") {
+				t.Errorf("restore = %+v", got)
+			}
+			vols, _ := e.st.Volumes(e.ctx, sv.ID)
+			if files := e.docker.volumeFiles(volumeName(vols[0])); !reflect.DeepEqual(files, map[string]string{"f": "current"}) {
+				t.Errorf("volume holds %q, want the previous data", files)
+			}
+			// The data is complete again, so the service starts.
+			if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || stopped {
+				t.Errorf("fences %+v, stopped %v; want none, running", fs, stopped)
+			}
+			if !slices.Contains(e.rec.list(), "remove volume "+preRestoreName(vols[0])) {
+				t.Error("pre-restore volume not removed")
+			}
+			if e.services.released != 1 {
+				t.Errorf("released %d times, want 1", e.services.released)
+			}
+		})
+	}
+}
+
+func TestRestoreFailureKeepsServiceStopped(t *testing.T) {
+	e, sv, r := failingRestore(t)
+	dst := 0
+	e.docker.copyToHook = func(name string) error {
+		switch name {
+		case "shed-restore-" + r.ID:
+			return errors.New("disk full")
+		case "shed-restore-" + r.ID + "-dst":
+			if dst++; dst > 1 { // Copying aside works; putting back fails.
+				return errors.New("i/o error")
+			}
+		}
+		return nil
+	}
+	e.drain()
+	got := mustLatestRestore(t, e, sv.ID)
+	if got.Status != store.RestoreFailed || !strings.Contains(got.Error, "disk full") ||
+		!strings.Contains(got.Error, "left stopped") || !strings.Contains(got.Error, "i/o error") {
+		t.Errorf("restore = %+v", got)
+	}
+	fs, stopped := e.fenceState(sv.ID)
+	if len(fs) != 1 || fs[0].Phase != store.RestoreReplacing || fs[0].RestoreID != r.ID || !stopped {
+		t.Fatalf("fences %+v, stopped %v; want fenced and stopped", fs, stopped)
+	}
+	vols, _ := e.st.Volumes(e.ctx, sv.ID)
+	// The pre-restore volume holds the only complete copy, so it is kept.
+	if files := e.docker.volumeFiles(preRestoreName(vols[0])); !reflect.DeepEqual(files, map[string]string{"f": "current"}) {
+		t.Errorf("pre-restore volume holds %q", files)
+	}
+
+	// A restart puts the previous data back before anything starts.
+	e.docker.copyToHook = nil
+	if err := e.m.Recover(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if files := e.docker.volumeFiles(volumeName(vols[0])); !reflect.DeepEqual(files, map[string]string{"f": "current"}) {
+		t.Errorf("volume holds %q after Recover, want the previous data", files)
+	}
+	if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || stopped {
+		t.Errorf("after Recover: fences %+v, stopped %v; want none, running", fs, stopped)
+	}
+}
+
+func TestRestoreInterruptedByShutdown(t *testing.T) {
+	e, sv, r := failingRestore(t)
+	e.docker.copyToHook = func(name string) error {
+		if name == "shed-restore-"+r.ID {
+			e.m.mu.Lock()
+			e.m.running.cancel(nil)
+			e.m.mu.Unlock()
+			return context.Canceled
+		}
+		return nil
+	}
+	e.drain()
+	// The volume may hold partial data, so the service stays stopped and the
+	// previous data is put back on the next start.
+	fs, stopped := e.fenceState(sv.ID)
+	if len(fs) != 1 || fs[0].Phase != store.RestoreReplacing || !stopped {
+		t.Fatalf("fences %+v, stopped %v; want fenced and stopped", fs, stopped)
+	}
+	if got := mustLatestRestore(t, e, sv.ID); got.Status != store.RestoreFailed {
+		t.Errorf("restore = %+v", got)
+	}
+}
+
+func TestRecoverFences(t *testing.T) {
+	tests := []struct {
+		name        string
+		phase       store.RestorePhase
+		wasStopped  bool
+		userStarted bool
+		failCopy    bool
+		wantVolume  string // contents of f in the volume afterwards
+		wantFenced  bool
+		wantStopped bool
+	}{
+		// Retaining: the volume is unchanged and the copy is dropped.
+		{name: "retaining", phase: store.RestoreRetaining, wantVolume: "partial"},
+		{name: "retaining, stopped by the user", phase: store.RestoreRetaining, wasStopped: true, wantVolume: "partial", wantStopped: true},
+		// Replacing: the previous data is put back.
+		{name: "replacing", phase: store.RestoreReplacing, wantVolume: "previous"},
+		{name: "replacing, put back fails", phase: store.RestoreReplacing, failCopy: true, wantVolume: "", wantFenced: true, wantStopped: true},
+		// The user started the service since: its data stays.
+		{name: "started by the user", phase: store.RestoreReplacing, userStarted: true, wantVolume: "partial"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t)
+			sv := e.service("app", false, "/srv")
+			vols, _ := e.st.Volumes(e.ctx, sv.ID)
+			vol, pre := volumeName(vols[0]), preRestoreName(vols[0])
+			e.docker.volumes["/srv"] = volumeTar("/srv", map[string]string{"f": "partial"})
+			// The pre-restore volume holds the previous data.
+			e.docker.touched[pre] = true
+			e.docker.data[pre] = map[string]fakeFile{"f": {hdr: tar.Header{Typeflag: tar.TypeReg, Mode: 0o644, Size: 8}, body: []byte("previous")}}
+			if tt.wasStopped {
+				e.st.SetServiceStopped(e.ctx, sv.ID, true)
+			}
+			if _, err := e.st.CreateRestoreFence(e.ctx, store.RestoreFence{
+				ServiceID: sv.ID, RestoreID: "r1", Phase: tt.phase, Image: "img-app", VolumeIDs: []string{vols[0].ID},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if tt.userStarted {
+				e.st.SetServiceStopped(e.ctx, sv.ID, false)
+			}
+			if tt.failCopy {
+				e.docker.copyToErr = errors.New("i/o error")
+			}
+			if err := e.m.Recover(e.ctx); err != nil {
+				t.Fatal(err)
+			}
+			e.docker.mu.Lock()
+			f := string(e.docker.files(vol, "/srv")["f"].body)
+			e.docker.mu.Unlock()
+			if f != tt.wantVolume {
+				t.Errorf("volume holds f=%q, want %q", f, tt.wantVolume)
+			}
+			fs, stopped := e.fenceState(sv.ID)
+			if (len(fs) > 0) != tt.wantFenced || stopped != tt.wantStopped {
+				t.Errorf("fences %+v, stopped %v; want fenced %v, stopped %v", fs, stopped, tt.wantFenced, tt.wantStopped)
+			}
+			removed := slices.Contains(e.rec.list(), "remove volume "+pre)
+			if wantRemoved := !tt.wantFenced && !tt.userStarted; removed != wantRemoved {
+				t.Errorf("pre-restore volume removed: %v, want %v", removed, wantRemoved)
+			}
+			if n := len(e.docker.mounts); n != 0 {
+				t.Errorf("%d helper containers left", n)
+			}
+		})
 	}
 }
 
@@ -757,6 +1007,23 @@ func TestRestoreReleasesOnFailure(t *testing.T) {
 	if n := len(e.docker.containers); n != 0 {
 		t.Errorf("%d containers left, want the helper removed", n)
 	}
+	// Copying the data aside failed, so the volume was never touched and
+	// the service starts again.
+	if slices.Contains(e.rec.list(), "remove volume shed-vol-"+mustVolume(t, e, sv.ID).ID) {
+		t.Error("volume removed although copying it aside failed")
+	}
+	if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || stopped {
+		t.Errorf("fences %+v, stopped %v; want none, running", fs, stopped)
+	}
+}
+
+func mustVolume(t *testing.T, e *testEnv, serviceID string) store.Volume {
+	t.Helper()
+	vols, err := e.st.Volumes(e.ctx, serviceID)
+	if err != nil || len(vols) == 0 {
+		t.Fatalf("volumes = %v, %v", vols, err)
+	}
+	return vols[0]
 }
 
 func TestRestorePreRestoreFailure(t *testing.T) {

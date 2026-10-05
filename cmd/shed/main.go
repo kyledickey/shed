@@ -178,12 +178,14 @@ func run() error {
 		return err
 	}
 
-	if err := deployer.Reconcile(ctx); err != nil {
+	// Recover before Reconcile starts services: it puts back the data of
+	// restores that a restart interrupted, and keeps the services whose data
+	// it cannot put back stopped. Backups hold services through the
+	// deployer, so Run waits until after Reconcile.
+	if err := backups.Recover(ctx); err != nil {
 		return err
 	}
-	// Backups hold services through the deployer, which is ready after
-	// Reconcile.
-	if err := backups.Recover(ctx); err != nil {
+	if err := deployer.Reconcile(ctx); err != nil {
 		return err
 	}
 	var background sync.WaitGroup

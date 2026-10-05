@@ -257,16 +257,17 @@ func (m *Manager) snapshot(ctx context.Context, id string, w io.Writer) error {
 	return nil
 }
 
-// helper creates a helper container named after id that mounts vols, to
-// read or write them with the Docker archive API. It is never started. The
-// returned function removes it.
-func (m *Manager) helper(ctx context.Context, name, id, image string, vols []store.Volume, readOnly bool) (string, func(), error) {
+// helper creates a helper container labeled with id that mounts the Docker
+// volumes named by volName for vols at their mount paths, to read or write
+// them with the Docker archive API. It is never started. The returned
+// function removes it.
+func (m *Manager) helper(ctx context.Context, name, id, image string, vols []store.Volume, volName func(store.Volume) string, readOnly bool) (string, func(), error) {
 	if image == "" {
 		return "", nil, errors.New("backup: the active deployment has no image")
 	}
 	mounts := make([]docker.Mount, len(vols))
 	for i, v := range vols {
-		mounts[i] = docker.Mount{Volume: volumeName(v), Target: v.MountPath, ReadOnly: readOnly}
+		mounts[i] = docker.Mount{Volume: volName(v), Target: v.MountPath, ReadOnly: readOnly}
 	}
 	cid, err := m.docker.Create(ctx, docker.RunSpec{
 		Name:   name,
@@ -293,7 +294,7 @@ func (m *Manager) removeHelper(ctx context.Context, cid string) {
 // readVolumes writes a tar of vols to w, read through a helper container
 // running image.
 func (m *Manager) readVolumes(ctx context.Context, backupID, image string, vols []store.Volume, w io.Writer) error {
-	cid, remove, err := m.helper(ctx, "shed-backup-"+backupID, backupID, image, vols, true)
+	cid, remove, err := m.helper(ctx, "shed-backup-"+backupID, backupID, image, vols, volumeName, true)
 	if err != nil {
 		return err
 	}
@@ -449,7 +450,7 @@ func (m *Manager) runRestore(ctx context.Context, r store.Restore, b store.Backu
 }
 
 // restore puts the archive of b back into its service: it takes a
-// pre-restore backup, verifies the archive, holds the service, writes the
+// pre-restore backup, verifies the archive, holds the service, replaces the
 // data, and releases the service.
 func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) (err error) {
 	sv, err := m.store.Service(ctx, r.ServiceID)
@@ -517,7 +518,8 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 		return fmt.Errorf("backup: hold service: %w", err)
 	}
 	defer func() {
-		// 6. Release: the service starts again unless the user stopped it.
+		// 6. Release: the service starts again unless it is stopped, by the
+		// user or by a restore fence that a failure left in place.
 		rerr := held.Release(context.WithoutCancel(ctx))
 		switch {
 		case rerr == nil:
@@ -544,18 +546,18 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 				restore = append(restore, v)
 			}
 		}
-		return m.restoreVolumes(ctx, held, r.ID, d.Image, restore, func(w io.Writer) error {
+		return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, restore, func(w io.Writer) error {
 			return readArchive(path, identity, func(data io.Reader) error {
 				return filterVolumes(data, w, present)
 			})
 		})
 	case b.Method == store.MethodDump && sv.Kind == "redis":
-		// 4. Redis: the RDB file goes into the emptied volume.
+		// 4. Redis: the RDB file replaces the volume's data.
 		i := slices.IndexFunc(vols, func(v store.Volume) bool { return relMount(v.MountPath) == relMount(redisRDBDir) })
 		if i < 0 {
 			return fmt.Errorf("the service has no volume at %s for the RDB file", redisRDBDir)
 		}
-		return m.restoreVolumes(ctx, held, r.ID, d.Image, vols[i:i+1], func(w io.Writer) error {
+		return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, vols[i:i+1], func(w io.Writer) error {
 			return redisFiles(w, size, m.now(), func(rdb io.Writer) error {
 				return readArchive(path, identity, func(data io.Reader) error {
 					_, err := io.Copy(rdb, data)
@@ -581,45 +583,6 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 		})
 	}
 	return fmt.Errorf("cannot restore a %s backup", b.Method)
-}
-
-// restoreVolumes stops and removes the held service's container, recreates
-// vols empty, and extracts the tar written by fill at "/" through a helper
-// container that mounts them.
-func (m *Manager) restoreVolumes(ctx context.Context, held Held, restoreID, image string, vols []store.Volume, fill func(io.Writer) error) error {
-	if err := held.StopAndRemove(ctx); err != nil {
-		return fmt.Errorf("backup: stop service: %w", err)
-	}
-	for _, v := range vols {
-		if err := m.docker.RemoveVolume(ctx, volumeName(v)); err != nil {
-			return fmt.Errorf("backup: empty volume %s: %w", v.MountPath, err)
-		}
-		if err := m.docker.EnsureVolume(ctx, volumeName(v)); err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
-	}
-	cid, remove, err := m.helper(ctx, "shed-restore-"+restoreID, restoreID, image, vols, false)
-	if err != nil {
-		return err
-	}
-	defer remove()
-
-	pr, pw := io.Pipe()
-	fillErr := make(chan error, 1)
-	go func() {
-		err := fill(pw)
-		pw.CloseWithError(err)
-		fillErr <- err
-	}()
-	err = m.docker.CopyTo(ctx, cid, "/", pr)
-	pr.Close() // Stops fill if the extraction ended early.
-	if ferr := <-fillErr; ferr != nil && !errors.Is(ferr, io.ErrClosedPipe) {
-		return fmt.Errorf("backup: extract archive: %w", ferr)
-	}
-	if err != nil {
-		return fmt.Errorf("backup: extract archive: %w", err)
-	}
-	return nil
 }
 
 // redisFiles writes a tar, to extract at "/", of the redis files that

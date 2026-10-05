@@ -251,6 +251,16 @@ CREATE TABLE restores (
   finished_at TEXT
 );
 CREATE INDEX restores_service ON restores(service_id, created_at DESC);
+
+CREATE TABLE restore_fences (            -- a restore is changing the service's data
+  service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  restore_id TEXT NOT NULL,
+  phase TEXT NOT NULL,                   -- retaining | replacing
+  image TEXT NOT NULL,                   -- image of the helper containers
+  volume_ids TEXT NOT NULL,              -- space-separated IDs of the volumes being replaced
+  was_stopped INTEGER NOT NULL,          -- services.stopped before the restore
+  created_at TEXT NOT NULL
+);
 ```
 
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
@@ -509,17 +519,47 @@ manual steps below.
 3. Hold the service through `deploy` for the rest of the restore. Deployments
    in progress are canceled. Deploy, redeploy, start, stop, restart, delete,
    and volume deletion are rejected with `ErrServiceBusy` (409).
-4. `volume`, and redis `dump`: stop and remove the active container (the
-   deployment stays `active`). For each of the service's volumes whose mount
-   path appears in the archive, remove and recreate the Docker volume, then
-   extract into it at `/` through a helper container named
-   `shed-restore-<restoreID>` (labeled `shed.backup=<restoreID>`) that mounts
-   the volumes writable. Archive paths that are not a volume of the service,
-   and volumes absent from the archive, are left alone; the former are
-   logged. A redis RDB goes to `/data/dump.rdb` after the volume is emptied,
-   and also, as a hard link, to `/data/appendonlydir/appendonly.aof.1.base.rdb`
-   with a manifest naming it as the base of a fresh multi-part AOF: a server
-   with `appendonly yes` loads only the AOF and would otherwise start empty.
+4. `volume`, and redis `dump`: the volumes being replaced are the service's
+   volumes whose mount path appears in the archive (redis: the `/data`
+   volume). Archive paths that are not a volume of the service, and volumes
+   absent from the archive, are left alone; the former are logged. A volume's
+   data is never removed before a checked copy of it exists:
+   1. Fence the service: in one transaction, insert a `restore_fences` row
+      (phase `retaining`) and set `services.stopped`, remembering its old
+      value. Nothing starts a stopped service, including `Reconcile` after a
+      restart, so the fence holds across restarts.
+   2. Stop and remove the active container (the deployment stays `active`).
+   3. Copy each volume to a fresh `shed-vol-<volumeID>-pre-restore` volume
+      and check the copy, then set the phase to `replacing`.
+   4. Empty each volume (remove and recreate it), extract the archive into it
+      at `/`, and check it.
+   5. Lift the fence: restore `services.stopped` and delete the row in one
+      transaction, then remove the pre-restore volumes.
+
+   Copies and extractions stream a tar through the Docker archive API between
+   helper containers labeled `shed.backup=<restoreID>`: `shed-restore-<id>`
+   mounts the service's volumes writable for the extraction, and
+   `shed-restore-<id>-src` (read-only) and `shed-restore-<id>-dst` mount the
+   source and target of a copy at the service's mount paths. A check reads
+   the target back and compares it with the tar that was written: every
+   entry must be there with the same type, symlink target, and, for files,
+   size and SHA-256. Hard links compare as the file they link to. Extra
+   entries are allowed, since Docker may fill an empty volume with what the
+   image has at the mount path.
+
+   If stopping or copying aside fails, the volumes are unchanged: the fence
+   is lifted and the service starts again. If emptying, extracting, or the
+   check fails, the pre-restore copies are put back (empty, copy, check) and
+   the fence is lifted; the error says so. If putting back fails too, the
+   fence and the pre-restore volumes are kept, so the service stays stopped,
+   and the error names the volumes holding the previous data. If the restore
+   is canceled while replacing (shutdown), the fence is kept and the next
+   start puts the data back.
+
+   A redis RDB goes to `/data/dump.rdb`, and also, as a hard link, to
+   `/data/appendonlydir/appendonly.aof.1.base.rdb` with a manifest naming it
+   as the base of a fresh multi-part AOF: a server with `appendonly yes`
+   loads only the AOF and would otherwise start empty.
 5. postgres, mysql, and mongo `dump`: the active container must be running.
    Stream the decoded dump into `psql` / `mysql` / `mongorestore --archive
    --drop` with `docker exec`. psql runs with `ON_ERROR_STOP=1`. Before the
@@ -529,15 +569,23 @@ manual steps below.
    dump's `DROP ROLE` and `CREATE ROLE` of the connected user, which always
    fail, are filtered out. Connections are allowed again afterwards, also
    when the load fails.
-6. Release the hold. Unless the user had stopped the service, the active
-   deployment's container is started again (recreated if removed) and routes
-   are applied. If that fails after the data was restored, the restore is
-   recorded as failed with that error.
+6. Release the hold. Unless the service is stopped, by the user or by a
+   fence a failure left in place, the active deployment's container is
+   started again (recreated if removed) and routes are applied. If that
+   fails after the data was restored, the restore is recorded as failed with
+   that error.
 
-**Boot, shutdown, and deletion.** On boot, `queued` and `running` backups and
-`running` restores are marked `failed` ("interrupted by restart"). Leftover
-`.partial` files (archives, snapshots, downloads) and `shed.backup` helper
-containers are removed. On shutdown the running job is canceled and it and
+**Boot, shutdown, and deletion.** On boot, before the deployer reconciles,
+`queued` and `running` backups and `running` restores are marked `failed`
+("interrupted by restart"). Leftover `.partial` files (archives, snapshots,
+downloads) and `shed.backup` helper containers are removed. Then each
+restore fence is resolved: in phase `retaining` the volumes are unchanged,
+so the fence is lifted and the pre-restore volumes are removed; in phase
+`replacing` the pre-restore copies are put back and checked first. If that
+fails, the error is logged and the fence stays, so `Reconcile` leaves the
+service stopped and the next boot tries again. A fenced service that is no
+longer stopped was started by the user since: its fence is dropped and its
+data and pre-restore volumes are left as they are. On shutdown the running job is canceled and it and
 the queued ones are marked `failed` ("interrupted by shutdown"). Deleting a
 service or project first pauses its services in the backup manager: running
 backups and queued jobs are canceled ("canceled: service is being deleted"),

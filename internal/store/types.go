@@ -277,3 +277,32 @@ type Restore struct {
 	CreatedAt  time.Time
 	FinishedAt *time.Time
 }
+
+// RestorePhase is how far a restore that changes a service's data has got.
+type RestorePhase string
+
+// Restore phases.
+const (
+	// RestoreRetaining means the service is being stopped and its volumes
+	// copied aside. The volumes themselves are unchanged.
+	RestoreRetaining RestorePhase = "retaining"
+	// RestoreReplacing means the copies are complete and the volumes are
+	// being replaced, so they may hold partial data.
+	RestoreReplacing RestorePhase = "replacing"
+)
+
+// RestoreFence keeps a service stopped while a restore changes its data. It
+// is stored, so it outlasts a restart of shed: the service stays stopped
+// until the restore completes or its previous data is put back.
+type RestoreFence struct {
+	ServiceID string
+	RestoreID string
+	Phase     RestorePhase
+	// Image is the image of the helper containers that mount the volumes.
+	Image string
+	// VolumeIDs are the volumes being replaced.
+	VolumeIDs []string
+	// WasStopped records whether the service was stopped before the fence.
+	WasStopped bool
+	CreatedAt  time.Time
+}

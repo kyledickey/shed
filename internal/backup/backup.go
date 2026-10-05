@@ -51,6 +51,11 @@ type Store interface {
 	CreateRestore(ctx context.Context, r store.Restore) (store.Restore, error)
 	UpdateRestore(ctx context.Context, r store.Restore) error
 	FailInterruptedRestores(ctx context.Context, msg string) (int64, error)
+	CreateRestoreFence(ctx context.Context, f store.RestoreFence) (store.RestoreFence, error)
+	SetRestorePhase(ctx context.Context, serviceID string, phase store.RestorePhase) error
+	LiftRestoreFence(ctx context.Context, serviceID string) error
+	DeleteRestoreFence(ctx context.Context, serviceID string) error
+	RestoreFences(ctx context.Context) ([]store.RestoreFence, error)
 	Snapshot(ctx context.Context, path string) error
 }
 
@@ -242,8 +247,13 @@ func (m *Manager) checkService(ctx context.Context, serviceID string) error {
 }
 
 // Recover cleans up after an unclean stop: it marks queued and running
-// backups and running restores failed, removes partial files, and removes
-// leftover helper containers. Call it before Run.
+// backups and running restores failed, removes partial files and leftover
+// helper containers, and finishes the restores that were interrupted while
+// their service was fenced. Those services get their previous data back if
+// their volumes may hold partial data; a service whose data cannot be put
+// back stays stopped and fenced, and the error is logged. Call Recover before
+// anything starts services, in particular before the deployer reconciles,
+// and before Run.
 func (m *Manager) Recover(ctx context.Context) error {
 	if _, err := m.store.FailInterruptedBackups(ctx, errRestart); err != nil {
 		return fmt.Errorf("backup: recover: %w", err)
@@ -272,6 +282,15 @@ func (m *Manager) Recover(ctx context.Context) error {
 	}
 	for _, c := range helpers {
 		m.removeHelper(ctx, c.ID)
+	}
+	fences, err := m.store.RestoreFences(ctx)
+	if err != nil {
+		return fmt.Errorf("backup: recover: %w", err)
+	}
+	for _, f := range fences {
+		if err := m.recoverFence(ctx, f); err != nil {
+			m.log.Error("restore: recover an interrupted restore", "service", f.ServiceID, "restore", f.RestoreID, "err", err)
+		}
 	}
 	return nil
 }
