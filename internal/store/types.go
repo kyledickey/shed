@@ -339,9 +339,9 @@ const (
 	// RestoreReplacing means the copies are complete and the volumes are
 	// being replaced, so they may hold partial data.
 	RestoreReplacing RestorePhase = "replacing"
-	// RestoreLoading means a dump is being loaded into the running
-	// database, so its data may be partial, and the load may still be
-	// running in the database's container.
+	// RestoreLoading means a dump is being loaded into an isolated copy of
+	// the database, so its data may be partial and the load may still be
+	// running there or, after an older shed, in the original container.
 	RestoreLoading RestorePhase = "loading"
 )
 

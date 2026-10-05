@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -950,7 +951,14 @@ func TestRestoreDump(t *testing.T) {
 		t.Fatalf("restore = %+v", r)
 	}
 	cid := "ctr-" + sv.ID
-	want := []string{"exec " + cid + " dump", "hold " + sv.ID, "exec " + cid + " restore", "release " + sv.ID}
+	iso := e.docker.isolated[cid]
+	r := mustLatestRestore(t, e, sv.ID)
+	want := []string{
+		"exec " + cid + " dump", "hold " + sv.ID,
+		"create isolated shed-restore-" + r.ID + "-db from " + cid, "stop and remove " + sv.ID,
+		"start " + iso, "exec " + iso + " run", "exec " + iso + " restore",
+		"stop " + iso, "remove " + iso, "release " + sv.ID,
+	}
 	if got := e.rec.list(); !reflect.DeepEqual(got, want) {
 		t.Errorf("events:\n got %q\nwant %q", got, want)
 	}
@@ -959,7 +967,51 @@ func TestRestoreDump(t *testing.T) {
 	}
 }
 
-func TestRestoreDumpFailureStopsDatabase(t *testing.T) {
+// TestRestoreDumpIsolated checks that a dump is loaded into a database that
+// only the load can reach: the service's own container is gone, so neither
+// its network alias nor its published ports lead anywhere, and the load runs
+// in a running copy that is labeled as the restore's helper, while the
+// service is fenced and stopped.
+func TestRestoreDumpIsolated(t *testing.T) {
+	e := newEnv(t)
+	sv := e.service("postgres", true, "/var/lib/postgresql")
+	b := e.backUp(sv.ID)
+	cid := "ctr-" + sv.ID
+	var during []string
+	e.docker.restoreHook = func(context.Context) error {
+		r := mustLatestRestore(t, e, sv.ID)
+		if _, err := e.docker.Inspect(e.ctx, cid); !docker.IsNotFound(err) {
+			during = append(during, "the service's container exists")
+		}
+		running, _ := e.docker.List(e.ctx, nil)
+		if len(running) != 1 || running[0].ID != e.docker.isolated[cid] || !running[0].Running ||
+			running[0].Labels[helperLabel] != r.ID {
+			during = append(during, fmt.Sprintf("containers %+v, want only the running copy", running))
+		}
+		if fs, stopped := e.fenceState(sv.ID); len(fs) != 1 || fs[0].Phase != store.RestoreLoading || !stopped {
+			during = append(during, fmt.Sprintf("fences %+v, stopped %v", fs, stopped))
+		}
+		return nil
+	}
+	if _, err := e.m.Restore(e.ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.drain()
+	if len(during) > 0 {
+		t.Errorf("while loading: %q", during)
+	}
+	if r := mustLatestRestore(t, e, sv.ID); r.Status != store.RestoreSucceeded {
+		t.Fatalf("restore = %+v", r)
+	}
+	if e.helpers() != 0 {
+		t.Error("the isolated database was not removed")
+	}
+	if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || stopped {
+		t.Errorf("fences %+v, stopped %v; want none, running", fs, stopped)
+	}
+}
+
+func TestRestoreDumpFailure(t *testing.T) {
 	// cancel cancels the running job, as shutdown does, and returns what an
 	// exec whose stream was aborted returns.
 	cancel := func(e *testEnv) func(context.Context) error {
@@ -971,64 +1023,110 @@ func TestRestoreDumpFailureStopsDatabase(t *testing.T) {
 			return ctx.Err()
 		}
 	}
+	loadFails := func(*testEnv) func(context.Context) error {
+		return func(context.Context) error { return &docker.ExitError{Code: 3} }
+	}
 	tests := []struct {
-		name       string
-		hook       func(e *testEnv) func(context.Context) error
-		stopErr    error
-		wantError  string
-		wantFenced bool
+		name      string
+		hook      func(e *testEnv) func(context.Context) error
+		stopErr   error // of the service's containers
+		readyErr  error
+		removeErr error // of the isolated database
+		wantError string
+		// wantStopped: the data may be partial, so the service stays
+		// stopped. wantFenced: the isolated database may still run.
+		wantStopped, wantFenced bool
 	}{
-		{name: "load fails", hook: func(*testEnv) func(context.Context) error {
-			return func(context.Context) error { return &docker.ExitError{Code: 3} }
-		}, wantError: "may hold partial data"},
-		{name: "canceled", hook: cancel},
-		{name: "canceled, stopping fails", hook: cancel, stopErr: errors.New("daemon gone"), wantFenced: true},
+		{name: "load fails", hook: loadFails, wantError: "may hold partial data", wantStopped: true},
+		{name: "canceled", hook: cancel, wantStopped: true},
+		{name: "never ready", readyErr: errors.New("no socket"), wantError: "data is unchanged"},
+		{name: "stopping the service fails", stopErr: errors.New("daemon gone"), wantError: "stop service"},
+		{name: "load fails, removing the copy fails", hook: loadFails, removeErr: errors.New("daemon gone"),
+			wantError: "removes it", wantStopped: true, wantFenced: true},
+		{name: "load succeeds, removing the copy fails", removeErr: errors.New("daemon gone"),
+			wantError: "the dump was loaded", wantStopped: true, wantFenced: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t)
+			e.m.readyTimeout = 0
 			sv := e.service("postgres", true, "/var/lib/postgresql")
 			b := e.backUp(sv.ID)
-			e.rec = &recorder{}
-			e.docker.rec, e.services.rec = e.rec, e.rec
-			e.docker.restoreHook = tt.hook(e)
-			e.services.stopErr = tt.stopErr
-			if _, err := e.m.Restore(e.ctx, b.ID); err != nil {
+			if tt.hook != nil {
+				e.docker.restoreHook = tt.hook(e)
+			}
+			e.services.stopErr, e.docker.readyErr = tt.stopErr, tt.readyErr
+			r, err := e.m.Restore(e.ctx, b.ID)
+			if err != nil {
 				t.Fatal(err)
 			}
+			e.docker.removeErrs["shed-restore-"+r.ID+"-db"] = tt.removeErr
 			e.drain()
-			r := mustLatestRestore(t, e, sv.ID)
-			if r.Status != store.RestoreFailed || !strings.Contains(r.Error, tt.wantError) {
-				t.Errorf("restore = %+v", r)
-			}
-			// The load has ended, or its container is being stopped, before
-			// the hold is released.
-			cid := "ctr-" + sv.ID
-			stop := "stop and remove " + sv.ID
-			if tt.stopErr != nil {
-				stop += " failed"
-			}
-			want := []string{"exec " + cid + " dump", "hold " + sv.ID, "exec " + cid + " restore aborted", stop, "release " + sv.ID}
-			if got := e.rec.list(); !reflect.DeepEqual(got, want) {
-				t.Errorf("events:\n got %q\nwant %q", got, want)
+			if r := mustLatestRestore(t, e, sv.ID); r.Status != store.RestoreFailed || !strings.Contains(r.Error, tt.wantError) {
+				t.Errorf("restore = %+v, want failed with %q", r, tt.wantError)
 			}
 			fs, stopped := e.fenceState(sv.ID)
-			if !stopped || (len(fs) > 0) != tt.wantFenced {
-				t.Fatalf("fences %+v, stopped %v; want stopped, fenced %v", fs, stopped, tt.wantFenced)
+			if stopped != tt.wantStopped || (len(fs) > 0) != tt.wantFenced {
+				t.Fatalf("fences %+v, stopped %v; want stopped %v, fenced %v", fs, stopped, tt.wantStopped, tt.wantFenced)
+			}
+			if got := e.services.released; got != 1 {
+				t.Errorf("released %d times, want 1", got)
 			}
 			if !tt.wantFenced {
+				if e.helpers() != 0 {
+					t.Error("the isolated database was not removed")
+				}
 				return
 			}
-			// The next start stops the database, in case the load still runs.
-			e.setRunning(sv, true)
+			// Nothing removed the copy, so the next start must, before
+			// the fence goes.
+			delete(e.docker.removeErrs, "shed-restore-"+r.ID+"-db")
 			if err := e.m.Recover(e.ctx); err != nil {
 				t.Fatal(err)
 			}
-			if c, _ := e.docker.Inspect(e.ctx, cid); c.Running {
-				t.Error("Recover left the database running")
+			if e.helpers() != 0 {
+				t.Error("Recover left the isolated database")
 			}
 			if fs, stopped := e.fenceState(sv.ID); len(fs) != 0 || !stopped {
 				t.Errorf("after Recover: fences %+v, stopped %v; want none, stopped", fs, stopped)
+			}
+		})
+	}
+}
+
+// TestRecoverInterruptedLoad checks the boot after a crash during a load:
+// the isolated database may still be loading, so it is removed before the
+// fence goes, and the fence stays while it cannot be removed. Docker does
+// not restart it on its own, since it has no restart policy.
+func TestRecoverInterruptedLoad(t *testing.T) {
+	for _, removable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("removable=%v", removable), func(t *testing.T) {
+			e := newEnv(t)
+			sv := e.service("postgres", false, "/var/lib/postgresql")
+			const name = "shed-restore-r1-db"
+			iso, err := e.docker.CreateIsolated(e.ctx, "ctr-"+sv.ID, name, map[string]string{helperLabel: "r1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.docker.Start(e.ctx, iso)
+			if _, err := e.st.CreateRestoreFence(e.ctx, store.RestoreFence{
+				ServiceID: sv.ID, RestoreID: "r1", Phase: store.RestoreLoading,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !removable {
+				e.docker.removeErrs[name] = errors.New("device busy")
+			}
+			if err := e.m.Recover(e.ctx); err != nil {
+				t.Fatal(err)
+			}
+			_, err = e.docker.Inspect(e.ctx, iso)
+			if gone := docker.IsNotFound(err); gone != removable {
+				t.Errorf("isolated database removed: %v, want %v", gone, removable)
+			}
+			fs, stopped := e.fenceState(sv.ID)
+			if !stopped || (len(fs) > 0) == removable {
+				t.Errorf("fences %+v, stopped %v; want stopped, fenced %v", fs, stopped, !removable)
 			}
 		})
 	}
@@ -2277,6 +2375,20 @@ func TestRecoverUploading(t *testing.T) {
 		}
 		if got.Status == store.BackupSucceeded && !got.Local && got.RemoteKey == "" {
 			t.Errorf("%s: succeeded backup has no copy", tt.name)
+		}
+	}
+}
+
+// TestEngineScriptsParse checks the shell syntax of every engine script.
+func TestEngineScriptsParse(t *testing.T) {
+	for kind, eng := range engines {
+		for what, script := range map[string]string{"dump": eng.dump, "restore": eng.restore, "ready": eng.ready} {
+			if script == "" {
+				continue
+			}
+			if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
+				t.Errorf("%s %s: %v: %s", kind, what, err, out)
+			}
 		}
 	}
 }

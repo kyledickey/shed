@@ -231,7 +231,12 @@ func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error 
 	switch f.Phase {
 	case store.RestoreLoading:
 		// The database may hold part of the dump, and the load may still be
-		// running in its container. Stop it and leave the service stopped.
+		// running in the isolated database, or, after an older shed, in the
+		// service's own container. Neither may run once the fence is gone.
+		// Leave the service stopped.
+		if err := m.removeHelpers(ctx, f.RestoreID); err != nil {
+			return fmt.Errorf("%w; the service stays stopped and fenced", err)
+		}
 		if err := m.stopActive(ctx, f.ServiceID); err != nil {
 			return fmt.Errorf("%w; the service stays stopped", err)
 		}
@@ -246,6 +251,25 @@ func (m *Manager) recoverFence(ctx context.Context, f store.RestoreFence) error 
 		m.log.Info("restore: put back the data of an interrupted restore", "service", f.ServiceID, "restore", f.RestoreID)
 	}
 	return m.unfence(ctx, f.ServiceID, vols, nil)
+}
+
+// removeHelpers removes the helper containers of a backup or restore,
+// including an isolated database, and fails unless none is left.
+func (m *Manager) removeHelpers(ctx context.Context, id string) error {
+	cs, err := m.docker.List(ctx, map[string]string{helperLabel: id})
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	var errs []error
+	for _, c := range cs {
+		if err := m.docker.Remove(ctx, c.ID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("backup: remove the containers of restore %s: %w", id, err)
+	}
+	return nil
 }
 
 // stopTimeout is how long a database stopped by Recover gets to exit before

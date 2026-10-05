@@ -348,3 +348,72 @@ func TestRunRemovesContainerThatFailsToStart(t *testing.T) {
 		t.Errorf("inspect after failed start: %v, want not found", err)
 	}
 }
+
+func TestCreateIsolated(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	sfx := suffix(t)
+	net := "shed-test-net-" + sfx
+	if err := c.EnsureNetwork(ctx, net); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.RemoveNetwork(context.Background(), net) })
+	vol := "shed-test-vol-" + sfx
+	if err := c.EnsureVolume(ctx, vol); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.RemoveVolume(context.Background(), vol) })
+
+	orig := create(t, c, RunSpec{
+		Name: "shed-test-orig-" + sfx, Image: testImage, Cmd: []string{"sleep", "infinity"},
+		Env: []string{"SECRET=s3cret"}, Labels: map[string]string{"shed.test": sfx},
+		Network: net, Aliases: []string{"db-" + sfx}, Mounts: []Mount{{Volume: vol, Target: "/data"}},
+		Publish: []PortBinding{{HostPort: 0, ContainerPort: 5432}},
+	})
+	iso, err := c.CreateIsolated(ctx, orig, "shed-test-iso-"+sfx, map[string]string{"shed.test.iso": sfx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Remove(context.Background(), iso) })
+	if err := c.Start(ctx, iso); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := c.api.ContainerInspect(ctx, iso, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := res.Container
+	if info.HostConfig.RestartPolicy.Name != "no" {
+		t.Errorf("restart policy %q, want no", info.HostConfig.RestartPolicy.Name)
+	}
+	if _, ok := info.Config.Labels["shed.test"]; ok {
+		t.Errorf("labels %v include the original's", info.Config.Labels)
+	}
+	var nets []string
+	for name := range info.NetworkSettings.Networks {
+		nets = append(nets, name)
+	}
+	if len(nets) != 1 || nets[0] != "none" {
+		t.Errorf("networks %v, want only none", nets)
+	}
+	for port, bindings := range info.NetworkSettings.Ports {
+		if len(bindings) > 0 {
+			t.Errorf("port %v published as %v", port, bindings)
+		}
+	}
+	// The same environment and volume, and no route out of the container.
+	var out, errOut bytes.Buffer
+	script := `echo "$SECRET"; touch /data/written; sed 1d /proc/net/route | wc -l`
+	if err := c.Exec(ctx, iso, []string{"sh", "-c", script}, nil, &out, &errOut); err != nil {
+		t.Fatalf("%v: %s", err, errOut.String())
+	}
+	if got := strings.Fields(out.String()); len(got) != 2 || got[0] != "s3cret" || got[1] != "0" {
+		t.Errorf("isolated container printed %q, want the secret and no routes", out.String())
+	}
+	rc, err := c.CopyFrom(ctx, orig, "/data/written")
+	if err != nil {
+		t.Fatalf("file written by the copy is not in the original's volume: %v", err)
+	}
+	rc.Close()
+}

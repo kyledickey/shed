@@ -21,6 +21,9 @@ type engine struct {
 	// restore reads a dump from stdin. It is empty for redis, whose RDB file
 	// is restored into the stopped service's volume instead.
 	restore string
+	// ready exits 0 once the database server, as PID 1 of the container,
+	// accepts connections. It is needed only with restore.
+	ready string
 }
 
 // Redis files: the catalog mounts the data volume at /data, and redis keeps
@@ -45,22 +48,35 @@ var engines = map[string]engine{
 		dump: `export PGPASSWORD="$POSTGRES_PASSWORD"
 exec pg_dumpall --clean --if-exists -U "${POSTGRES_USER:-postgres}"`,
 		restore: postgresRestore,
+		ready:   serverIs("postgres") + `pg_isready -q -U "${POSTGRES_USER:-postgres}"`,
 	},
 	"mysql": {
 		ext: "sql",
 		dump: `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
 exec mysqldump -uroot --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF`,
 		restore: mysqlRestore,
+		ready:   serverIs("mysqld") + `MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin -uroot ping >/dev/null`,
 	},
 	"mongo": {
 		ext:     "archive",
 		dump:    mongoAuth + `mongodump --quiet --archive "$@"`,
 		restore: mongoAuth + mongoDropDatabases + `mongorestore --quiet --archive --drop "$@"`,
+		ready: serverIs("mongod") + `mongosh --quiet --nodb --eval '
+const r = new Mongo("mongodb://127.0.0.1:27017/?directConnection=true").getDB("admin").runCommand({ping: 1});
+if (!r.ok) quit(1);' </dev/null`,
 	},
 	"redis": {
 		ext:  "rdb",
 		dump: redisDump,
 	},
+}
+
+// serverIs returns a script line that fails unless PID 1 of the container
+// is the program binary, so that a server the image's entrypoint runs while
+// it initializes does not count as ready.
+func serverIs(binary string) string {
+	return `case "$(tr '\0' '\n' </proc/1/cmdline | head -n 1)" in ` + binary + `|*/` + binary + `) ;; *) exit 1 ;; esac
+`
 }
 
 // postgresRestore loads a pg_dumpall --clean dump and stops at the first

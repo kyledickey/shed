@@ -72,6 +72,11 @@ type fakeDocker struct {
 	// for images that declare a VOLUME.
 	imageVolume bool
 	anonymous   map[string]bool // anonymous volumes not yet removed
+	// isolated holds the IDs of containers made by CreateIsolated, by the
+	// container they copy.
+	isolated   map[string]string
+	removeErrs map[string]error // returned by Remove, by container name
+	readyErr   error            // returned by execs other than dumps and restores
 }
 
 // fakeFile is an entry of a named volume, by its path in the volume.
@@ -85,7 +90,7 @@ func newFakeDocker(rec *recorder) *fakeDocker {
 		rec: rec, containers: make(map[string]docker.Container), mounts: make(map[string][]docker.Mount),
 		anonymous: make(map[string]bool), volumes: make(map[string][]byte),
 		data: make(map[string]map[string]fakeFile), touched: make(map[string]bool),
-		lossy: make(map[string]bool),
+		lossy: make(map[string]bool), isolated: make(map[string]string), removeErrs: make(map[string]error),
 	}
 }
 
@@ -154,8 +159,20 @@ func (f *fakeDocker) Inspect(_ context.Context, id string) (docker.Container, er
 }
 
 func (f *fakeDocker) Exec(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	f.mu.Lock()
+	c, ok := f.containers[id]
+	f.mu.Unlock()
+	if !ok || !c.Running {
+		return fmt.Errorf("container %s is not running", id)
+	}
 	script := cmd[len(cmd)-1]
 	kind := "dump"
+	if stdin == nil && !strings.Contains(script, "dump") {
+		f.rec.add("exec %s run", id)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.readyErr
+	}
 	if stdin != nil {
 		kind = "restore"
 		b, err := io.ReadAll(stdin)
@@ -220,9 +237,43 @@ func (f *fakeDocker) Create(_ context.Context, spec docker.RunSpec) (string, err
 	return id, nil
 }
 
+// CreateIsolated copies the container id, with its mounts. The copy is
+// not running.
+func (f *fakeDocker) CreateIsolated(_ context.Context, id, name string, labels map[string]string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.containers[id]; !ok {
+		return "", fmt.Errorf("container %s: %w", id, cerrdefs.ErrNotFound)
+	}
+	f.next++
+	iso := fmt.Sprintf("isolated%d", f.next)
+	f.containers[iso] = docker.Container{ID: iso, Name: name, Labels: labels}
+	f.mounts[iso] = f.mounts[id]
+	f.isolated[id] = iso
+	f.rec.add("create isolated %s from %s", name, id)
+	return iso, nil
+}
+
+func (f *fakeDocker) Start(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.containers[id]
+	if !ok {
+		return fmt.Errorf("container %s: %w", id, cerrdefs.ErrNotFound)
+	}
+	c.Running = true
+	f.containers[id] = c
+	f.rec.add("start %s", id)
+	return nil
+}
+
 func (f *fakeDocker) Remove(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.removeErrs[f.containers[id].Name]; err != nil {
+		f.rec.add("remove %s failed", id)
+		return err
+	}
 	for _, v := range f.containers[id].Volumes {
 		delete(f.anonymous, v) // Like RemoveVolumes: named volumes stay.
 	}

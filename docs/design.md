@@ -658,8 +658,15 @@ manual steps below.
    as the base of a fresh multi-part AOF: a server with `appendonly yes`
    loads only the AOF and would otherwise start empty.
 5. postgres, mysql, and mongo `dump`: the active container must be running.
-   Stream the decoded dump into `psql` / `mysql` / `mongorestore --archive
-   --drop` with `docker exec`. psql runs with `ON_ERROR_STOP=1`. Before the
+   Create an isolated copy, `shed-restore-<restoreID>-db`, labeled only
+   `shed.backup=<restoreID>`, with the active container's image ID, command,
+   entrypoint, environment, volumes, and resource limits. It uses network mode
+   `none` (loopback only), no published ports, and restart policy `no`.
+   Fence the service in phase `loading`, stop and remove its containers, then
+   start the copy and wait up to 5 minutes for the database server to be PID 1
+   and accept connections. Stream the decoded dump into `psql` / `mysql` /
+   `mongorestore --archive --drop` in that copy with `docker exec`.
+   psql runs with `ON_ERROR_STOP=1`. Before the
    dump it disallows connections to every other database and terminates
    other sessions, because `DROP DATABASE` fails while an app is connected
    and the rest of the dump would then be mixed into the old data. The
@@ -674,15 +681,15 @@ manual steps below.
    with foreign key checks off, and the client stops at the first error;
    mongo drops run in `mongosh`, which reads the credentials from the
    environment. Objects in those kept databases and roles or users created
-   after the backup are kept. The service is fenced (phase `loading`) for the
-   load and the fence is lifted when it succeeds. If the load fails or is
-   canceled (shutdown), the database may hold part of the dump, and
-   canceling `docker exec` only aborts the stream: the command keeps
-   running in the container. So before the hold is released, the service's
-   containers are stopped and removed, which ends the load, and the service
-   is left stopped; the fence row is deleted and the error says to restore
-   a backup again or start the service to keep the data. If stopping fails,
-   the fence stays and the next boot stops the container.
+   after the backup are kept. The copy is stopped (2 minutes for clean shutdown)
+   and removed before the fence is lifted, so two servers never use the volumes
+   at once. If stopping the service or starting the copy fails before loading,
+   the copy is removed and the fence lifted; the data is unchanged and release
+   starts the service. If loading fails or is canceled, the copy is removed to
+   end the load, the fence row is deleted, and the service stays stopped with
+   potentially partial data. The error explains how to restore again or keep
+   that data. If the copy cannot be removed, the fence stays until boot recovery
+   can remove it.
 6. Release the hold. Unless the service is stopped, by the user or by a
    fence a failure left in place, the active deployment's container is
    started again (recreated if removed) and routes are applied. If that
@@ -703,9 +710,10 @@ restore fence is resolved: in phase `retaining` the volumes are unchanged,
 so the fence is lifted and the pre-restore volumes are removed; in phase
 `replacing` the pre-restore copies are put back and checked first. If that
 fails, the error is logged and the fence stays, so `Reconcile` leaves the
-service stopped and the next boot tries again. In phase `loading` the active
-container is stopped, since the load may still be running in it, and the
-fence row is deleted; the service stays stopped. A fenced service that is no
+service stopped and the next boot tries again. In phase `loading`, the restore's
+containers (`shed.backup=<restoreID>`, including its isolated database) must be
+removed and the active container stopped before the fence is deleted. The
+service stays stopped. Failure to remove a restore container keeps the fence. A fenced service that is no
 longer stopped (only a shed that did not enforce fences could start it) has
 its active container stopped and `stopped` set again; its fence, data, and
 pre-restore volumes are kept and the error is logged. Recovery never drops a
@@ -728,7 +736,7 @@ hold) refuse the service with `deploy.ErrFenced`, and a new restore into it
 with `backup.ErrFenced`; the API answers 409. Stopping and deleting the
 service still work. A push for a fenced service is stored pending and the webhook answers
 202. It deploys once the fence is cleared unless superseded meanwhile. The fence goes away only when its restore finishes, when boot
-recovery puts the previous data back (or, in phase `loading`, stops the
+recovery puts the previous data back (or, in phase `loading`, removes the isolated database and stops the
 container), or when the user clears it with
 `POST /api/services/{id}/restore-fence/clear`. Clearing deletes the row and
 nothing else: the service stays stopped with the data it has now, and the

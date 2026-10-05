@@ -65,12 +65,15 @@ type Store interface {
 	Snapshot(ctx context.Context, path string) error
 }
 
-// Docker runs dumps in containers and reads and writes volumes through
-// helper containers. *docker.Client implements it.
+// Docker runs dumps in containers, loads dumps into isolated copies of
+// them, and reads and writes volumes through helper containers.
+// *docker.Client implements it.
 type Docker interface {
 	Inspect(ctx context.Context, id string) (docker.Container, error)
 	Exec(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error
 	Create(ctx context.Context, spec docker.RunSpec) (string, error)
+	CreateIsolated(ctx context.Context, id, name string, labels map[string]string) (string, error)
+	Start(ctx context.Context, id string) error
 	Stop(ctx context.Context, id string, timeout time.Duration) error
 	Remove(ctx context.Context, id string) error
 	List(ctx context.Context, labels map[string]string) ([]docker.Container, error)
@@ -193,6 +196,9 @@ type Manager struct {
 	dir       string
 	log       *slog.Logger
 	now       func() time.Time
+	// readyTimeout is how long the isolated database that a dump is
+	// loaded into gets to accept connections.
+	readyTimeout time.Duration
 
 	mu      sync.Mutex
 	queue   []*job
@@ -221,17 +227,18 @@ func New(cfg Config) *Manager {
 		newRemote = func(S3Config) (Remote, error) { return nil, errors.New("S3 is not available") }
 	}
 	return &Manager{
-		store:      cfg.Store,
-		docker:     cfg.Docker,
-		services:   cfg.Services,
-		newRemote:  newRemote,
-		dir:        cfg.Dir,
-		log:        log,
-		now:        func() time.Time { return now().UTC().Truncate(time.Millisecond) },
-		wake:       make(chan struct{}, 1),
-		next:       make(map[string]scheduled),
-		paused:     make(map[string]int),
-		destroying: make(map[string]bool),
+		store:        cfg.Store,
+		docker:       cfg.Docker,
+		services:     cfg.Services,
+		newRemote:    newRemote,
+		dir:          cfg.Dir,
+		log:          log,
+		now:          func() time.Time { return now().UTC().Truncate(time.Millisecond) },
+		readyTimeout: 5 * time.Minute,
+		wake:         make(chan struct{}, 1),
+		next:         make(map[string]scheduled),
+		paused:       make(map[string]int),
+		destroying:   make(map[string]bool),
 	}
 }
 

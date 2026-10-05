@@ -58,7 +58,13 @@ A redis RDB is written to `/data/dump.rdb` and, as a hard link, to `/data/append
 
 ## Dump restores
 
-For postgres, mysql, and mongo `dump` backups, shed streams the decoded dump into the database's own client with `docker exec`. The container must be running; otherwise the restore fails with "the service is not running; start it to restore a database dump".
+For postgres, mysql, and mongo `dump` backups, shed loads the dump into an isolated copy of the database, so no app can read or write half-restored data. The service's container must be running; otherwise the restore fails with "the service is not running; start it to restore a database dump".
+
+1. shed creates `shed-restore-<restoreID>-db`, labeled `shed.backup=<restoreID>`, from the service's container: the same image, entrypoint, command, environment (so the same credentials), volumes, and resource limits. It has network mode `none`, so it has only loopback, no network alias, and no published ports, and its restart policy is `no`, so Docker never starts it on its own, not even after a reboot.
+2. The service is fenced in phase `loading`, and its containers are stopped and removed. Its private domain and published ports now lead nowhere.
+3. The copy is started on the service's volumes, and shed waits up to 5 minutes for the server to run as PID 1 and accept connections.
+4. The decoded dump is streamed into the database's own client in the copy with `docker exec`.
+5. The copy is stopped, with up to 2 minutes to shut down cleanly, and removed. Only then is the fence lifted, so the service's own container never runs on the volumes at the same time as the copy.
 
 A dump restore **replaces** databases, it doesn't merge into them. The dumps drop and recreate only what they contain, so shed first drops every other database. Databases created after the backup do not survive.
 
@@ -72,7 +78,11 @@ Postgres has two extra rules. The dump's `DROP ROLE` and `CREATE ROLE` for the c
 
 ### Failure and cancellation
 
-The service is fenced in phase `loading` while the dump loads, and the fence is lifted when it succeeds. If the load fails or is canceled by a shutdown, the database may hold part of the dump. Canceling `docker exec` only aborts the stream; the command keeps running inside the container. So before the hold is released, shed stops and removes the service's containers, which ends the load, and leaves the service stopped. The fence row is deleted, and the error tells you to restore a backup again, or to start the service to keep the data as it is. If stopping fails, the fence stays and the next boot stops the container.
+| What fails                                         | Result                                                                                                                                                                                                                                                   |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stopping the service, or the copy never gets ready | The data is unchanged. The copy is removed, the fence is lifted, and the service starts again.                                                                                                                                                           |
+| The load fails, or a shutdown cancels it           | The database may hold part of the dump. The copy is stopped and removed, which ends the load, the fence row is deleted, and the service stays stopped. The error tells you to restore a backup again, or to start the service to keep the data as it is. |
+| Removing the copy fails                            | The fence stays, so nothing can start the service while the copy may still run. The next boot removes the copy first.                                                                                                                                    |
 
 ## Restore fences
 
@@ -96,11 +106,11 @@ The fence goes away when its restore finishes, when boot recovery resolves it, o
 
 On boot, before the deployer reconciles, shed settles whatever a crash or shutdown interrupted. Backup rows first: `queued` and `running` backups and `running` restores become `failed` ("interrupted by restart"), and `uploading` backups are settled by what survives. Leftover `.partial` files and `shed.backup` helper containers are removed. Then each fence is resolved by its phase.
 
-| Fence phase | On the next boot                                                                                                                         | Service afterwards                                                                     |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `retaining` | Volumes are unchanged, so the fence is lifted and the pre-restore volumes are removed.                                                   | Starts as before the restore.                                                          |
-| `replacing` | The pre-restore copies are put back and checked first, then the fence is lifted. If that fails, the error is logged and the fence stays. | Starts on success. Stays stopped and fenced on failure, and the next boot tries again. |
-| `loading`   | The active container is stopped, because the load may still be running in it, and the fence row is deleted.                              | Stays stopped. Its data may hold part of the dump.                                     |
+| Fence phase | On the next boot                                                                                                                                                                                                       | Service afterwards                                                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `retaining` | Volumes are unchanged, so the fence is lifted and the pre-restore volumes are removed.                                                                                                                                 | Starts as before the restore.                                                          |
+| `replacing` | The pre-restore copies are put back and checked first, then the fence is lifted. If that fails, the error is logged and the fence stays.                                                                               | Starts on success. Stays stopped and fenced on failure, and the next boot tries again. |
+| `loading`   | The isolated copy is removed, because the load may still be running in it, and the active container is stopped. Then the fence row is deleted. If the copy cannot be removed, the error is logged and the fence stays. | Stays stopped. Its data may hold part of the dump.                                     |
 
 One more case: a fenced service that is no longer stopped (only a shed that did not enforce fences could have started it). Its data may have changed since, so its active container is stopped and `stopped` is set again, but its fence, data, and pre-restore volumes are kept and the error is logged. Recovery never drops a fence because the service looks started.
 

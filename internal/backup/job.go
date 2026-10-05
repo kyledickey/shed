@@ -619,42 +619,124 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 		if !running {
 			return errors.New("the service is not running; start it to restore a database dump")
 		}
-		return m.loadDump(ctx, held, sv.ID, r.ID, func() error {
+		return m.loadDump(ctx, held, sv.ID, r.ID, d.ContainerID, sv.Kind, eng, func(cid string) error {
 			return readArchive(path, identity, func(data io.Reader) error {
-				return execScript(ctx, m.docker, d.ContainerID, sv.Kind+" restore", eng.restore, data, io.Discard)
+				return execScript(ctx, m.docker, cid, sv.Kind+" restore", eng.restore, data, io.Discard)
 			})
 		})
 	}
 	return fmt.Errorf("cannot restore a %s backup", b.Method)
 }
 
-// loadDump runs load, which loads a dump into the held service's running
-// database, with the service fenced. If the load fails or is canceled, the
-// database may hold partial data, and a canceled load may still be running
-// in the container, so the service's containers are stopped and removed and
-// the service is left stopped. If they cannot be stopped, the fence stays,
-// and Recover stops them when shed starts again.
-func (m *Manager) loadDump(ctx context.Context, held Held, serviceID, restoreID string, load func() error) error {
+// readyInterval is how often shed checks whether the isolated database
+// that a dump is loaded into is ready.
+const readyInterval = 500 * time.Millisecond
+
+// isolatedStopTimeout is how long the isolated database gets to shut down
+// cleanly after a load before it is killed.
+const isolatedStopTimeout = 2 * time.Minute
+
+// loadDump loads a dump into the held service's database where nothing but
+// the load can reach it. It creates an isolated copy of the database's
+// container cid: the same image, environment, and volumes, but no network,
+// no published ports, and no restart policy, labeled as a helper of the
+// restore. It then fences the service, stops and removes its containers,
+// starts the copy, waits until the database is ready, and runs load with
+// the copy's ID. The copy is stopped and removed before the fence is lifted,
+// so two database servers never use the volumes at once.
+//
+// If something fails before the load starts, the data is unchanged and the
+// fence is lifted, so the release of the hold starts the service again. If
+// the load fails or is canceled, the database may hold partial data: the
+// fence is deleted but the service is left stopped. If the copy cannot be
+// removed, the fence stays, and Recover removes the copy when shed starts
+// again.
+func (m *Manager) loadDump(ctx context.Context, held Held, serviceID, restoreID, cid, kind string, eng engine, load func(cid string) error) error {
+	iso, err := m.docker.CreateIsolated(ctx, cid, "shed-restore-"+restoreID+"-db", map[string]string{helperLabel: restoreID})
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
 	if _, err := m.store.CreateRestoreFence(ctx, store.RestoreFence{
 		ServiceID: serviceID, RestoreID: restoreID, Phase: store.RestoreLoading,
 	}); err != nil {
+		m.removeHelper(context.WithoutCancel(ctx), iso)
 		return fmt.Errorf("backup: %w", err)
 	}
-	err := load()
+	if err := held.StopAndRemove(ctx); err != nil {
+		// The copy never started.
+		m.removeHelper(context.WithoutCancel(ctx), iso)
+		return m.unfence(ctx, serviceID, nil, fmt.Errorf("backup: stop service: %w", err))
+	}
+	loading := false
+	err = m.startIsolated(ctx, iso, kind, eng)
 	if err == nil {
+		loading = true
+		err = load(iso)
+	}
+	if rerr := m.removeIsolated(context.WithoutCancel(ctx), iso); rerr != nil {
+		m.log.Error("restore: remove the isolated database", "restore", restoreID, "service", serviceID, "err", rerr)
+		const kept = "so the service is left stopped and fenced until shed starts again and removes it"
+		if err != nil {
+			return fmt.Errorf("%w; removing the isolated database failed too (%v), "+kept, err, rerr)
+		}
+		return fmt.Errorf("the dump was loaded, but removing the isolated database failed (%w), "+kept, rerr)
+	}
+	switch {
+	case err == nil:
 		return m.unfence(ctx, serviceID, nil, nil)
+	case !loading:
+		return m.unfence(ctx, serviceID, nil, fmt.Errorf("%w; the data is unchanged", err))
 	}
-	ctx = context.WithoutCancel(ctx)
-	if serr := held.StopAndRemove(ctx); serr != nil {
-		m.log.Error("restore: stop database after a failed load", "restore", restoreID, "service", serviceID, "err", serr)
-		return fmt.Errorf("%w; stopping the database failed too (%v), so the load may still be running; "+
-			"the service is left stopped, and shed stops it when it starts again", err, serr)
-	}
-	if derr := m.store.DeleteRestoreFence(ctx, serviceID); derr != nil {
+	if derr := m.store.DeleteRestoreFence(context.WithoutCancel(ctx), serviceID); derr != nil {
 		m.log.Error("backup: delete restore fence", "service", serviceID, "err", derr)
 	}
-	return fmt.Errorf("%w; the database may hold partial data, so the service was stopped: "+
+	return fmt.Errorf("%w; the database may hold partial data, so the service was left stopped: "+
 		"restore a backup, such as the pre-restore one, or start the service to keep the data as it is", err)
+}
+
+// startIsolated starts the isolated database iso of kind and waits until
+// it accepts connections.
+func (m *Manager) startIsolated(ctx context.Context, iso, kind string, eng engine) error {
+	if err := m.docker.Start(ctx, iso); err != nil {
+		return fmt.Errorf("backup: start the isolated database: %w", err)
+	}
+	deadline := time.Now().Add(m.readyTimeout)
+	for {
+		err := execScript(ctx, m.docker, iso, kind+" ready", eng.ready, nil, io.Discard)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		c, ierr := m.docker.Inspect(ctx, iso)
+		if ierr != nil {
+			return fmt.Errorf("backup: %w", ierr)
+		}
+		if !c.Running {
+			return fmt.Errorf("backup: the isolated database exited with status %d", c.ExitCode)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("backup: the isolated database was not ready after %v: %w", m.readyTimeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(readyInterval):
+		}
+	}
+}
+
+// removeIsolated stops the isolated database iso, giving it time to shut
+// down cleanly, and removes it.
+func (m *Manager) removeIsolated(ctx context.Context, iso string) error {
+	if err := m.docker.Stop(ctx, iso, isolatedStopTimeout); err != nil && !docker.IsNotFound(err) {
+		return fmt.Errorf("backup: %w", err)
+	}
+	if err := m.docker.Remove(ctx, iso); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	return nil
 }
 
 // redisFiles writes a tar, to extract at "/", of the redis files that
