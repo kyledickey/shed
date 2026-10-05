@@ -328,6 +328,7 @@ func TestIntegrationPostgres(t *testing.T) {
 	psql("app", `UPDATE t SET v = 'changed'; CREATE TABLE extra (x int)`)
 	psql("postgres", `DROP DATABASE other`)
 	psql("postgres", `DROP ROLE reader`)
+	psql("postgres", `CREATE DATABASE newer`)
 
 	// An app connected to the database must not keep it from being dropped
 	// and recreated.
@@ -349,6 +350,9 @@ func TestIntegrationPostgres(t *testing.T) {
 	}
 	if got := psql("postgres", `SELECT count(*) FROM pg_roles WHERE rolname = 'reader'`); got != "1" {
 		t.Errorf("role reader not restored")
+	}
+	if got := psql("postgres", `SELECT count(*) FROM pg_database WHERE datname = 'newer'`); got != "0" {
+		t.Errorf("database created after the backup survived the restore")
 	}
 	checkPreRestore(t, e, s)
 }
@@ -378,12 +382,19 @@ func TestIntegrationMySQL(t *testing.T) {
 	b := e.backUp(s)
 	checkMethod(t, b, store.MethodDump, ".sql")
 
-	mysql(`UPDATE t SET v = 'changed'; INSERT INTO t VALUES ('extra')`)
+	mysql("UPDATE t SET v = 'changed'; INSERT INTO t VALUES ('extra'); CREATE TABLE extra (x int); " +
+		"CREATE DATABASE newer; CREATE TABLE newer.n (x int)")
 
 	e.restore(b)
 	e.waitReady(s, "mysqld", ping)
 	if got := mysql(`SELECT group_concat(v) FROM t`); got != "original" {
 		t.Errorf("t = %q, want original", got)
+	}
+	if got := mysql(`SELECT count(*) FROM information_schema.tables WHERE table_name IN ('extra', 'n')`); got != "0" {
+		t.Errorf("%s tables created after the backup survived the restore", got)
+	}
+	if got := mysql(`SELECT count(*) FROM information_schema.schemata WHERE schema_name = 'newer'`); got != "0" {
+		t.Errorf("database created after the backup survived the restore")
 	}
 	checkPreRestore(t, e, s)
 }
@@ -401,13 +412,20 @@ func TestIntegrationMongo(t *testing.T) {
 	b := e.backUp(s)
 	checkMethod(t, b, store.MethodDump, ".archive")
 
-	mongosh(`const t = db.getSiblingDB("app").t; t.updateOne({}, {$set: {v: "changed"}}); t.insertOne({v: "extra"})`)
+	mongosh(`const t = db.getSiblingDB("app").t; t.updateOne({}, {$set: {v: "changed"}}); t.insertOne({v: "extra"});
+		db.getSiblingDB("app").extra.insertOne({x: 1}); db.getSiblingDB("newer").n.insertOne({x: 1})`)
 
 	e.restore(b)
 	e.waitReady(s, "mongod", ping)
 	got := mongosh(`db.getSiblingDB("app").t.find().toArray().map(d => d.v).join(",")`)
 	if got != "original" {
 		t.Errorf("t = %q, want original", got)
+	}
+	if got := mongosh(`db.getSiblingDB("app").getCollectionNames().join(",")`); got != "t" {
+		t.Errorf("collections of app = %q, want only t", got)
+	}
+	if got := mongosh(`db.adminCommand({listDatabases: 1, nameOnly: true}).databases.map(d => d.name).filter(n => n == "newer").length`); got != "0" {
+		t.Errorf("database created after the backup survived the restore")
 	}
 	checkPreRestore(t, e, s)
 }

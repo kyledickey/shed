@@ -50,13 +50,12 @@ exec pg_dumpall --clean --if-exists -U "${POSTGRES_USER:-postgres}"`,
 		ext: "sql",
 		dump: `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
 exec mysqldump -uroot --all-databases --single-transaction --routines --events --triggers --set-gtid-purged=OFF`,
-		restore: `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
-exec mysql -uroot --init-command="SET SESSION lock_wait_timeout=300"`,
+		restore: mysqlRestore,
 	},
 	"mongo": {
 		ext:     "archive",
 		dump:    mongoAuth + `mongodump --quiet --archive "$@"`,
-		restore: mongoAuth + `mongorestore --quiet --archive --drop "$@"`,
+		restore: mongoAuth + mongoDropDatabases + `mongorestore --quiet --archive --drop "$@"`,
 	},
 	"redis": {
 		ext:  "rdb",
@@ -68,8 +67,10 @@ exec mysql -uroot --init-command="SET SESSION lock_wait_timeout=300"`,
 // error. DROP DATABASE fails while other sessions use a database, and the
 // statements after it would then mix the dump into the old data, so other
 // sessions are terminated and new ones refused until the load is over. The
-// dump's DROP ROLE and CREATE ROLE of the connected user always fail and
-// are left out.
+// dump drops and recreates only the databases it contains, so every
+// database but postgres and the templates is dropped first: databases
+// created after the backup do not survive the restore. The dump's DROP ROLE
+// and CREATE ROLE of the connected user always fail and are left out.
 const postgresRestore = `export PGPASSWORD="$POSTGRES_PASSWORD"
 u="${POSTGRES_USER:-postgres}"
 run() { psql -X -q -v ON_ERROR_STOP=1 -U "$u" -d postgres -o /dev/null "$@"; }
@@ -79,6 +80,8 @@ SELECT format('ALTER DATABASE %I ALLOW_CONNECTIONS false', datname)
 	FROM pg_database WHERE datallowconn AND datname NOT IN ('template0', current_database()) \gexec
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 	WHERE pid <> pg_backend_pid() AND datname IS NOT NULL;
+SELECT format('DROP DATABASE %I WITH (FORCE)', datname)
+	FROM pg_database WHERE datname NOT IN ('postgres', 'template0', 'template1') \gexec
 SQL
 	awk -v u="$u" 'BEGIN { q = "\"" u "\"" }
 		/^\\connect / { body = 1 }
@@ -92,6 +95,37 @@ SELECT format('ALTER DATABASE %I ALLOW_CONNECTIONS true', datname)
 	FROM pg_database WHERE NOT datallowconn AND datname <> 'template0' \gexec
 SQL
 exit $status`
+
+// mysqlRestore loads a mysqldump --all-databases dump and stops at the first
+// error. The dump creates its databases only if they do not exist and drops
+// only the tables it contains, so every database but the system ones is
+// dropped first: databases and tables created after the backup do not
+// survive the restore. sys is kept, since mysqldump leaves it out.
+const mysqlRestore = `export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+drops=$(mysql -uroot -N -B -r -e "SELECT CONCAT('DROP DATABASE ', CHAR(96 USING utf8mb4),
+	REPLACE(schema_name, CHAR(96 USING utf8mb4), REPEAT(CHAR(96 USING utf8mb4), 2)), CHAR(96 USING utf8mb4), ';')
+	FROM information_schema.schemata
+	WHERE schema_name NOT IN ('mysql', 'information_schema', 'performance_schema', 'sys')" </dev/null) || exit 1
+{ printf 'SET FOREIGN_KEY_CHECKS=0;\n%s\n' "$drops"; cat; } |
+	mysql -uroot --init-command="SET SESSION lock_wait_timeout=300"`
+
+// mongoDropDatabases drops every database but admin, config, and local before
+// mongorestore, whose --drop drops only the collections in the archive:
+// databases and collections created after the backup do not survive the
+// restore. The shell reads the credentials from the environment, so they
+// never appear on a command line.
+const mongoDropDatabases = `mongosh --quiet --nodb --eval '
+const m = new Mongo("mongodb://127.0.0.1:27017/?directConnection=true");
+const admin = m.getDB("admin");
+const user = process.env.MONGO_INITDB_ROOT_USERNAME;
+if (user) admin.auth(user, process.env.MONGO_INITDB_ROOT_PASSWORD);
+for (const d of admin.adminCommand({listDatabases: 1, nameOnly: true}).databases) {
+	if (!["admin", "config", "local"].includes(d.name)) {
+		const res = m.getDB(d.name).dropDatabase();
+		if (!res.ok) throw new Error("drop " + d.name + ": " + JSON.stringify(res));
+	}
+}' </dev/null
+`
 
 // mongoAuth sets the positional parameters to the root credentials of the
 // container, passing the password through a private config file.

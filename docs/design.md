@@ -568,7 +568,16 @@ manual steps below.
    and the rest of the dump would then be mixed into the old data. The
    dump's `DROP ROLE` and `CREATE ROLE` of the connected user, which always
    fail, are filtered out. Connections are allowed again afterwards, also
-   when the load fails. The service is fenced (phase `loading`) for the
+   when the load fails. A restore replaces the databases rather than
+   merging the dump into them: the dumps drop and recreate only what they
+   contain, so first every database is dropped except postgres's `postgres`
+   and templates (`DROP DATABASE … WITH (FORCE)`, postgres 13 or newer),
+   mysql's `mysql`, `sys`, and schema views, and mongo's `admin`, `config`,
+   and `local`. mysql drops run in the `mysql` session that loads the dump,
+   with foreign key checks off, and the client stops at the first error;
+   mongo drops run in `mongosh`, which reads the credentials from the
+   environment. Objects in those kept databases and roles or users created
+   after the backup are kept. The service is fenced (phase `loading`) for the
    load and the fence is lifted when it succeeds. If the load fails or is
    canceled (shutdown), the database may hold part of the dump, and
    canceling `docker exec` only aborts the stream: the command keeps
