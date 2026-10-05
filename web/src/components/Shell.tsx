@@ -34,14 +34,17 @@ export function Shell({ brand, nav, actions, footer, children }: ShellProps) {
   );
 }
 
-/** Logo is the shed mark: a barn-door shed on an accent tile. */
+/** Logo is the shed mark: a gable shed sticker on an accent tile. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" className={styles.logo} aria-label="shed">
-      <rect x="1" y="1" width="30" height="30" rx="9" className={styles.logoTile} />
-      <path d="M6.5 14.5 16 8.5l9.5 6v10h-19z" className={styles.logoShed} />
-      <path d="M11.5 24.5v-8h9v8" className={styles.logoDoor} />
-      <path d="M11.5 16.5l9 8m0-8-9 8" className={styles.logoBrace} />
+    <svg width={size} height={size} viewBox="0 0 64 64" className={styles.logo} aria-label="shed">
+      <rect width="64" height="64" rx="16" className={styles.logoTile} />
+      <g transform="matrix(1.08 0 0 1.08 -4.06 -4.06)">
+        <path d="M19 34 35 20 51 34V51H19Z" className={styles.logoInk} />
+        <path d="M16 31 32 17 48 31V48H16Z" className={styles.logoInk} />
+        <path d="M16 31 32 17 48 31V48H16Z" className={styles.logoShed} />
+        <path d="M27 36h10v12H27z" className={styles.logoDoor} />
+      </g>
     </svg>
   );
 }

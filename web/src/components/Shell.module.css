@@ -97,20 +97,23 @@
   fill: var(--accent-strong);
 }
 
+/* The sticker keeps fixed ink and cream in both themes, like the favicon. */
+.logoInk {
+  fill: oklch(0.17 0.04 var(--accent-h));
+  stroke: oklch(0.17 0.04 var(--accent-h));
+  stroke-width: 13;
+  stroke-linejoin: round;
+}
+
 .logoShed {
-  fill: var(--on-accent);
-  stroke: var(--on-accent);
-  stroke-width: 1.5;
+  fill: oklch(0.965 0.01 95);
+  stroke: oklch(0.965 0.01 95);
+  stroke-width: 4;
   stroke-linejoin: round;
 }
 
 .logoDoor {
-  fill: var(--accent-strong);
-}
-
-.logoBrace {
-  stroke: var(--on-accent);
-  stroke-width: 1.6;
+  fill: oklch(0.17 0.04 var(--accent-h));
 }
 
 .crumbs {
