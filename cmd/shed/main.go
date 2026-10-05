@@ -132,6 +132,7 @@ func run() error {
 			Email:      cfg.Proxy.ACMEEmail,
 			StorageDir: filepath.Join(dataDir, "caddy"),
 			LogFile:    filepath.Join(filepath.Dir(*configPath), "caddy.log"),
+			Cloudflare: cfg.Proxy.Cloudflare,
 		})
 		defer func() {
 			if err := px.Stop(); err != nil {

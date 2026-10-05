@@ -65,6 +65,7 @@ http_port   = 80
 https_port  = 443
 acme_email  = ""
 base_domain = ""                   # e.g. "apps.example.com" → generated domains
+cloudflare  = false                # trust Cloudflare's edge ranges for the client IP
 
 [auth]
 allowed_users = []                 # Explicit GitHub logins; configure before first sign-in
@@ -801,6 +802,10 @@ Embedded Caddy (`caddy.Load` with a generated JSON config). Routes:
   and a container recreated for the active deployment, keep the old port.
 Automatic HTTPS with `acme_email`. Generated domains are
 `<service>-<project>.<base_domain>` (requires wildcard DNS).
+With `proxy.cloudflare`, the server trusts Cloudflare's published edge ranges
+(a static list in `internal/proxy`) as proxies and reads the client IP from
+`CF-Connecting-IP`; requests from other addresses use the peer address.
+Upstreams then get `X-Forwarded-For` set to that one client IP.
 
 ## GitHub
 

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"net/netip"
 	"reflect"
 	"testing"
 )
@@ -159,6 +160,38 @@ func TestBuildConfigOptions(t *testing.T) {
 			t.Errorf("log filename = %v", f)
 		}
 	})
+	t.Run("cloudflare", func(t *testing.T) {
+		for _, on := range []bool{false, true} {
+			cfg := baseCfg
+			cfg.Cloudflare = on
+			got, _ := buildConfig(cfg, []Route{{"app.example.com", "1:1"}})
+			srv := at(t, decode(t, got), "apps", "http", "servers", "shed").(obj)
+			_, set := at(t, srv, "routes", 0, "handle", 0).(obj)["headers"]
+			if set != on {
+				t.Errorf("Cloudflare = %v: reverse_proxy headers set = %v", on, set)
+			}
+			_, trusted := srv["trusted_proxies"]
+			_, headers := srv["client_ip_headers"]
+			if trusted != on || headers != on {
+				t.Errorf("Cloudflare = %v: trusted_proxies set = %v, client_ip_headers set = %v", on, trusted, headers)
+			}
+			if !on {
+				continue
+			}
+			if s := at(t, srv, "trusted_proxies", "source"); s != "static" {
+				t.Errorf("trusted_proxies source = %v", s)
+			}
+			if n := len(at(t, srv, "trusted_proxies", "ranges").([]any)); n != len(cloudflareRanges) {
+				t.Errorf("len(ranges) = %d, want %d", n, len(cloudflareRanges))
+			}
+			if h := at(t, srv, "client_ip_headers", 0); h != "CF-Connecting-IP" {
+				t.Errorf("client_ip_headers = %v", h)
+			}
+			if v := at(t, srv, "routes", 0, "handle", 0, "headers", "request", "set", "X-Forwarded-For", 0); v != "{http.vars.client_ip}" {
+				t.Errorf("X-Forwarded-For = %v", v)
+			}
+		}
+	})
 	t.Run("custom ports", func(t *testing.T) {
 		got, _ := buildConfig(Config{HTTPPort: 8080, HTTPSPort: 8443}, nil)
 		conf := decode(t, got)
@@ -169,6 +202,14 @@ func TestBuildConfigOptions(t *testing.T) {
 			t.Errorf("https_port = %v", p)
 		}
 	})
+}
+
+func TestCloudflareRangesParse(t *testing.T) {
+	for _, r := range cloudflareRanges {
+		if _, err := netip.ParsePrefix(r); err != nil {
+			t.Errorf("ParsePrefix(%q): %v", r, err)
+		}
+	}
 }
 
 func TestBuildConfigTLSPolicies(t *testing.T) {

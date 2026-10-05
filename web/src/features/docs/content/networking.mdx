@@ -55,6 +55,16 @@ The first domain you add is exposed to the service as `SHED_PUBLIC_DOMAIN`. shed
 
 The dashboard hostname is reserved because a service route and the dashboard route would otherwise compete for the same `Host`. shed also refuses to load a config with duplicate hosts, so the dashboard route can never be replaced by a workload. A service with domains but no port is not routed: the build log says `No port, so its domains are not routed`.
 
+## Cloudflare
+
+A custom domain can sit behind Cloudflare's proxy (the orange cloud on its DNS record). Set the zone's SSL/TLS mode to **Full (strict)**: Caddy still holds its own certificate, and in Flexible mode Cloudflare connects over plain HTTP, which Caddy redirects to HTTPS in a loop. Caddy keeps renewing through the HTTP challenge, which Cloudflare passes through.
+
+Behind the proxy every request arrives from a Cloudflare address. Set `proxy.cloudflare = true` and Caddy trusts Cloudflare's edge ranges: for requests from those addresses it takes the client IP from `CF-Connecting-IP` and keeps Cloudflare's `X-Forwarded-Proto` and `X-Forwarded-Host`. Requests from anywhere else, such as domains left unproxied or someone connecting to the server's IP directly, use the connection's address, and their forwarding headers are ignored, so they cannot spoof a client IP. Either way, services receive `X-Forwarded-For` holding exactly one address: the visitor's. Proxied and unproxied domains can be mixed freely.
+
+The ranges are built into shed, from [cloudflare.com/ips](https://www.cloudflare.com/ips/).
+
+Some limits come from Cloudflare, not shed. The free plan's Universal SSL certificate covers the zone apex and one level of subdomain, so generated domains under a nested `base_domain` like `*.apps.example.com` can't be proxied without an advanced certificate. Proxied requests time out after 100 seconds and request bodies are capped at 100 MB on the free plan. The server's IP is still public through any unproxied record.
+
 ## Generated domains
 
 If `proxy.base_domain` is set, adding a domain without a hostname generates one: `<service>-<project>.<base_domain>`. The project part is its name reduced to ASCII letters and digits, with each run of anything else becoming one hyphen. The label is cut at 63 characters, and the name is computed once, when you create it. Renaming the project later does not change it.

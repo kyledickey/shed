@@ -15,6 +15,8 @@ https_port = 443
 acme_email = "you@example.com"
 # Services get <service>-<project>.<base_domain>. Needs a wildcard DNS record.
 base_domain = "apps.example.com"
+# Trust Cloudflare's edge for the client IP, for domains proxied through it.
+cloudflare = false
 
 [auth]
 # Add your GitHub login before signing in for the first time.

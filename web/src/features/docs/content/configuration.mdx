@@ -64,6 +64,7 @@ http_port   = 80
 https_port  = 443
 acme_email  = ""                    # contact address for certificate issuance
 base_domain = ""                    # e.g. "apps.example.com" -> <service>-<project>.apps.example.com
+cloudflare  = false                 # trust Cloudflare's edge for the client IP; see Networking
 
 [auth]
 allowed_users = []                  # GitHub logins. Empty denies everyone.
