@@ -182,6 +182,8 @@ type fixture struct {
 	deployer *fakeDeployer
 	backups  *fakeBackups
 	metrics  *fakeMetrics
+	updates  *fakeUpdates
+	restarts int
 	github   *GitHubHolder
 	server   *Server
 	handler  http.Handler
@@ -199,13 +201,15 @@ func newFixture(t *testing.T) *fixture {
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, github: gh}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
 	srv, err := New(context.Background(), Config{
 		Store:      st,
 		Deployer:   f.deployer,
 		Backups:    f.backups,
 		Metrics:    f.metrics,
 		Logs:       fakeLogs{},
+		Updates:    f.updates,
+		Restart:    func() { f.restarts++ },
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    "http://localhost",

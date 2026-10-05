@@ -5,6 +5,7 @@ import { Page, Stack } from "../../components/Layout";
 import { PageHeader } from "../../components/Shell";
 import { EncryptionCard } from "../../features/backups/EncryptionCard";
 import { S3Card } from "../../features/backups/S3Card";
+import { UpdatesCard } from "../../features/settings/UpdatesCard";
 
 export const Route = createFileRoute("/_app/settings")({
   loader: ({ context: { queryClient } }) => queryClient.ensureQueryData(backupSettingsQuery),
@@ -17,9 +18,10 @@ function SettingsPage() {
     <Page>
       <PageHeader
         title="Settings"
-        description="Backup storage and encryption for this shed instance."
+        description="Updates, backup storage, and encryption for this shed instance."
       />
       <Stack gap={4}>
+        <UpdatesCard />
         <S3Card settings={settings} />
         <EncryptionCard settings={settings} />
       </Stack>

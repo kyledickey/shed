@@ -22,7 +22,28 @@ See [docs/design.md](docs/design.md) for how it works.
 ## Install
 
 ```sh
-make build                                   # needs Go and Node.js
+curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh | sudo bash
+```
+
+The installer adds whatever is missing (Docker with buildx, `git`, `railpack`),
+asks for the dashboard domain, an optional apps base domain and ACME email, and
+the GitHub logins allowed to sign in, then installs the latest release,
+writes `/etc/shed/shed.toml`, starts the systemd service, and prints the setup
+URL and token. Run it again on an installed host to upgrade the binary and keep
+the config.
+
+To run it unattended, pass the answers as environment variables
+(`SHED_BASE_DOMAIN`, `SHED_ACME_EMAIL`, and `SHED_VERSION` are optional):
+
+```sh
+curl -fsSL https://github.com/kyledickey/shed/releases/latest/download/install.sh \
+  | sudo SHED_DOMAIN=shed.example.com SHED_ALLOWED_USERS=your-github-login SHED_YES=1 bash
+```
+
+### Manual install
+
+```sh
+make build                                   # needs Go and Bun
 sudo install bin/shed /usr/local/bin/shed
 sudo mkdir -p /etc/shed
 sudo cp deploy/shed.example.toml /etc/shed/shed.toml   # then edit it
@@ -47,8 +68,9 @@ journal.
 
 ## First run
 
-1. On first start, shed logs a one-time **setup token**
-   (`journalctl -u shed | grep token`).
+1. On first start, shed logs a one-time **setup token**. The installer prints
+   it with the setup URL; otherwise find it with
+   `journalctl -u shed | grep token`.
 2. Open the dashboard, enter the token, and follow the link to create the
    GitHub App. GitHub sends you back to shed, which stores the App's
    credentials.

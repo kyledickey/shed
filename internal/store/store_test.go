@@ -61,6 +61,26 @@ func TestOpenReopenKeepsData(t *testing.T) {
 	}
 }
 
+func TestOpenRefusesNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shed.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A newer shed has migrated the database further than this one knows.
+	if _, err := s.db.Exec("PRAGMA user_version = 100000"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	if s, err := Open(path); err == nil {
+		s.Close()
+		t.Fatal("Open() succeeded on a database from a newer shed")
+	} else if !strings.Contains(err.Error(), "newer than this shed supports") {
+		t.Errorf("Open() error = %v", err)
+	}
+}
+
 func TestNewID(t *testing.T) {
 	id := NewID()
 	if len(id) != 12 || id != strings.ToLower(id) {

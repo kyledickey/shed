@@ -15,7 +15,8 @@ var migrationFS embed.FS
 
 // migrate applies, in order, every embedded migration newer than the
 // database's PRAGMA user_version. Migration files are named NNN_name.sql, and
-// each runs in its own transaction.
+// each runs in its own transaction. A database migrated past the newest
+// embedded migration, by a newer shed, is refused.
 func migrate(ctx context.Context, db *sql.DB) error {
 	var current int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
@@ -24,6 +25,16 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	files, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
 		return fmt.Errorf("store: list migrations: %w", err)
+	}
+	if len(files) > 0 {
+		latest, err := migrationVersion(files[len(files)-1])
+		if err != nil {
+			return err
+		}
+		if current > latest {
+			return fmt.Errorf("store: database schema version %d is newer than this shed supports (%d); "+
+				"run a newer shed, or restore a backup of shed.db from before the upgrade", current, latest)
+		}
 	}
 	for _, file := range files { // Glob returns sorted names.
 		version, err := migrationVersion(file)

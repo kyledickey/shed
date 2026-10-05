@@ -71,8 +71,12 @@ type Config struct {
 	Backups  Backups
 	Metrics  Metrics
 	// Logs is shed's own log, streamed to the dashboard.
-	Logs Logs
-	Auth *auth.Auth
+	Logs    Logs
+	Updates Updates
+	// Restart shuts shed down gracefully and starts it again. The API calls
+	// it after installing an update.
+	Restart func()
+	Auth    *auth.Auth
 	// GitHub holds the GitHub client. New fills it from the stored App
 	// credentials, and the setup flow fills it once the App is created.
 	GitHub *GitHubHolder
@@ -95,6 +99,8 @@ type Server struct {
 	backups    Backups
 	metrics    Metrics
 	logs       Logs
+	updates    Updates
+	restart    func()
 	auth       *auth.Auth
 	github     *GitHubHolder
 	baseURL    string
@@ -125,6 +131,8 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		backups:    cfg.Backups,
 		metrics:    cfg.Metrics,
 		logs:       cfg.Logs,
+		updates:    cfg.Updates,
+		restart:    cfg.Restart,
 		auth:       cfg.Auth,
 		github:     cfg.GitHub,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
@@ -208,6 +216,12 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/backups/{id}/download", s.downloadBackup)
 	authed("POST /api/backups/{id}/restore", s.restoreBackup)
 	authed("DELETE /api/backups/{id}", s.deleteBackup)
+
+	authed("GET /api/update", s.getUpdate)
+	authed("POST /api/update/check", s.checkUpdate)
+	authed("POST /api/update/download", s.downloadUpdate)
+	authed("PUT /api/update/settings", s.putUpdateSettings)
+	authed("POST /api/update/install", s.installUpdate)
 
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)

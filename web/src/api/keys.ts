@@ -11,6 +11,7 @@ export const keys = {
   serviceBackups: (serviceId: string) => ["services", serviceId, "backups"] as const,
   systemBackups: ["backups", "system"] as const,
   backupSettings: ["backups", "settings"] as const,
+  update: ["update"] as const,
   repos: ["github", "repos"] as const,
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
 };

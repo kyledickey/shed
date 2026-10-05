@@ -3,6 +3,7 @@ import {
   ChartArea,
   Command as CommandIcon,
   Database,
+  Download,
   Layers,
   Monitor,
   Moon,
@@ -31,6 +32,7 @@ import { Logs } from "./sections/Logs";
 import { Metrics } from "./sections/Metrics";
 import { Overlays } from "./sections/Overlays";
 import { Surfaces } from "./sections/Surfaces";
+import { Updates } from "./sections/Updates";
 import s from "./showcase.module.css";
 import { useTweaks, type Accent } from "./tweaks";
 
@@ -42,6 +44,7 @@ export const showcaseTabs = [
   "logs",
   "metrics",
   "overlays",
+  "updates",
 ] as const;
 export type ShowcaseTab = (typeof showcaseTabs)[number];
 
@@ -90,6 +93,12 @@ const tabMeta: Record<
     icon: <Sparkles size={15} />,
     title: "Overlays",
     blurb: "Dialogs, menus, tooltips, toasts and the command palette.",
+  },
+  updates: {
+    label: "Updates",
+    icon: <Download size={15} />,
+    title: "Updates",
+    blurb: "The Settings update card in each state, and the restart screen.",
   },
 };
 
@@ -204,6 +213,7 @@ export function Showcase({ tab, onTab }: { tab: ShowcaseTab; onTab: (tab: Showca
         {tab === "logs" && <Logs />}
         {tab === "metrics" && <Metrics />}
         {tab === "overlays" && <Overlays onCommand={() => setPalette(true)} />}
+        {tab === "updates" && <Updates />}
       </div>
       <TweaksPanel theme={theme} onTheme={setTheme} />
       <CommandPalette open={palette} onOpenChange={setPalette} commands={commands} />

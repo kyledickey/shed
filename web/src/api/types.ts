@@ -255,3 +255,34 @@ export type BackupSettingsInput = {
 
 export const isBackupActive = (b: Pick<Backup, "status">): boolean =>
   b.status === "queued" || b.status === "running" || b.status === "uploading";
+
+export type Release = {
+  /** The tag, e.g. "v1.4.0". */
+  version: string;
+  /** The GitHub release page. */
+  url: string;
+  /** The release body, Markdown. */
+  notes: string;
+  publishedAt: string;
+};
+
+export type UpdateState = "idle" | "checking" | "downloading" | "restarting";
+
+export type UpdateStatus = {
+  /** The running version, e.g. "v1.3.2" or "dev". */
+  current: string;
+  /** Null until a check succeeds. */
+  latest: Release | null;
+  /** Whether latest is newer than current. */
+  available: boolean;
+  /** The last successful check. */
+  checkedAt: string | null;
+  state: UpdateState;
+  /** The verified version ready to install, "" if none. */
+  staged: string;
+  /** The last check or download failure, "" if none. */
+  error: string;
+  autoDownload: boolean;
+  /** Why this build cannot update itself, "" if it can. */
+  unsupported: string;
+};

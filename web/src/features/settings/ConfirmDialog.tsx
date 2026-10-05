@@ -9,6 +9,8 @@ type ConfirmDialogProps = {
   onOpenChange: (open: boolean) => void;
   title: string;
   confirmLabel: string;
+  /** Defaults to "danger". */
+  confirmVariant?: "danger" | "primary";
   /** When set, the user must type this text before confirming. */
   typeToConfirm?: string;
   pending: boolean;
@@ -17,12 +19,13 @@ type ConfirmDialogProps = {
   children: ReactNode;
 };
 
-/** ConfirmDialog asks before a destructive action, optionally requiring a typed name. */
+/** ConfirmDialog asks before a destructive or disruptive action, optionally requiring a typed name. */
 export function ConfirmDialog({
   open,
   onOpenChange,
   title,
   confirmLabel,
+  confirmVariant = "danger",
   typeToConfirm,
   pending,
   error,
@@ -44,7 +47,7 @@ export function ConfirmDialog({
           <Button onClick={() => onOpenChange(false)} disabled={pending}>
             Cancel
           </Button>
-          <Button variant="danger" loading={pending} disabled={!ready} onClick={onConfirm}>
+          <Button variant={confirmVariant} loading={pending} disabled={!ready} onClick={onConfirm}>
             {confirmLabel}
           </Button>
         </>

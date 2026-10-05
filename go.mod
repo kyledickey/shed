@@ -3,6 +3,7 @@ module github.com/kyledickey/shed
 go 1.27
 
 require (
+	aead.dev/minisign v0.3.0
 	filippo.io/age v1.3.2
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/caddyserver/certmagic v0.25.6
@@ -18,6 +19,8 @@ require (
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.1
 	github.com/robfig/cron/v3 v3.0.1
+	golang.org/x/mod v0.41.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.60.1
 )
@@ -186,7 +189,6 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect

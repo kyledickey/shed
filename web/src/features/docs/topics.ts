@@ -147,4 +147,10 @@ export const docTopics = {
     section: "restore-fences",
     summary: "While a restore changes its data, a service can't be deployed or started.",
   },
+  updates: {
+    page: "installation",
+    section: "updates",
+    summary:
+      "shed checks GitHub for releases, verifies downloads, and installs on request with a short restart.",
+  },
 } satisfies Record<string, { page: string; section: string; summary: string }>;

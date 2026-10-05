@@ -23,8 +23,21 @@ embedded Caddy reverse proxy. Docker runs all workloads.
 
 ## Host requirements
 
-Linux, Docker Engine with the buildx plugin, `git`, and `railpack` on `PATH`.
-shed runs as root (or a docker-group user) under systemd.
+Linux (amd64 or arm64), Docker Engine with the buildx plugin, `git`, and
+`railpack` on `PATH`. shed runs as root under systemd.
+
+`deploy/install.sh` sets up a host: `curl -fsSL <site>/install.sh | sudo bash`.
+It installs missing requirements (Docker through get.docker.com, git through
+the package manager, railpack through its installer), asks for the dashboard
+domain, the apps base domain, the ACME email, and the allowed GitHub logins
+(with gum, which it downloads to a temporary directory and checks against
+pinned checksums), then installs the latest release to `/usr/local/bin/shed`,
+writes `/etc/shed/shed.toml` and `/etc/systemd/system/shed.service`, starts
+shed, and prints the `/setup` URL with the setup token. Every prompt has an
+environment variable (`SHED_DOMAIN`, `SHED_BASE_DOMAIN`, `SHED_ACME_EMAIL`,
+`SHED_ALLOWED_USERS`, `SHED_VERSION`, `SHED_YES=1`), so it also runs
+unattended. Re-running it on an installed host upgrades the binary and keeps
+the existing config.
 
 ## Configuration
 
@@ -95,11 +108,12 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
+| `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store, update |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -850,6 +864,59 @@ Other events are acknowledged and ignored. GitHub does not automatically
 redeliver failures; pushes sent while shed is unreachable must be redelivered
 from GitHub or deployed manually.
 
+## Releases and updates
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
+dashboard once and `shed` for `linux/amd64` and `linux/arm64`
+(`CGO_ENABLED=0`, `-X main.version=<tag>`) and publishes a GitHub release
+with:
+
+- `shed_<version>_linux_<arch>.tar.gz` (version without the `v`), holding
+  `shed`, `shed.service`, and `shed.example.toml` at the archive root
+- `checksums.txt`: `sha256sum` output for every archive
+- `checksums.txt.minisig`: a minisign signature of `checksums.txt`, made with
+  the `MINISIGN_SECRET_KEY` repository secret
+- `install.sh`
+
+Tags with a pre-release suffix (`v1.2.0-rc.1`) publish pre-releases, which
+the update check ignores. `.github/workflows/ci.yml` runs gofmt, vet,
+`go test -race`, the dashboard checks, tests, and build (failing if
+`routeTree.gen.ts` is stale), and shellcheck on every pull request and push
+to `main`.
+
+`internal/update` checks `GET https://api.github.com/repos/<repo>/releases/latest`
+one minute after start and then every 6 hours; `POST /api/update/check` checks
+now. A release is newer when its tag is a greater semver than the running
+version. Development builds (`version` not a semver tag) report
+`unsupported` and never download or install.
+
+Downloading fetches `checksums.txt` and its signature, verifies the signature
+with the minisign public key built into shed, downloads the archive for
+`runtime.GOARCH`, checks its SHA-256 against `checksums.txt`, extracts `shed`
+to `<data>/updates/shed-<version>`, and runs it with `-version` to confirm it
+reports the release version. A failed step discards the download. With
+`update.auto_download` set in `settings`, a newer release is downloaded right
+after the check that finds it. Installing is always manual.
+
+`POST /api/update/install` copies the staged binary next to the running one
+(`<binary>.new`), keeps the running one as `<binary>.prev`, renames the new
+one into place, and responds. shed then shuts down as it does on SIGTERM and
+`exec`s the new binary with the same arguments and environment, keeping the
+PID, so systemd does not see a restart. If `exec` fails, shed exits non-zero
+and systemd's `Restart=always` starts the binary on disk. While shed restarts,
+service containers keep running but the embedded proxy, and with it every
+domain and the dashboard, is down for a few seconds; running builds,
+backups, and restores are interrupted and recovered on boot as after any
+restart. Rolling back is
+`mv /usr/local/bin/shed.prev /usr/local/bin/shed && systemctl restart shed`.
+The store refuses to open a database whose `PRAGMA user_version` is past its
+newest embedded migration, so a binary older than the database fails to start
+instead of misreading it; restore a `shed.db` backup from before the update.
+
+The dashboard stays loaded while shed restarts: after install it shows a
+restarting screen that polls `GET /api/update` until `current` is the
+installed version, then reloads the page to pick up the new dashboard.
+
 ## HTTP API
 
 JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
@@ -927,6 +994,12 @@ GET    /api/backups/settings                    → BackupSettings
 PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
 POST   /api/backups/settings/test  BackupSettingsInput → 204  (400 {error} with the S3 failure; blank secret = stored)
 GET    /api/backups/settings/key                → { identity: string }  (age secret key; 404 if none)
+
+GET    /api/update                              → UpdateStatus
+POST   /api/update/check                        → UpdateStatus  (checks GitHub now; a failed check is reported in error; 409 if unsupported or busy)
+POST   /api/update/download                     202 → UpdateStatus  (409 if unsupported, no newer release, or busy)
+PUT    /api/update/settings  {autoDownload}     → UpdateStatus
+POST   /api/update/install                      202 → UpdateStatus  (state restarting; 409 if nothing is downloaded or busy; then shed restarts)
 
 GET    /api/github/repos                        → Repo[]
 GET    /api/github/repos/{owner}/{repo}/branches → string[]
@@ -1080,6 +1153,24 @@ type BackupSettings = {
 type BackupSettingsInput = {
   s3: (Omit<S3Settings, "hasSecret"> & { secretAccessKey?: string }) | null;
   encryption: { enabled: boolean };
+};
+type Release = {
+  version: string;                     // tag, e.g. "v1.4.0"
+  url: string;                         // GitHub release page
+  notes: string;                       // release body, Markdown
+  publishedAt: string;
+};
+type UpdateState = "idle" | "checking" | "downloading" | "restarting";
+type UpdateStatus = {
+  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  latest: Release | null;              // null until a check succeeds
+  available: boolean;                  // latest is newer than current
+  checkedAt: string | null;            // last successful check
+  state: UpdateState;
+  staged: string;                      // verified version ready to install, "" if none
+  error: string;                       // last check or download failure, "" if none
+  autoDownload: boolean;
+  unsupported: string;                 // why this build cannot update itself, "" if it can
 };
 ```
 

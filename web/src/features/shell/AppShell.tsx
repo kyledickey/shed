@@ -1,5 +1,5 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   Archive,
   BookOpen,
@@ -25,9 +25,11 @@ import { errorMessage } from "../../api/client";
 import { useDeploy } from "../../api/deployments";
 import { projectQuery, projectsQuery } from "../../api/projects";
 import { serviceQuery } from "../../api/services";
+import { updateQuery } from "../../api/update";
 import type { Service } from "../../api/types";
 import { Button } from "../../components/Button";
 import { CommandPalette, type Command } from "../../components/CommandPalette";
+import { Badge } from "../../components/Badge";
 import { Avatar, Kbd, ServiceIcon } from "../../components/Misc";
 import {
   Menu,
@@ -83,6 +85,7 @@ export function AppShell() {
       nav={<Nav projectId={projectId} serviceId={serviceId} />}
       actions={
         <>
+          <UpdateBadge />
           <Tooltip
             content={
               <>
@@ -240,6 +243,20 @@ function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string 
       items={rootTabs}
       onChange={(next) => void navigate({ to: next === "projects" ? "/" : `/${next}` })}
     />
+  );
+}
+
+/** UpdateBadge links to Settings while a newer shed release is available or downloaded. */
+function UpdateBadge() {
+  // A failed status request just hides the badge; Settings reports the error.
+  const { data } = useQuery({ ...updateQuery, retry: false });
+  if (!data || data.unsupported || !(data.available || data.staged)) return null;
+  return (
+    <Link to="/settings" className={styles.update}>
+      <Badge tone="accent" size="sm">
+        Update available
+      </Badge>
+    </Link>
   );
 }
 

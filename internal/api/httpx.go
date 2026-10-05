@@ -12,6 +12,7 @@ import (
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/update"
 )
 
 // securityHeaders sets headers that forbid framing the dashboard
@@ -95,6 +96,14 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status, msg = http.StatusBadRequest, "service has no volumes to back up"
 	case errors.Is(err, backup.ErrBusy):
 		status, msg = http.StatusConflict, "a backup or restore is already in progress"
+	case errors.Is(err, update.ErrUnsupported):
+		status, msg = http.StatusConflict, "this build of shed cannot update itself"
+	case errors.Is(err, update.ErrNoUpdate):
+		status, msg = http.StatusConflict, "there is no newer release"
+	case errors.Is(err, update.ErrBusy):
+		status, msg = http.StatusConflict, "an update check, download, or install is already in progress"
+	case errors.Is(err, update.ErrNotStaged):
+		status, msg = http.StatusConflict, "download the update before installing it"
 	default:
 		s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 	}

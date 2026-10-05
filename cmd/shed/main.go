@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,18 +35,40 @@ import (
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+const (
+	// releaseRepo is the GitHub repository shed's releases are published to.
+	releaseRepo = "kyledickey/shed"
+	// releaseKey is the minisign public key that signs release checksums.
+	releaseKey = "RWRBeRUdMkDg7PI7SQWikYL/5Evv0feGGQ07ZbVIfV5Q80snhMX7QaMK"
+)
+
 func main() {
-	if err := run(); err != nil {
+	err := run()
+	var re restartError
+	if errors.As(err, &re) {
+		// Every deferred cleanup in run has finished, so the new binary
+		// finds the listeners and the database free. Go opens files with
+		// close-on-exec, so nothing leaks across.
+		err = syscall.Exec(re.binary, os.Args, os.Environ())
+		err = fmt.Errorf("restart %s: %w", re.binary, err)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "shed:", err)
 		os.Exit(1)
 	}
 }
+
+// restartError asks main to replace the process with binary.
+type restartError struct{ binary string }
+
+func (e restartError) Error() string { return "restart into " + e.binary }
 
 func run() error {
 	configPath := flag.String("config", config.DefaultPath, "path to the configuration file")
@@ -66,6 +89,10 @@ func run() error {
 		return err
 	}
 	log.Info("starting shed", "version", version, "config", *configPath)
+	binary, err := executable()
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -158,6 +185,20 @@ func run() error {
 		Log:    log,
 	})
 
+	updater, err := update.New(update.Config{
+		Repo:      releaseRepo,
+		Version:   version,
+		PublicKey: releaseKey,
+		Binary:    binary,
+		Dir:       filepath.Join(dataDir, "updates"),
+		Settings:  updateSettings{st},
+		Log:       log,
+	})
+	if err != nil {
+		return err
+	}
+	var restarting atomic.Bool
+
 	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {
 			return c, true
@@ -170,11 +211,16 @@ func run() error {
 	}
 
 	server, err := api.New(ctx, api.Config{
-		Store:      st,
-		Deployer:   deployer,
-		Backups:    backups,
-		Metrics:    collector,
-		Logs:       tail,
+		Store:    st,
+		Deployer: deployer,
+		Backups:  backups,
+		Metrics:  collector,
+		Logs:     tail,
+		Updates:  updater,
+		Restart: func() {
+			restarting.Store(true)
+			stop()
+		},
 		Auth:       authn,
 		GitHub:     gh,
 		BaseURL:    cfg.Server.URL,
@@ -201,11 +247,48 @@ func run() error {
 	background.Go(func() { backups.Run(ctx) })
 	background.Go(func() { server.ReplayPushes(ctx) })
 	background.Go(func() { server.SyncRoutes(ctx) })
+	background.Go(func() { updater.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.
 		background.Wait()
 	}()
-	return serve(ctx, cfg.Server.Listen, server.Handler(), log)
+	if err := serve(ctx, cfg.Server.Listen, server.Handler(), log); err != nil {
+		return err
+	}
+	if restarting.Load() {
+		log.Info("restarting", "binary", binary)
+		return restartError{binary}
+	}
+	return nil
+}
+
+// executable returns the path of the running shed binary, with symlinks
+// resolved so an update replaces the file itself.
+func executable() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate shed binary: %w", err)
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("locate shed binary: %w", err)
+	}
+	return path, nil
+}
+
+// updateSettings adapts the store to update.Settings.
+type updateSettings struct{ st *store.Store }
+
+func (s updateSettings) Setting(ctx context.Context, key string) (string, bool, error) {
+	v, err := s.st.Setting(ctx, key)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+func (s updateSettings) SetSetting(ctx context.Context, key, value string) error {
+	return s.st.SetSetting(ctx, key, value)
 }
 
 // backupServices adapts the deployer to backup.Services.
