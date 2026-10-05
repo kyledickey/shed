@@ -1,0 +1,82 @@
+---
+title: Builds
+group: Deploying
+order: 40
+description: "shed clones your commit into a scratch directory and builds an image with docker buildx. It uses your Dockerfile when there is one and Railpack when there isn't. Builds run one at a time, on a resource-limited builder."
+---
+
+import { BuilderPanel } from "../components/builds/BuilderPanel";
+import { DetectionFlow } from "../components/builds/DetectionFlow";
+import { DiskGuard } from "../components/builds/DiskGuard";
+import { SecretSnippet } from "../components/builds/SecretSnippet";
+
+## Dockerfile or Railpack
+
+The build step of a [deployment](/docs/deployments#the-pipeline) does three things. It clones the exact commit with `git fetch --depth 1` into `<data>/builds/<deploymentID>/src`, using the GitHub App's installation token in a scoped HTTP header rather than on the command line. It picks a build tool. Then it builds, and deletes the workspace whatever the outcome.
+
+<Figure caption="The choice happens after the clone, because shed has to look inside the repository.">
+  <DetectionFlow />
+</Figure>
+
+`rootDir` is the build context. A `dockerfilePath` is relative to it. Both must stay inside the repository: a path that escapes it, including through a symlink, fails the build. Setting a Dockerfile path is a promise, so a missing file is an error instead of a quiet fall-back to Railpack.
+
+## Railpack
+
+[Railpack](https://railpack.com) inspects the source, works out the language and build steps, and writes a build plan. shed runs it in two phases, and the plan goes to a BuildKit frontend rather than a Dockerfile:
+
+```sh
+# 1. Plan. Runs in the context directory; the plan and info files go to the
+#    private workspace, outside the repository's source tree.
+railpack prepare <contextDir> --plan-out <workspace>/railpack-plan.json \
+  --info-out <workspace>/railpack-info.json --env KEY --env KEY2 ...
+
+# 2. Build the plan with Railpack's BuildKit frontend.
+docker buildx build --builder shed --load -t shed/<serviceID>:<deploymentID> \
+  -f <workspace>/railpack-plan.json --secret id=KEY,src=<workspace>/secrets/KEY \
+  --build-arg BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend <contextDir>
+```
+
+Variable values reach `railpack prepare` through its process environment, because Railpack reads them while planning. Names that control host tools are withheld from that step: `PATH`, `HOME`, `TMPDIR`, and anything starting with `LD_`, `DYLD_`, `XDG_`, `GIT_`, or `DOCKER_`. They are still build secrets and still reach the running container.
+
+A Dockerfile build is the same second command with `-f <your Dockerfile>` and no frontend override.
+
+## The shed builder
+
+shed doesn't build on Docker's default builder. It creates its own named `shed`, with the `docker-container` driver, which runs BuildKit in a container (buildx names it `buildx_buildkit_shed0`). That container is the only place builds consume CPU and memory, so a runaway build can't starve your running services.
+
+Container limits can only be set when a container is created. So the first build after shed starts runs `docker buildx rm --keep-state shed` and creates the builder again with the current `build.memory_mb` and `build.cpus`. `--keep-state` keeps the layer cache, so this costs nothing but a few seconds. Memory has no swap: the same value is set as `memory-swap`. The CPU limit is a CFS quota over a 100 ms period, and a value of 0 for either setting means unlimited.
+
+Builds are serialized: one slot for the whole instance. A deployment waiting for the slot shows `building` and nothing but its first heading in the log. The 30-minute deadline for a build includes that wait.
+
+<BuilderPanel />
+
+## Build secrets
+
+Your service variables are available to the build, but not as build arguments. shed writes each one to a private file outside the source context and passes it to BuildKit as a secret. A secret never lands in an image layer or in `docker history` unless your own build commands write it there.
+
+In a Dockerfile you opt in per instruction with `RUN --mount=type=secret,id=KEY`, which exposes the value as the file `/run/secrets/KEY` for that one command. The `ARG` pattern doesn't receive service variables. If your Dockerfile reads them with `ARG KEY`, migrate it to a secret mount. The variables shed injects, such as `PORT` and `SHED_GIT_COMMIT_SHA`, are offered the same way.
+
+<SecretSnippet />
+
+Build logs mask the literal values of your variables and the clone credential, even when a value is split across output chunks. Masking can't stop a build from deliberately printing, encoding, or baking in a secret it was given, so mount only what a step needs.
+
+## Disk space guard
+
+Builds fill disks, with layers, caches, and clones. Rather than let one wedge the host, shed checks free space before and during every build. Two filesystems count: the one holding the build workspace under `data.dir`, and the one holding Docker's root directory.
+
+| When                           | Rule                           | Result                                                       |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------ |
+| Before the clone               | `free < build.min_free_mb`     | Build fails at once with `build: not enough free disk space` |
+| Every 3 seconds while building | `free < build.min_free_mb / 2` | Build is canceled and the deployment fails with the reason   |
+
+The default is 2048 MiB, so builds start with at least 2 GiB free and are canceled under 1 GiB. A value of 0 turns both checks off. It's a best-effort monitor, not a quota: a build that writes faster than the poll interval can still overshoot.
+
+<DiskGuard />
+
+## Images and ports
+
+A built image is tagged `shed/<serviceID>:<deploymentID>` and loaded into Docker with `--load`. After each deployment goes live, shed keeps the five newest images of that service, and always the active one, and removes the rest. This is what limits how far back a [rollback](/docs/deployments#redeploys-and-rollbacks) can reach.
+
+Services without a port get one from the image: after the build, shed saves the lowest TCP port in the image's `EXPOSE` list as the service's port, and from then on injects it as `PORT`. That only runs while the port is 0. A new repo app starts with 8080, so it never auto-detects; image apps start at 0.
+
+Image apps and databases don't build. shed pulls the image, resolves it to a local image ID, and records that ID on the deployment, so later restarts and rollbacks use that exact image even if the tag moves.

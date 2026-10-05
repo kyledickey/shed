@@ -1,17 +1,19 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
-import { docPageComponents } from "../../../features/docs/pages";
-import { isDocSlug } from "../../../features/docs/registry";
+import { loadDoc } from "../../../features/docs/content";
+import { MdxPage } from "../../../features/docs/mdx";
+import { docPage } from "../../../features/docs/registry";
 
 export const Route = createFileRoute("/_app/docs/$slug")({
-  beforeLoad: ({ params }) => {
-    if (!isDocSlug(params.slug)) throw notFound();
+  loader: async ({ params }) => {
+    const meta = docPage(params.slug);
+    const Content = meta && (await loadDoc(params.slug));
+    if (!meta || !Content) throw notFound();
+    return { meta, Content };
   },
   component: DocRoute,
 });
 
 function DocRoute() {
-  const { slug } = Route.useParams();
-  if (!isDocSlug(slug)) return null;
-  const Page = docPageComponents[slug];
-  return <Page />;
+  const { meta, Content } = Route.useLoaderData();
+  return <MdxPage meta={meta} Content={Content} />;
 }

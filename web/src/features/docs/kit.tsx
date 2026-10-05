@@ -1,66 +1,9 @@
-import { Link as LinkIcon, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { LayerCard } from "../../components/Card";
 import { CopyButton } from "../../components/Misc";
 import { cx } from "../../lib/cx";
 import styles from "./kit.module.css";
-import { docGroups, docPage, type DocSection as SectionId, type DocSlug } from "./registry";
-
-/**
- * Doc is a docs page: group eyebrow, title, lede, then sections. Plain
- * elements inside (p, ul, ol, h3, code, a, strong) get prose styling.
- */
-export function Doc<S extends DocSlug>({
-  slug,
-  lede,
-  children,
-}: {
-  slug: S;
-  lede: ReactNode;
-  children: ReactNode;
-}) {
-  const page = docPage(slug);
-  const group = docGroups.find((g) => g.pages.some((p) => p.slug === slug));
-  return (
-    <article className={styles.doc}>
-      <header className={styles.head}>
-        {group && <div className={styles.eyebrow}>{group.title}</div>}
-        <h1 className={styles.title}>{page.title}</h1>
-        <p className={styles.lede}>{lede}</p>
-      </header>
-      {children}
-    </article>
-  );
-}
-
-/** DocSection is an anchored section. Its title comes from the registry. */
-export function DocSection<S extends DocSlug>({
-  page,
-  id,
-  children,
-}: {
-  page: S;
-  id: SectionId<S>;
-  children: ReactNode;
-}) {
-  const title = docPage(page).sections.find((s) => s.id === id)?.title ?? id;
-  return (
-    <section id={id} className={styles.section}>
-      <h2 className={styles.h2}>
-        <a href={`#${id}`} className={styles.anchor} aria-label={`Link to ${title}`}>
-          <LinkIcon size={14} />
-        </a>
-        {title}
-      </h2>
-      <div className={styles.prose}>{children}</div>
-    </section>
-  );
-}
-
-/** Prose styles plain elements outside a DocSection, e.g. inside a Live panel. */
-export function Prose({ children }: { children: ReactNode }) {
-  return <div className={styles.prose}>{children}</div>;
-}
 
 /** CodeBlock shows code or terminal text with a copy button. */
 export function CodeBlock({

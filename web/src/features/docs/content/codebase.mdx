@@ -1,0 +1,113 @@
+---
+title: Codebase
+group: Developing
+order: 160
+description: shed is one Go module with a React dashboard inside it. Each package under internal/ is a self-contained piece, and cmd/shed is the only place that knows how they fit together.
+---
+
+import { DepExplorer } from "../components/codebase/DepExplorer";
+import { DependencyDiagram } from "../components/codebase/diagrams";
+
+## Repository layout
+
+```text title="repository"
+cmd/shed/          entry point: flags, config, logging, wiring, shutdown
+internal/
+  config/          koanf → Config
+  store/           SQLite, embedded migrations, CRUD on plain structs
+  docker/          Docker Engine wrapper (moby client)
+  build/           clone a commit, build an image (Dockerfile or Railpack)
+  proxy/           embedded Caddy, Apply(routes)
+  github/          GitHub App: manifest, tokens, repos, CI status, OAuth, webhooks
+  vars/            ${{ KEY }} / ${{ service.KEY }} reference resolution
+  catalog/         database templates
+  deploy/          deployment pipeline, per-service workers, reconcile on boot
+  host/            host resource usage from procfs, sysfs, and statfs
+  logtail/         in-memory tail of shed's own log
+  metrics/         container and host resource sampling, time series
+  s3/              S3-compatible object storage client
+  backup/          backups and restores of service data and shed.db
+  auth/            sessions, GitHub sign-in, middleware
+  api/             HTTP API, SSE logs, webhook, SPA serving
+web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)
+  embed.go         embeds web/dist into the Go binary
+deploy/            systemd unit and example config
+docs/design.md     data model, deploy pipeline, HTTP API contract
+```
+
+`docs/design.md` is the source of truth for the data model, the deploy pipeline, and the HTTP API contract between Go and the dashboard. When you change any of those, update it in the same change. `web/src/api/types.ts` mirrors the types in it, so those two files change together too.
+
+## Packages
+
+The last column is the real import graph, taken from `go list`. Leaf packages import nothing from `internal/`.
+
+| Package    | Responsibility                                                                     | Imports from internal/                                         |
+| ---------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `cmd/shed` | Flags, config, logging, wiring, signals, shutdown.                                 | everything                                                     |
+| `config`   | Loads TOML and `SHED_*` env into a Config with defaults and validation.            | none                                                           |
+| `store`    | SQLite (modernc), embedded migrations, CRUD on plain structs.                      | none                                                           |
+| `docker`   | Docker Engine operations through the moby client.                                  | none                                                           |
+| `build`    | Clones a commit and builds an image from a Dockerfile or with Railpack.            | none                                                           |
+| `proxy`    | Embedded Caddy. Apply(routes) swaps the active route table.                        | none                                                           |
+| `github`   | GitHub App: manifest, JWT, installation tokens, repos, CI status, OAuth, webhooks. | none                                                           |
+| `vars`     | Resolves `${{ KEY }}` and `${{ service.KEY }}` references.                         | none                                                           |
+| `catalog`  | Database templates: image, port, volume path, default variables.                   | none                                                           |
+| `host`     | Host CPU, memory, network, disk I/O, and filesystem usage.                         | none                                                           |
+| `logtail`  | In-memory tail of shed's own log, followed over SSE.                               | none                                                           |
+| `s3`       | S3-compatible object storage client for off-site backups.                          | none                                                           |
+| `deploy`   | Deployment pipeline, per-service workers, reconcile on boot.                       | build, catalog, docker, github, proxy, store, vars             |
+| `metrics`  | Container and host sampling, per-service and host time series.                     | docker, host, store                                            |
+| `backup`   | Dumps, archives, zstd, age, schedule, retention, upload, restore.                  | docker, store                                                  |
+| `auth`     | Sessions, GitHub sign-in handlers, middleware.                                     | github                                                         |
+| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving.                                 | auth, backup, catalog, deploy, github, logtail, metrics, store |
+
+`web` is a Go package too, but only to embed the built dashboard. Its `Dist()` returns the files as an `fs.FS`.
+
+<Figure caption="Arrows point from a package to what it imports. cmd/shed imports all of them and is not drawn with arrows.">
+  <DependencyDiagram />
+</Figure>
+
+<DepExplorer />
+
+Most imports from a consumer are for plain types, such as `store.Service`. The behavior a consumer needs from another package goes through an interface it declares itself, as the next sections describe.
+
+## Design principles
+
+- **Leaf packages import nothing from internal/.** That is what lets you understand, test, and replace one on its own. Keep it that way when you add code.
+- **Interfaces belong to the consumer.** `deploy.Docker`, `backup.Remote`, `auth.Store`, and `api.Deployer` are small and name only what that package calls. Tests pass fakes.
+- **Dependencies are passed in.** No package-level state, no `init` side effects, no global loggers. Each constructor takes a `Config` struct and a `*slog.Logger`.
+- **Caddy is the one exception.** Caddy keeps process-global state, so `internal/proxy` contains it, and nothing else touches Caddy.
+- **APIs stay narrow.** Export only what callers use. Prefer plain structs and functions over frameworks.
+- **New code goes where it belongs.** Put it in the package that owns the concern, or in a new leaf package if it is separable. There is no `util` package.
+
+## Wiring in cmd/shed
+
+`cmd/shed/main.go` builds every piece in dependency order and hands each one the real implementations of the interfaces it declared. The order is: config, logger, data directories, store, Docker client, proxy, deployer, backups, metrics collector, auth, API server. Then it recovers interrupted restores, reconciles services, starts the background loops, and serves HTTP until the process gets a signal.
+
+Most real types satisfy the consumer's interface directly: the one `*docker.Client` is passed to `deploy`, `backup`, and `metrics`, each of which sees only its own small interface. Where the shapes differ, `main.go` uses a small adapter:
+
+- `backupServices` adapts the `*deploy.Deployer` to `backup.Services`, which lets a backup hold a service while it dumps data.
+- `api.AuthStore(st)` adapts the store to `auth.Store`.
+- A `NewRemote` closure converts `backup.S3Config` to `s3.Config`, so `backup` never imports `s3`.
+- A `GitHub` closure returns the client from `api.GitHubHolder`, or false before the GitHub App is set up. `deploy` and `auth` call it each time instead of holding a client.
+- `deploy.Proxy` is left nil when `proxy.enabled` is false, which turns routing off.
+
+```go title="cmd/shed/main.go (abridged)"
+var routes deploy.Proxy // nil disables routing
+if cfg.Proxy.Enabled {
+    routes = proxy.New(proxy.Config{ /* ports, ACME email, storage */ })
+}
+
+deployer := deploy.New(deploy.Config{
+    Store: st, Docker: dc, Builder: &build.Builder{ /* ... */ },
+    Proxy: routes, GitHub: githubFromHolder, Log: log,
+})
+backups := backup.New(backup.Config{
+    Store: st, Docker: dc, Services: backupServices{deployer},
+    NewRemote: func(c backup.S3Config) (backup.Remote, error) {
+        return s3.New(s3.Config(c))
+    },
+})
+```
+
+To add a new capability, write it as a package with its own interfaces, then add the wiring here. If it needs to be visible in the dashboard, add the endpoint to `internal/api` and describe it in `docs/design.md`. For how the larger pieces work inside, read [Internals](/docs/internals).

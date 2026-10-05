@@ -1,0 +1,91 @@
+---
+title: Networking
+group: Running
+order: 60
+description: Services in a project talk to each other over a private Docker network, by name. Caddy sits in front and sends each public hostname to whichever container is active right now.
+---
+
+import { HealthDiagram, NetworkDiagram, ProxyDiagram } from "../components/networking/diagrams";
+import { GeneratedPreview, HealthSimulator, RouteMatcher } from "../components/networking/demos";
+
+## Private network
+
+Every project has one bridge network named `shed-<projectID>`. shed creates it when the project's first container starts and removes it when you delete the project. A project's services never share a network with another project's, so a name only resolves inside its own project.
+
+Each deployment runs as one container named `shed-<serviceID>-<deploymentID>` with three labels, `shed.project`, `shed.service`, and `shed.deployment`. shed finds containers by these labels when it reconciles after a restart, samples metrics, and cleans up after a failed deploy. The restart policy is `unless-stopped`.
+
+The _active_ container carries the service name as a network alias. That alias is the service's **private host**: Docker's embedded DNS resolves `postgres` to the container's address, so an app connects to `postgres:5432`. Use the container port. Nothing is published on the host unless you set a [public TCP port](#public-tcp-ports).
+
+<Figure caption="One project network. Caddy reaches containers by IP; services reach each other by alias. A candidate has no alias until it is healthy.">
+  <NetworkDiagram />
+</Figure>
+
+The alias moves last. A new container starts with only its container name resolvable, so `web` keeps pointing at the old container while the new one boots. Once the candidate passes its [health check](#health-checks), shed disconnects and reconnects it with the alias, asking Docker for the address it already had, and checks it again. The previous container is disconnected from the network before its graceful stop, so private traffic only ever reaches the new one. See [zero-downtime switchover](/docs/deployments#zero-downtime-switchover).
+
+## The proxy
+
+shed embeds Caddy and drives it with a generated JSON config. There is a single HTTPS server, `shed`, listening on `proxy.https_port` (443 by default). Plain HTTP on `proxy.http_port` serves ACME challenges and redirects to HTTPS. Caddy's admin API is disabled, so the only way routes change is through shed.
+
+<Figure caption="Caddy matches the Host header against one route per hostname. Routes are terminal, and the 404 catch-all is always last.">
+  <ProxyDiagram />
+</Figure>
+
+- **Dashboard route.** The hostname of `server.url` goes to `server.listen`. A listen address of `0.0.0.0` or an empty host is dialed as `127.0.0.1`.
+- **Service routes.** Each domain of a service goes to `<container IP>:<port>` of its active deployment, on the project network. The port is the one recorded on that deployment, so editing a service's port applies from its next deployment.
+- **No route** exists for a service that is stopped, has no active deployment, has no port, or whose container is gone. If shed cannot find out (a Docker or database error), it fails the update and Caddy keeps its last config rather than dropping services.
+- **Reloads.** shed recomputes all routes after anything that changes domains or the active deployment. Hostnames are lowercased and sorted, and the config is only reloaded when the JSON actually changed. Two routes with the same hostname are rejected.
+- **Certificates.** Names a public CA can issue for use ACME, with `proxy.acme_email` as contact when set. Anything else, like an IP address or `localhost`, gets a certificate from Caddy's internal CA, which browsers will not trust. Caddy never touches the host's trust store.
+
+Try it on a sample route table. The matcher ignores case and a port suffix, like Caddy's host matcher.
+
+<RouteMatcher />
+
+## Custom domains
+
+A service can have any number of domains. Point a DNS `A` or `AAAA` record at the server, then add the hostname to the service. Caddy asks for the certificate as soon as the route loads, so DNS has to resolve first or issuance fails until it does.
+
+The first domain you add is exposed to the service as `SHED_PUBLIC_DOMAIN`. shed validates the name before saving it:
+
+| Rule                                                                                                                                                     | Result                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Lowercased and trimmed; every label is 1 to 63 characters of a-z, 0-9 and hyphens, not starting or ending with a hyphen; at most 253 characters in total | 400 otherwise                           |
+| The hostname is already used by any service                                                                                                              | 409                                     |
+| The hostname is the dashboard host, the host of server.url                                                                                               | 409, the dashboard hostname is reserved |
+
+The dashboard hostname is reserved because a service route and the dashboard route would otherwise compete for the same `Host`. shed also refuses to load a config with duplicate hosts, so the dashboard route can never be replaced by a workload. A service with domains but no port is not routed: the build log says `No port, so its domains are not routed`.
+
+## Generated domains
+
+If `proxy.base_domain` is set, adding a domain without a hostname generates one: `<service>-<project>.<base_domain>`. The project part is its name reduced to ASCII letters and digits, with each run of anything else becoming one hyphen. The label is cut at 63 characters, and the name is computed once, when you create it. Renaming the project later does not change it.
+
+Generated hosts need wildcard DNS: `*.apps.example.com` pointing at the server. Each generated host still gets its own certificate. Without `base_domain` the request fails with 400 and you can only add custom domains.
+
+<GeneratedPreview />
+
+## Public TCP ports
+
+Set a **public port** on a service and Docker publishes it on the host: `0.0.0.0:<publicPort>` to the container port, TCP. Traffic goes straight to the container and never through Caddy, so there is no TLS termination, no hostname routing, and no certificate. It is how you expose a database or a game server. A public port needs a container port, and both are 0 to 65535.
+
+Docker maintains its own firewall rules for published ports, which can bypass host firewalls such as `ufw`. Treat a public port as open to the internet.
+
+Two containers cannot bind the same host port, so a service with a public port (or with volumes) deploys _stop-first_: shed stops the old container before it starts the new one, and there is a short outage. See [replacement storage safety](/docs/resources#replacement-storage-safety).
+
+## Health checks
+
+A new container only gets traffic after it proves it is up. With a container port, shed probes the container's IP on the project network. Without a **health check path** that is a TCP connect. With a path it is an HTTP `GET` that must answer 2xx or 3xx. Redirects are not followed, and a 4xx or 5xx fails the probe. Each probe times out after 5 seconds.
+
+<Figure caption="The health check bookends the alias change. A failure at any step removes the candidate and leaves the previous container serving.">
+  <HealthDiagram />
+</Figure>
+
+| Setting               | Value                                     |
+| --------------------- | ----------------------------------------- |
+| probe interval        | `1s`                                      |
+| deadline              | `120s` from container start               |
+| progress line         | `"Not ready yet: <error>"` every `5s`     |
+| no container port     | no probe; watched `3s`, fails if it exits |
+| after the alias moves | probe again, up to `10s`                  |
+
+A container that exits (or sits in `restarting`) fails the deployment immediately with its exit code, and its last output is copied into the build log. The second probe exists because reconnecting a container to the network could disturb it. If it fails, the deployment fails and the previous container keeps the alias and the routes.
+
+<HealthSimulator />

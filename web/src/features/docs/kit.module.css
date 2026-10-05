@@ -33,15 +33,10 @@
   line-height: 1.55;
 }
 
-.section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  scroll-margin-top: var(--space-6);
-}
-
 .h2 {
   position: relative;
+  color: var(--ink);
+  scroll-margin-top: var(--space-6);
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.015em;
@@ -72,7 +67,7 @@
   }
 }
 
-.prose {
+.body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -109,7 +104,7 @@
     font-weight: 600;
   }
 
-  & a {
+  & a:not(.anchor) {
     color: var(--accent-ink);
     font-weight: 500;
     text-decoration: underline;
@@ -248,4 +243,12 @@
   padding: 0 4px;
   color: var(--ink-3);
   font-size: var(--text-xs);
+}
+
+.body > .h2 {
+  margin-top: var(--space-6);
+}
+
+.body > .h2:first-child {
+  margin-top: 0;
 }

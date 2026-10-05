@@ -1,0 +1,120 @@
+---
+title: Variables
+group: Running
+order: 70
+description: A variable is a key and a string. Values can point at other variables, in the same service or in a sibling, and shed expands those references into plain environment variables when a deployment starts.
+---
+
+import { MergeDiagram, ReferenceDiagram } from "../components/variables/diagrams";
+import { Playground } from "../components/variables/Playground";
+
+## References
+
+Write a reference inside any value and shed replaces it with the value it points to. This is how an app gets its database URL without anyone copying a password around.
+
+| You write                        | It expands to                                                                                                                           |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `${{ KEY }}`                     | Variable KEY of the same service, stored or injected.                                                                                   |
+| `${{ db.KEY }}`                  | Variable KEY of the service named db in the same project. The reference is split at the first dot, so db.a.b means service db, key a.b. |
+| `${{KEY}}`                       | The same. Whitespace inside the braces is optional.                                                                                     |
+| `${{ NOPE }}`                    | An empty string. A missing variable or service is not an error.                                                                         |
+| `${{ a b }}  ${{}}  ${A}  $HOME` | Left exactly as written. Only `${{ name }}` with no spaces in the name is a reference.                                                  |
+
+A reference is expanded in the scope of the service that owns the value. When `web` uses `${{ postgres.DATABASE_URL }}`, the `${{ POSTGRES_USER }}` inside it means postgres's user, not web's, even if web has a variable with the same name.
+
+<Figure caption="web asks for postgres.DATABASE_URL. Everything inside that value is looked up in postgres.">
+  <ReferenceDiagram />
+</Figure>
+
+```env title="on the web service"
+DATABASE_URL=${{ postgres.DATABASE_URL }}
+REDIS_URL=${{ redis.REDIS_URL }}
+PUBLIC_URL=https://${{ SHED_PUBLIC_DOMAIN }}
+```
+
+References resolve when a deployment starts, and the result is written into the new container's environment. Editing a variable does not change containers that are already running; deploy again to apply it. Builds get the resolved variables too, see [build secrets](/docs/builds#build-secrets). Saving only checks key names (`[A-Za-z_][A-Za-z0-9_]*`), so a bad reference shows up as a failed deployment, not as a save error.
+
+## Injected variables
+
+shed adds a few variables to every service. You can reference them like any other, from the same service or another one (`${{ postgres.SHED_PRIVATE_DOMAIN }}`).
+
+| Variable              | Value                                | Present when                                               |
+| --------------------- | ------------------------------------ | ---------------------------------------------------------- |
+| `PORT`                | the service's port                   | an app with a port above 0                                 |
+| `SHED_PROJECT_NAME`   | the project's name                   | always                                                     |
+| `SHED_SERVICE_NAME`   | the service's name                   | always                                                     |
+| `SHED_PRIVATE_DOMAIN` | the service's name, its private host | always                                                     |
+| `SHED_PUBLIC_DOMAIN`  | the host of the first domain         | the service has a domain                                   |
+| `SHED_GIT_COMMIT_SHA` | the commit being deployed            | a commit is known, and only for the service being deployed |
+| `SHED_GIT_BRANCH`     | the service's branch                 | the service has a branch                                   |
+
+Your own variables win. If you store a variable with the same name as an injected one, yours replaces it. The merged set is then resolved, and the container receives it sorted by key.
+
+<Figure caption="How one service's environment is assembled at deploy time.">
+  <MergeDiagram />
+</Figure>
+
+<Callout tone="sky" title="Commits and ports are per deployment">
+  `SHED_GIT_COMMIT_SHA` is only set on the service being deployed. A reference like `${{ web.SHED_GIT_COMMIT_SHA }}` from another service expands to nothing. A service with no port gets the lowest port its image exposes after the build, and shed resolves its variables again so `PORT` appears.
+</Callout>
+
+## Database templates
+
+Creating a database writes its variables for you. Passwords are 24 random characters from `A-Za-z0-9`, drawn uniformly at random, so they are safe to embed in a URL without escaping. Every database also gets a volume at the template's data path, see [volumes](/docs/resources#volumes).
+
+| Kind       | Image                | Port    | Volume                | Variables created                                                       |
+| ---------- | -------------------- | ------- | --------------------- | ----------------------------------------------------------------------- |
+| `postgres` | `postgres:18-alpine` | `5432`  | `/var/lib/postgresql` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`     |
+| `mysql`    | `mysql:9`            | `3306`  | `/var/lib/mysql`      | `MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`, `MYSQL_URL`, `DATABASE_URL`    |
+| `mongo`    | `mongo:8`            | `27017` | `/data/db`            | `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MONGO_URL` |
+| `redis`    | `redis:8-alpine`     | `6379`  | `/data`               | `REDIS_PASSWORD`, `REDIS_URL`                                           |
+
+The connection strings are themselves references, so they stay correct if you rename the user or the database. This is what postgres starts with:
+
+```env title="postgres service"
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<24 random characters>
+POSTGRES_DB=app
+DATABASE_URL=postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{SHED_PRIVATE_DOMAIN}}:5432/${{POSTGRES_DB}}
+```
+
+Two details matter in practice. Redis runs `redis-server --requirepass` with `$REDIS_PASSWORD` and `--appendonly yes`, so changing the password variable takes effect on the next deploy. Postgres, MySQL, and MongoDB only read their password variables when the data directory is first initialized, so changing them later does not change the password inside an existing database.
+
+## Resolver playground
+
+This runs the resolver on a sample project with a web app, postgres, and redis. Pick a service and it merges the injected variables, applies the stored ones, and expands every reference the way a deployment does. Click a reference to jump to its source. Edit any value to watch the result change, or add a scratch variable to cause a cycle.
+
+<Playground />
+
+## How resolution works
+
+shed expands each of the service's variables depth first, remembering finished values and tracking which variables it is currently inside of. The rules, in order:
+
+1. Keys are visited in sorted order, so the first cycle reported is always the same one.
+2. A variable that is missing resolves to an empty string before any other check, even if it would be on the stack.
+3. A variable already on the stack is a cycle. The error lists the loop:
+
+   ```error
+   vars: reference cycle: web.A -> web.B -> web.A
+   ```
+
+4. Reaching a variable deeper than 64 levels, or one over the size limits, is an error.
+5. Finished values are memoized, so a diamond (`A` uses `B` and `C`, both use `D`) is not a cycle, and two services may refer to each other as long as the variables do not.
+
+The first error fails the whole set, and therefore the deployment, with `deploy: resolve variables: ...` in the build log. Only the variables of the service being deployed are walked: another service's broken value does not matter unless something you deploy references it.
+
+After resolution, the values of your _stored_ variables become literal secrets that shed masks in build and runtime logs. Injected values like `PORT` are not masked. See [secret redaction](/docs/logs#secret-redaction).
+
+## Limits
+
+Limits are checked as values are expanded, before the bytes are appended, so a hostile chain cannot exhaust memory. All sizes are UTF-8 bytes.
+
+| Limit                        | Value                    | Error                                          |
+| ---------------------------- | ------------------------ | ---------------------------------------------- |
+| One value, as stored         | 64 KiB                   | `vars: value web.A exceeds 65536 bytes`        |
+| One value, after expansion   | 64 KiB                   | `vars: expanded value exceeds 65536 bytes`     |
+| All resolved values together | 1 MiB                    | `vars: resolved values exceed 1048576 bytes`   |
+| Reference chain depth        | 64                       | `vars: reference depth exceeds 64 at web.V064` |
+| Variable name                | `[A-Za-z_][A-Za-z0-9_]*` | 400 when saving                                |
+
+The playground shows the resolved size against the 1 MiB budget. The total counts each variable once, including ones reached through another service. The [resolver internals](/docs/internals#variable-resolver) cover the algorithm in code.

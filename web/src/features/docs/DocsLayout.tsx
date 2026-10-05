@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { Select } from "../../components/Form";
 import { cx } from "../../lib/cx";
 import styles from "./DocsLayout.module.css";
-import { docGroups, docPage, docPages, isDocSlug, type DocSlug } from "./registry";
+import { docGroups, docPage, docPages, isDocSlug } from "./registry";
 
 /** currentSlug is the docs page in the URL, or undefined on /docs itself. */
-function useCurrentSlug(): DocSlug | undefined {
+function useCurrentSlug(): string | undefined {
   const { pathname } = useLocation();
   const slug = pathname.replace(/^\/docs\/?/, "").split("/")[0] ?? "";
   return isDocSlug(slug) ? slug : undefined;
