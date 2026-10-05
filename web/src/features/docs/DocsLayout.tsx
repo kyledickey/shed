@@ -47,7 +47,7 @@ function useScrollSpy(ids: readonly string[], root: HTMLElement | null): string 
   return active;
 }
 
-/** DocsLayout frames the docs: page tree on the left, the page, and its outline on the right. */
+/** DocsLayout frames the docs: the page tree, with the current page's sections, beside the page. */
 export function DocsLayout() {
   const slug = useCurrentSlug();
   const { hash } = useLocation();
@@ -145,23 +145,6 @@ export function DocsLayout() {
           </div>
         )}
       </div>
-
-      {page && (
-        <aside className={styles.outline} aria-label="On this page">
-          <div className={styles.groupTitle}>On this page</div>
-          {page.sections.map((s) => (
-            <Link
-              key={s.id}
-              to="/docs/$slug"
-              params={{ slug: page.slug }}
-              hash={s.id}
-              className={cx(styles.outlineLink, s.id === active && styles.current)}
-            >
-              {s.title}
-            </Link>
-          ))}
-        </aside>
-      )}
     </div>
   );
 }

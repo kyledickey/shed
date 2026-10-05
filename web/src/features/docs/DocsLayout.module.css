@@ -1,14 +1,11 @@
 .layout {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 190px;
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: var(--space-10);
-  max-width: 1320px;
+  /* The tree, the gap, and a page at its 780px max width. */
+  max-width: 1104px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-8) var(--space-12);
-
-  @media (max-width: 1180px) {
-    grid-template-columns: 210px minmax(0, 1fr);
-  }
 
   @media (max-width: 820px) {
     grid-template-columns: minmax(0, 1fr);
@@ -16,8 +13,7 @@
   }
 }
 
-.tree,
-.outline {
+.tree {
   position: sticky;
   /* The site's header sits above the page; the dashboard has none. */
   top: calc(var(--docs-header, 0px) + var(--space-8));
@@ -25,9 +21,6 @@
   max-height: calc(100dvh - var(--docs-header, 0px) - 120px);
   overflow-y: auto;
   scrollbar-width: none;
-}
-
-.tree {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
@@ -46,16 +39,6 @@
 
   @media (max-width: 820px) {
     display: block;
-  }
-}
-
-.outline {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-
-  @media (max-width: 1180px) {
-    display: none;
   }
 }
 
@@ -103,8 +86,7 @@
   border-left: 1px solid var(--line);
 }
 
-.sectionLink,
-.outlineLink {
+.sectionLink {
   display: block;
   padding: 3px 8px;
   border-radius: var(--r-xs);
@@ -119,16 +101,6 @@
   &.current {
     color: var(--accent-ink);
     font-weight: 600;
-  }
-}
-
-.outlineLink {
-  padding-left: 10px;
-  border-left: 2px solid transparent;
-  border-radius: 0;
-
-  &.current {
-    border-left-color: var(--accent);
   }
 }
 

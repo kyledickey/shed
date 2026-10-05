@@ -91,7 +91,7 @@ Create one file, `content/<slug>.mdx`. The file name is the slug and the URL, `/
 - `order` sorts pages across all groups. It must be unique, and a test checks that.
 - `description` is the lede under the title.
 
-Every `##` heading becomes a section: it is listed under "On this page" and gets an anchor id. The id is a [github-slugger](https://github.com/Flet/github-slugger) slug of the heading text, so `## Zero-downtime switchover` is `#zero-downtime-switchover`. **Renaming a heading changes its id** and breaks links and tooltips that point at it, so search for the old id when you reword one. Use `###` for subsections. They are not listed and still get ids.
+Every `##` heading becomes a section: it is listed under the page in the sidebar and gets an anchor id. The id is a [github-slugger](https://github.com/Flet/github-slugger) slug of the heading text, so `## Zero-downtime switchover` is `#zero-downtime-switchover`. **Renaming a heading changes its id** and breaks links and tooltips that point at it, so search for the old id when you reword one. Use `###` for subsections. They are not listed and still get ids.
 
 ````mdx title="content/example.mdx"
 ---
