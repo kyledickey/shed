@@ -16,6 +16,7 @@ export const configKeys: readonly ConfigKey[] = [
   { key: "proxy.https_port", type: "int", default: "443" },
   { key: "proxy.acme_email", type: "string", default: '""' },
   { key: "proxy.base_domain", type: "string", default: '""' },
+  { key: "proxy.cloudflare", type: "bool", default: "false" },
   { key: "auth.allowed_users", type: "list", default: "[]" },
   { key: "build.memory_mb", type: "int", default: "2048" },
   { key: "build.cpus", type: "float", default: "2" },
