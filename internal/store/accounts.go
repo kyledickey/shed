@@ -14,6 +14,9 @@ func (s *Store) Setting(ctx context.Context, key string) (string, error) {
 		err := r.Scan(&v)
 		return v, err
 	}, `SELECT value FROM settings WHERE key = ?`, key)
+	if err == nil {
+		v, err = s.crypt.open(v, settingAD(key))
+	}
 	if err != nil {
 		return "", fmt.Errorf("store: setting %q: %w", key, err)
 	}
@@ -23,7 +26,7 @@ func (s *Store) Setting(ctx context.Context, key string) (string, error) {
 // SetSetting creates or replaces a setting.
 func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	err := s.exec(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
-		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, s.crypt.seal(value, settingAD(key)))
 	if err != nil {
 		return fmt.Errorf("store: set setting %q: %w", key, err)
 	}
@@ -34,7 +37,7 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 // It reports whether it stored value.
 func (s *Store) AddSetting(ctx context.Context, key, value string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
-		ON CONFLICT (key) DO NOTHING`, key, value)
+		ON CONFLICT (key) DO NOTHING`, key, s.crypt.seal(value, settingAD(key)))
 	if err != nil {
 		return false, fmt.Errorf("store: add setting %q: %w", key, err)
 	}

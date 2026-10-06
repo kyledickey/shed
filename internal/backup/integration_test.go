@@ -42,7 +42,7 @@ func newITEnv(t *testing.T) *itEnv {
 	if err := dc.Ping(ctx); err != nil {
 		t.Skipf("no Docker daemon: %v", err)
 	}
-	st, err := store.Open(filepath.Join(t.TempDir(), "shed.db"))
+	st, err := store.Open(filepath.Join(t.TempDir(), "shed.db"), make([]byte, store.KeySize))
 	if err != nil {
 		t.Fatal(err)
 	}

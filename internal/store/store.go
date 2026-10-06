@@ -25,16 +25,28 @@ var (
 	// ErrConflict is returned when a write violates a uniqueness constraint,
 	// such as a duplicate project name or domain host.
 	ErrConflict = errors.New("store: conflict")
+
+	// ErrWrongKey is returned by [Open] when the database was encrypted with
+	// a different key.
+	ErrWrongKey = errors.New("store: database is encrypted with a different key")
 )
 
 // Store is a handle to the SQLite database. It is safe for concurrent use.
 type Store struct {
-	db *sql.DB
+	db    *sql.DB
+	crypt *crypter
 }
 
 // Open opens the database at path, creating it and applying any pending
-// migrations.
-func Open(path string) (*Store, error) {
+// migrations. Settings values, service variables, and backup destination
+// secret keys are encrypted at rest with key, which must be [KeySize] bytes;
+// Open encrypts them in a database that predates encryption. It returns
+// ErrWrongKey if the database was encrypted with a different key.
+func Open(path string, key []byte) (*Store, error) {
+	c, err := newCrypter(key)
+	if err != nil {
+		return nil, err
+	}
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
@@ -48,7 +60,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	if err := ensureEncrypted(context.Background(), db, c); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	return &Store{db: db, crypt: c}, nil
 }
 
 // Close closes the database.

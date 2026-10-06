@@ -58,7 +58,7 @@ listen = "127.0.0.1:3000"          # dashboard + API listener (Caddy fronts it)
 url    = "https://shed.example.com" # public dashboard URL; used for GitHub callbacks
 
 [data]
-dir = "/var/lib/shed"              # shed.db, builds/, logs/, backups/
+dir = "/var/lib/shed"              # shed.db, builds/, logs/, backups/ (shed.key lives next to the config, not here)
 
 [proxy]
 enabled     = true
@@ -133,7 +133,7 @@ that does I/O.
 IDs are random 12-char lowercase base32 strings. Times are RFC 3339 UTC text.
 
 ```sql
-CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- value encrypted (see Encryption at rest)
 
 CREATE TABLE users (
   github_id INTEGER PRIMARY KEY,
@@ -181,7 +181,7 @@ CREATE TABLE services (
 CREATE TABLE variables (
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   key TEXT NOT NULL,
-  value TEXT NOT NULL,
+  value TEXT NOT NULL,                   -- encrypted (see Encryption at rest)
   PRIMARY KEY (service_id, key)
 );
 
@@ -283,7 +283,7 @@ CREATE TABLE backup_destinations (       -- S3 locations backups were uploaded t
   prefix TEXT NOT NULL,                  -- without surrounding slashes
   path_style INTEGER NOT NULL,
   access_key_id TEXT NOT NULL,           -- credentials may be replaced
-  secret_access_key TEXT NOT NULL,
+  secret_access_key TEXT NOT NULL,       -- encrypted (see Encryption at rest)
   created_at TEXT NOT NULL,
   UNIQUE (endpoint, region, bucket, prefix, path_style)
 );
@@ -369,6 +369,39 @@ CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 `active`, `failed`, `crashed`, `removed` (superseded), `canceled`, `skipped`
 (CI failed).
+
+### Encryption at rest
+
+Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
+key: every `settings.value` (including the GitHub App credentials and the backup
+age identity), `variables.value`, and `backup_destinations.secret_access_key`.
+
+- **Format.** `v1:` + base64 (raw std, no padding) of `nonce‖ciphertext`. The
+  additional data binds each value to its row: the table plus `key`
+  (settings), `service_id`+`key` (variables), or the destination id. A value
+  copied to another row fails to decrypt.
+- **Key file.** `shed.key` next to the config file (default
+  `/etc/shed/shed.key`), deliberately outside `data.dir`. Contents: base64 of
+  32 bytes. If missing, shed generates it on start (mode 0600) and logs a
+  warning to back it up. If `$CREDENTIALS_DIRECTORY/shed.key` exists (systemd
+  `LoadCredential=` or `LoadCredentialEncrypted=`, which can bind it to a TPM),
+  that is used instead and is never generated.
+- **Conversion.** Opening a database without a `store.key_check` settings row
+  (one that predates encryption) encrypts its plaintext values and writes the
+  key check in one transaction. SQL migrations can't read encrypted columns,
+  so later data changes to them must be done in Go after `Open` decrypts.
+- **Key check.** On later starts the key must decrypt `store.key_check`. A
+  mismatch makes shed refuse to start with an error naming the key path.
+- **Not covered.** Docker volumes, Docker's container configs (resolved
+  environment variables in plaintext), images and build cache, build logs,
+  container logs, `shed.log`, Caddy's storage in `<data>/caddy`, and backups
+  unless backup encryption is on. Sessions and OAuth tokens are stored only as
+  hashes. The goal is protecting shed.db copies and backups that leak without
+  the key file; root on the running host is out of scope. Full-disk encryption
+  covers the rest.
+
+Losing the key loses the variables, GitHub App credentials, S3 secret, and age
+identity in shed.db. shed.db system backups hold ciphertext.
 
 ## Runtime model
 
@@ -828,7 +861,9 @@ time in UTC.
 files together. Fetch `<prefix>/system/*.db.zst[.age]`, decrypt with the original
 age key if needed, and decompress into a separate file. Only after success,
 replace the database in `data.dir` and remove the old WAL and SHM files before
-starting shed. This restores metadata, not Docker images or volume data.
+starting shed. The original `shed.key` must be in place (or in the credentials
+directory); a different key makes shed refuse to start. This restores metadata,
+not Docker images or volume data.
 
 On a replacement host, recover matching Docker images and named volumes from a
 host backup before starting shed. Without them, recreation fails safely; queued

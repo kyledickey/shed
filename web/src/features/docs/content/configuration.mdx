@@ -105,14 +105,14 @@ Values are strings that shed decodes into each field's type, so `SHED_PROXY_ENAB
 
 ## Data directory
 
-shed creates `data.dir`, `logs`, `builds`, and `backups` on boot (mode 0750). The application log is the exception: it goes next to the config file, not in the data directory.
+shed creates `data.dir`, `logs`, `builds`, and `backups` on boot (mode 0750). The application log and the encryption key (`shed.key`, see [Encryption at rest](/docs/security#encryption-at-rest)) are the exceptions: they live next to the config file, not in the data directory.
 
 <Figure caption="Docker volumes live in Docker's own storage, so back up with shed, not by copying data.dir.">
   <DataDirDiagram />
 </Figure>
 
 - **shed.log** is rotated by `log.max_size_mb`, `log.max_backups`, and `log.max_age_days`, and mirrored to stderr. The last 1000 lines are also kept in memory, which is what `GET /api/logs` replays before it follows new lines (Server, Logs in the dashboard).
-- **shed.db** is the only copy of your projects, variables, deployments, sessions, metrics, and GitHub App credentials. shed backs it up like any service.
+- **shed.db** is the only copy of your projects, variables, deployments, sessions, metrics, and GitHub App credentials. Secrets in it are encrypted with `shed.key`. shed backs it up like any service.
 - **backups/** holds one directory per service id, plus `system`. Directories are mode 0700 and archives 0600.
 - **builds/** and **logs/** are named by deployment id. Build workspaces are deleted after the build. Logs are deleted with their deployment.
 

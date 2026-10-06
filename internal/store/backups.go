@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -150,10 +151,14 @@ func (s *Store) DeleteFailedBackupsBefore(ctx context.Context, t time.Time) (int
 const backupDestinationCols = `id, endpoint, region, bucket, prefix, path_style,
 	access_key_id, secret_access_key, created_at`
 
-func scanBackupDestination(r scanner) (BackupDestination, error) {
+func (s *Store) scanBackupDestination(r scanner) (BackupDestination, error) {
 	var d BackupDestination
 	err := r.Scan(&d.ID, &d.Endpoint, &d.Region, &d.Bucket, &d.Prefix, &d.PathStyle,
 		&d.AccessKeyID, &d.SecretAccessKey, (*timestamp)(&d.CreatedAt))
+	if err != nil {
+		return BackupDestination{}, err
+	}
+	d.SecretAccessKey, err = s.crypt.open(d.SecretAccessKey, destinationAD(d.ID))
 	return d, err
 }
 
@@ -162,23 +167,45 @@ func scanBackupDestination(r scanner) (BackupDestination, error) {
 // stored there, its credentials are replaced and its ID kept; otherwise a new
 // one is created. d.ID and d.CreatedAt are ignored.
 func (s *Store) PutBackupDestination(ctx context.Context, d BackupDestination) (BackupDestination, error) {
-	out, err := queryOne(ctx, s, scanBackupDestination, `INSERT INTO backup_destinations
-		(`+backupDestinationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (endpoint, region, bucket, prefix, path_style) DO UPDATE SET
-			access_key_id = excluded.access_key_id, secret_access_key = excluded.secret_access_key
-		RETURNING `+backupDestinationCols,
-		NewID(), d.Endpoint, d.Region, d.Bucket, d.Prefix, d.PathStyle, d.AccessKeyID, d.SecretAccessKey,
-		formatTime(now()))
+	out, err := s.putBackupDestination(ctx, d)
 	if err != nil {
 		return BackupDestination{}, fmt.Errorf("store: put backup destination %s/%s: %w", d.Endpoint, d.Bucket, err)
 	}
 	return out, nil
 }
 
+func (s *Store) putBackupDestination(ctx context.Context, d BackupDestination) (BackupDestination, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BackupDestination{}, err
+	}
+	defer tx.Rollback()
+	// The secret is bound to the row's ID, so the ID must be known before
+	// the secret is encrypted.
+	id := NewID()
+	err = tx.QueryRowContext(ctx, `SELECT id FROM backup_destinations
+		WHERE endpoint = ? AND region = ? AND bucket = ? AND prefix = ? AND path_style = ?`,
+		d.Endpoint, d.Region, d.Bucket, d.Prefix, d.PathStyle).Scan(&id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return BackupDestination{}, err
+	}
+	out, err := s.scanBackupDestination(tx.QueryRowContext(ctx, `INSERT INTO backup_destinations
+		(`+backupDestinationCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (endpoint, region, bucket, prefix, path_style) DO UPDATE SET
+			access_key_id = excluded.access_key_id, secret_access_key = excluded.secret_access_key
+		RETURNING `+backupDestinationCols,
+		id, d.Endpoint, d.Region, d.Bucket, d.Prefix, d.PathStyle, d.AccessKeyID,
+		s.crypt.seal(d.SecretAccessKey, destinationAD(id)), formatTime(now())))
+	if err != nil {
+		return BackupDestination{}, mapError(err)
+	}
+	return out, tx.Commit()
+}
+
 // BackupDestination returns the backup destination with the given ID, or
 // ErrNotFound.
 func (s *Store) BackupDestination(ctx context.Context, id string) (BackupDestination, error) {
-	d, err := queryOne(ctx, s, scanBackupDestination,
+	d, err := queryOne(ctx, s, s.scanBackupDestination,
 		`SELECT `+backupDestinationCols+` FROM backup_destinations WHERE id = ?`, id)
 	if err != nil {
 		return BackupDestination{}, fmt.Errorf("store: backup destination %s: %w", id, err)

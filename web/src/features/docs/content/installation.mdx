@@ -22,7 +22,7 @@ The installer:
 
 Open that URL, enter the token, and follow the [GitHub setup](/docs/github#first-run-setup) to create the GitHub App. Then sign in with one of the GitHub logins you allowed.
 
-Running the installer on a server that already has `/etc/shed/shed.toml` upgrades the binary and the systemd unit, restarts shed, and leaves the config alone.
+Running the installer on a server that already has `/etc/shed/shed.toml` upgrades the binary and the systemd unit, restarts shed, and leaves the config alone. On first start shed also creates `/etc/shed/shed.key`, the key that encrypts secrets in shed.db. [Back it up](/docs/security#encryption-at-rest) off the server.
 
 ## What the installer asks
 

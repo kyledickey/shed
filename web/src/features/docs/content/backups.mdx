@@ -87,7 +87,7 @@ Encryption is one global switch, `backup.encrypt`. The first time you turn it on
 - Turning it off keeps the identity. Older archives keep their own `encrypted` flag, and shed decrypts them with the stored key.
 - Dashboard downloads and restores decrypt for you. Files you take from disk or S3 are still `.age`.
 
-The recipient (`age1...`) is public. The identity (`AGE-SECRET-KEY-1...`) is the secret: reveal it in the backup settings and store it off the server. Without it, encrypted backups, including those of shed.db, cannot be recovered after the server is lost. The dashboard reveals the secret key on request through `GET /api/backups/settings/key`.
+The recipient (`age1...`) is public. The identity (`AGE-SECRET-KEY-1...`) is the secret: reveal it in the backup settings and store it off the server. Without it, encrypted backups, including those of shed.db, cannot be recovered after the server is lost. shed.db backups also need the original `shed.key` to be usable; see [Encryption at rest](/docs/security#encryption-at-rest). The dashboard reveals the secret key on request through `GET /api/backups/settings/key`.
 
 ## S3 storage
 

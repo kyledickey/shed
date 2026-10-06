@@ -108,7 +108,15 @@ func run() error {
 		}
 	}
 
-	st, err := store.Open(filepath.Join(dataDir, "shed.db"))
+	key, keyPath, err := loadKey(config.KeyFile(*configPath), os.Getenv("CREDENTIALS_DIRECTORY"), log)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(filepath.Join(dataDir, "shed.db"), key)
+	if errors.Is(err, store.ErrWrongKey) {
+		return fmt.Errorf("shed.db was encrypted with a different key than %s; "+
+			"restore the key it was encrypted with", keyPath)
+	}
 	if err != nil {
 		return err
 	}

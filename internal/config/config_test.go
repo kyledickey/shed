@@ -120,3 +120,9 @@ func TestLogFile(t *testing.T) {
 		t.Errorf("LogFile() = %q, want %q", got, want)
 	}
 }
+
+func TestKeyFile(t *testing.T) {
+	if got, want := KeyFile("/etc/shed/shed.toml"), "/etc/shed/shed.key"; got != want {
+		t.Errorf("KeyFile() = %q, want %q", got, want)
+	}
+}
