@@ -235,6 +235,8 @@ func (a *Auth) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	a.registerMu.Lock()
+	defer a.registerMu.Unlock()
 	if err := a.cleanUp(ctx); err != nil {
 		a.log.Warn("remove expired oauth rows", "err", err)
 	}
@@ -288,6 +290,10 @@ func (a *Auth) Register(w http.ResponseWriter, r *http.Request) {
 // redirect to the client.
 func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if q.Has("request") {
+		a.resumeAuthorize(w, r, q.Get("request"))
+		return
+	}
 	for k, v := range q {
 		if len(v) > 1 {
 			errorPage(w, http.StatusBadRequest, fmt.Sprintf("The %s parameter is repeated.", k))
@@ -332,6 +338,14 @@ func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req := &request{
+		client:      client,
+		redirectURI: redirect,
+		state:       q.Get("state"),
+		challenge:   q.Get("code_challenge"),
+		scope:       scope,
+		resource:    a.Resource(),
+	}
 	user, ok, err := a.sessionUser(r)
 	if err != nil {
 		a.log.Error("look up session", "err", err)
@@ -339,18 +353,50 @@ func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		http.Redirect(w, r, "/api/auth/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		// The request waits here rather than riding along in the sign-in
+		// return path: a full authorize URL can outgrow that limit.
+		id, err := a.signins.add(req)
+		if err != nil {
+			a.log.Error("store authorization request", "err", err)
+			errorPage(w, http.StatusInternalServerError, "Something went wrong. Try again.")
+			return
+		}
+		a.redirectToSignIn(w, r, id)
 		return
 	}
-	id, err := a.requests.add(&request{
-		client:      client,
-		githubID:    user.GitHubID,
-		redirectURI: redirect,
-		state:       q.Get("state"),
-		challenge:   q.Get("code_challenge"),
-		scope:       scope,
-		resource:    a.Resource(),
-	})
+	a.awaitConsent(w, r, req, user)
+}
+
+// resumeAuthorize continues an authorization request that waited for the
+// user to sign in.
+func (a *Auth) resumeAuthorize(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok, err := a.sessionUser(r)
+	if err != nil {
+		a.log.Error("look up session", "err", err)
+		errorPage(w, http.StatusInternalServerError, "Something went wrong. Try again.")
+		return
+	}
+	if !ok {
+		a.redirectToSignIn(w, r, id)
+		return
+	}
+	req, ok := a.signins.take(id, 0)
+	if !ok {
+		errorPage(w, http.StatusBadRequest, "This connection request expired. Start connecting again from the app.")
+		return
+	}
+	a.awaitConsent(w, r, req, user)
+}
+
+func (a *Auth) redirectToSignIn(w http.ResponseWriter, r *http.Request, id string) {
+	next := "/oauth/authorize?request=" + url.QueryEscape(id)
+	http.Redirect(w, r, "/api/auth/login?next="+url.QueryEscape(next), http.StatusFound)
+}
+
+// awaitConsent binds req to user and sends the browser to the consent page.
+func (a *Auth) awaitConsent(w http.ResponseWriter, r *http.Request, req *request, user User) {
+	req.githubID = user.GitHubID
+	id, err := a.requests.add(req)
 	if err != nil {
 		a.log.Error("store authorization request", "err", err)
 		errorPage(w, http.StatusInternalServerError, "Something went wrong. Try again.")
@@ -635,7 +681,7 @@ func (a *Auth) cleanUp(ctx context.Context) error {
 // request is a pending authorization request awaiting the user's consent.
 type request struct {
 	client      Client
-	githubID    int64 // The user who started it; only they can decide it.
+	githubID    int64 // The user who started it; only they can decide it. 0 until sign-in.
 	redirectURI string
 	state       string
 	challenge   string

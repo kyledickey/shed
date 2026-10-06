@@ -343,6 +343,12 @@ export const endpointGroups: EndpointGroup[] = [
         notes: "Public. 400 HTML page for an invalid request.",
       },
       {
+        method: "GET",
+        path: "/oauth/authorize?request=",
+        response: "302 to /authorize",
+        notes: "Resumes a request after sign-in, once. 400 HTML page if expired.",
+      },
+      {
         method: "POST",
         path: "/oauth/token",
         body: "form",

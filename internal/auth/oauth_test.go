@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -370,8 +371,21 @@ func TestOAuthFlow(t *testing.T) {
 	if rec.Code != http.StatusFound || loc.Path != "/api/auth/login" {
 		t.Fatalf("authorize without session = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
-	if next := loc.Query().Get("next"); next != "/oauth/authorize?"+q.Encode() {
-		t.Errorf("next = %q", next)
+	signIn := loc.Query().Get("next")
+	if !strings.HasPrefix(signIn, "/oauth/authorize?request=") {
+		t.Fatalf("next = %q", signIn)
+	}
+	// Signed in, the waiting request moves on to the consent page, once.
+	resume := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", signIn, nil)
+		req.AddCookie(e.cookie)
+		return e.serve(req)
+	}
+	if rec := resume(); rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/authorize?request=") {
+		t.Fatalf("resume = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := resume(); rec.Code != http.StatusBadRequest {
+		t.Errorf("resume again = %d, want 400", rec.Code)
 	}
 
 	// The consent page reads the pending request.
@@ -692,6 +706,54 @@ func TestRegisterValidation(t *testing.T) {
 				t.Errorf("registration = %v", out)
 			}
 		})
+	}
+}
+
+func TestAuthorizeLongRequestSignIn(t *testing.T) {
+	// An authorize URL with a maximal redirect URI is too long to carry
+	// through sign-in, so the request waits server-side instead.
+	e := newOAuthEnv(t)
+	redirect := "https://app.example.com/" + strings.Repeat("a", maxURILen-len("https://app.example.com/"))
+	rec := e.register(`{"redirect_uris":["` + redirect + `"]}`)
+	var out struct {
+		ClientID string `json:"client_id"`
+	}
+	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+		t.Fatalf("register = %d %s", rec.Code, rec.Body)
+	}
+	q := authorizeQuery(out.ClientID)
+	q.Set("redirect_uri", redirect)
+	q.Set("state", strings.Repeat("s", 500))
+	rec = e.authorize(q, nil)
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	next := loc.Query().Get("next")
+	if !localPath(next) {
+		t.Fatalf("next %q is not accepted by sign-in", next)
+	}
+	req := httptest.NewRequest("GET", next, nil)
+	req.AddCookie(e.cookie)
+	if rec := e.serve(req); !strings.HasPrefix(rec.Header().Get("Location"), "/authorize?request=") {
+		t.Fatalf("resume = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestRegisterCapConcurrent(t *testing.T) {
+	e := newOAuthEnv(t)
+	for i := range maxClients - 1 {
+		e.store.clients[fmt.Sprint("c", i)] = Client{}
+	}
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Go(func() {
+			req := httptest.NewRequest("POST", "/oauth/register", strings.NewReader(`{"redirect_uris":["https://a/cb"]}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
+			e.serve(req)
+		})
+	}
+	wg.Wait()
+	if n := len(e.store.clients); n != maxClients {
+		t.Errorf("clients = %d, want %d", n, maxClients)
 	}
 }
 

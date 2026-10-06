@@ -937,11 +937,14 @@ the only resource is `<server.url>/mcp`.
    parameter, gets an HTML error page and is never redirected to the client:
    anyone can register a redirect URI, so redirecting errors before the user
    has consented would make shed an open redirector (RFC 9700 section
-   4.11.2). Without a valid session the browser goes to
-   `/api/auth/login?next=<this authorize URL>`. Otherwise shed keeps a pending
-   request in memory for 10 minutes (at most 256; a restart forgets them),
-   bound to the signed-in user, and redirects to the dashboard's
-   `/authorize?request=<id>` consent page.
+   4.11.2). Without a valid session shed keeps the validated request in
+   memory and sends the browser to
+   `/api/auth/login?next=/oauth/authorize?request=<id>`, since a full
+   authorize URL can exceed the sign-in return path's limit; after sign-in
+   that URL picks the request up once. Otherwise shed keeps a pending
+   request in memory for 10 minutes (at most 256 awaiting sign-in and 256
+   awaiting consent; a restart forgets them), bound to the signed-in user,
+   and redirects to the dashboard's `/authorize?request=<id>` consent page.
 4. The consent page reads `GET /api/oauth/requests/{id}` and posts
    `{approve}` to `POST /api/oauth/requests/{id}`, which answers with the URL
    to send the browser to: the redirect URI with `code` and `state`, or with
@@ -1153,6 +1156,7 @@ GET    /.well-known/oauth-protected-resource[/mcp]  RFC 9728 metadata (no sessio
 GET    /.well-known/oauth-authorization-server  RFC 8414 metadata (no session, CORS)
 POST   /oauth/register          RFC 7591 JSON   201 → client  (no session, CORS; 429 past the per-address limit, 503 past the cap)
 GET    /oauth/authorize?…                       302 → /authorize?request= | /api/auth/login?next=; 400 HTML for an invalid request
+GET    /oauth/authorize?request=                302 → /authorize?request= (resumes after sign-in; 400 HTML if expired)
 POST   /oauth/token             form            → token response  (no session, CORS)
 POST   /oauth/revoke            form            200  (no session, CORS)
 GET    /api/oauth/requests/{id}                 → OAuthRequest  (404 if unknown, expired, decided, or another user's)
