@@ -17,10 +17,12 @@ type AreaChartProps = {
   /** Seconds between samples. */
   step: number;
   format: (v: number) => string;
-  /** Fixed y maximum, e.g. a memory limit. Defaults to a nice data max. */
+  /** The most the values can reach, e.g. the vCPUs; the axis ends there. */
   max?: number;
-  /** A dashed reference line, e.g. the container limit. */
+  /** A ceiling drawn as a dashed line, e.g. a memory limit; the axis ends there. */
   limit?: { value: number; label: string };
+  /** Values are bytes: without a ceiling, round the axis in powers of 1024. */
+  binary?: boolean;
   height?: number;
 };
 
@@ -34,6 +36,7 @@ export function AreaChart({
   format,
   max,
   limit,
+  binary = false,
   height = 200,
 }: AreaChartProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -50,7 +53,10 @@ export function AreaChart({
 
   const n = Math.max(...series.map((s) => s.values.length), 2);
   const dataMax = Math.max(0, ...series.flatMap((s) => s.values.filter((v) => v !== null)));
-  const yMax = max ?? niceMax(Math.max(dataMax * 1.15, limit?.value ?? 0));
+  // A known ceiling is the top of the axis, so the chart reads as a share of
+  // it. Without one, the axis fits the data with some headroom.
+  const ceiling = limit?.value ?? max;
+  const yMax = ceiling ? Math.max(ceiling, dataMax) : niceMax(dataMax * 1.1, binary);
   const innerW = Math.max(0, width - PAD.left - PAD.right);
   const innerH = height - PAD.top - PAD.bottom;
   const x = (i: number) => PAD.left + (i / (n - 1)) * innerW;
@@ -160,7 +166,11 @@ export function AreaChart({
                   y2={y(limit.value)}
                   className={styles.limit}
                 />
-                <text x={PAD.left + 6} y={y(limit.value) - 6} className={styles.limitLabel}>
+                <text
+                  x={PAD.left + 6}
+                  y={limit.value >= yMax ? y(limit.value) + 14 : y(limit.value) - 6}
+                  className={styles.limitLabel}
+                >
                   {limit.label}
                 </text>
               </g>

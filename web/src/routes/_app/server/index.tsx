@@ -114,6 +114,7 @@ function Charts({ metrics: m }: { metrics: HostMetrics }) {
         start={m.start}
         step={m.step}
         format={formatBytes}
+        binary
         limit={{ value: m.memoryTotal, label: "Total" }}
       />
       <ChartCard
@@ -127,6 +128,7 @@ function Charts({ metrics: m }: { metrics: HostMetrics }) {
         start={m.start}
         step={m.step}
         format={formatBytes}
+        binary
         limit={{ value: m.diskTotal, label: "Total" }}
       />
       <ChartCard
@@ -146,6 +148,7 @@ function Charts({ metrics: m }: { metrics: HostMetrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
+        binary
       />
       <ChartCard
         title="Disk I/O"
@@ -164,6 +167,7 @@ function Charts({ metrics: m }: { metrics: HostMetrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
+        binary
       />
     </Grid>
   );

@@ -13,10 +13,21 @@ type ChartCardProps = {
   format: (v: number) => string;
   max?: number;
   limit?: { value: number; label: string };
+  binary?: boolean;
 };
 
 /** ChartCard is a titled time-series chart with its current value in the header. */
-export function ChartCard({ title, now, series, start, step, format, max, limit }: ChartCardProps) {
+export function ChartCard({
+  title,
+  now,
+  series,
+  start,
+  step,
+  format,
+  max,
+  limit,
+  binary,
+}: ChartCardProps) {
   return (
     <LayerCard
       title={title}
@@ -30,6 +41,7 @@ export function ChartCard({ title, now, series, start, step, format, max, limit 
         format={format}
         max={max}
         limit={limit}
+        binary={binary}
         height={190}
       />
     </LayerCard>

@@ -118,6 +118,7 @@ function Charts({ metrics: m }: { metrics: Metrics }) {
         start={m.start}
         step={m.step}
         format={formatBytes}
+        binary
         limit={m.memoryLimit > 0 ? { value: m.memoryLimit, label: "Limit" } : undefined}
       />
       <ChartCard
@@ -137,6 +138,7 @@ function Charts({ metrics: m }: { metrics: Metrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
+        binary
       />
       <ChartCard
         title="Disk I/O"
@@ -155,6 +157,7 @@ function Charts({ metrics: m }: { metrics: Metrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
+        binary
       />
     </Grid>
   );

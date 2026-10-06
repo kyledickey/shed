@@ -59,11 +59,20 @@ export function segments(values: (number | null)[], toPoint: (v: number, i: numb
   return runs;
 }
 
-/** niceMax rounds a maximum up to 1, 2, 2.5 or 5 times a power of ten. */
-export function niceMax(v: number): number {
+/**
+ * niceMax rounds a maximum up to the next of 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6
+ * or 8 times a power of ten, so the axis hugs the data. With
+ * binary, it rounds within the power of 1024 that formatBytes would pick, so
+ * byte axes end on round numbers like "50 KB" rather than "46.6 GB".
+ */
+export function niceMax(v: number, binary = false): number {
   if (v <= 0) return 1;
+  if (binary) {
+    const unit = 1024 ** Math.floor(Math.log(Math.max(v, 1)) / Math.log(1024));
+    return niceMax(v / unit) * unit;
+  }
   const pow = 10 ** Math.floor(Math.log10(v));
   const m = v / pow;
-  const nice = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
+  const nice = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((step) => m <= step) ?? 10;
   return nice * pow;
 }

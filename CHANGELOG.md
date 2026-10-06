@@ -3,6 +3,14 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.2 - 2026-10-06
+
+- Metric charts end at the limit when there is one (vCPUs, total memory and
+  disk, a service's limits) and otherwise fit the data closely. Byte axes no
+  longer overshoot, e.g. 46.6 GB for a 23.4 GB server.
+- Settings → Agents shows one connect command at a time, with tabs for any
+  agent, Claude Code, Codex, and the URL.
+
 ## v0.2.1 - 2026-10-06
 
 - Settings → Agents, the MCP docs, and the `shed` skill show how to connect
