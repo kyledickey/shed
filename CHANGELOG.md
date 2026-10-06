@@ -3,6 +3,11 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.3 - 2026-10-06
+
+- shed is licensed under the Apache License 2.0.
+- More space between the logo and the tabs on phones.
+
 ## v0.2.2 - 2026-10-06
 
 - Metric charts end at the limit when there is one (vCPUs, total memory and
