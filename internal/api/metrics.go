@@ -1,20 +1,11 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"time"
 
 	"github.com/kyledickey/shed/internal/metrics"
 )
-
-// Metrics answers resource usage queries. *metrics.Collector implements it.
-type Metrics interface {
-	Query(ctx context.Context, serviceID string, r metrics.Range) (metrics.Series, error)
-	QueryHost(ctx context.Context, r metrics.Range) (metrics.HostSeries, error)
-}
-
-var _ Metrics = (*metrics.Collector)(nil)
 
 type metricsJSON struct {
 	Range       metrics.Range `json:"range"`
@@ -47,11 +38,7 @@ type hostMetricsJSON struct {
 }
 
 func (s *Server) hostMetrics(w http.ResponseWriter, r *http.Request) error {
-	rng, err := metrics.ParseRange(r.URL.Query().Get("range"))
-	if err != nil {
-		return errorf(http.StatusBadRequest, "range must be one of 1h, 6h, 24h, or 7d")
-	}
-	m, err := s.metrics.QueryHost(r.Context(), rng)
+	m, err := s.control.HostMetrics(r.Context(), r.URL.Query().Get("range"))
 	if err != nil {
 		return err
 	}
@@ -73,16 +60,7 @@ func (s *Server) hostMetrics(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) serviceMetrics(w http.ResponseWriter, r *http.Request) error {
-	ctx := r.Context()
-	rng, err := metrics.ParseRange(r.URL.Query().Get("range"))
-	if err != nil {
-		return errorf(http.StatusBadRequest, "range must be one of 1h, 6h, 24h, or 7d")
-	}
-	svc, err := s.store.Service(ctx, r.PathValue("id"))
-	if err != nil {
-		return err
-	}
-	m, err := s.metrics.Query(ctx, svc.ID, rng)
+	m, err := s.control.ServiceMetrics(r.Context(), r.PathValue("id"), r.URL.Query().Get("range"))
 	if err != nil {
 		return err
 	}

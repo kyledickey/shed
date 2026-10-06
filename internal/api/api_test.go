@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/auth"
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
@@ -32,16 +33,17 @@ import (
 // fakeDeployer records deployments and service controls without running
 // them.
 type fakeDeployer struct {
-	mu         sync.Mutex
-	deploy     []store.Trigger
-	commits    []string // SHA of each deployment
-	routeFails int      // how many more ApplyRoutes calls fail
-	routeCalls int
-	controls   []string        // "stop <id>", "start <id>", "restart <id>"
-	controlErr error           // returned by the service controls
-	deployErr  error           // returned by Deploy
-	deleteErr  error           // returned by DeleteService and DeleteProject
-	onDelete   func(id string) // called by them with "delete <id>"
+	mu          sync.Mutex
+	deploy      []store.Trigger
+	commits     []string // SHA of each deployment
+	routeFails  int      // how many more ApplyRoutes calls fail
+	routeCalls  int
+	controls    []string        // "stop <id>", "start <id>", "restart <id>"
+	controlErr  error           // returned by the service controls
+	deployErr   error           // returned by Deploy
+	redeployErr error           // returned by Redeploy instead of deploy.ErrNoImage
+	deleteErr   error           // returned by DeleteService and DeleteProject
+	onDelete    func(id string) // called by them with "delete <id>"
 }
 
 func (f *fakeDeployer) control(op, serviceID string) error {
@@ -106,6 +108,11 @@ func (f *fakeDeployer) AvailableImages(context.Context, string, []string) (map[s
 }
 
 func (f *fakeDeployer) Redeploy(context.Context, string) (store.Deployment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.redeployErr != nil {
+		return store.Deployment{}, f.redeployErr
+	}
 	return store.Deployment{}, deploy.ErrNoImage
 }
 func (f *fakeDeployer) Cancel(context.Context, string) (store.Deployment, error) {
@@ -130,8 +137,11 @@ func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { retur
 func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
-func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, io.Writer) error {
+func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, bool, io.Writer) error {
 	return deploy.ErrNoContainer
+}
+func (f *fakeDeployer) BuildLog(context.Context, string, int) ([]string, error) {
+	return []string{"hello"}, nil
 }
 func (f *fakeDeployer) FollowLog(_ context.Context, _ string, line func(string), status func(store.DeploymentStatus)) error {
 	line("hello")
@@ -174,6 +184,8 @@ func (f *fakeMetrics) QueryHost(_ context.Context, r metrics.Range) (metrics.Hos
 // fakeLogs replays two lines and returns.
 type fakeLogs struct{}
 
+func (fakeLogs) Lines(int) []string { return nil }
+
 func (fakeLogs) Follow(_ context.Context, emit func(string)) {
 	emit("time=x level=INFO msg=one")
 	emit("time=x level=WARN msg=two")
@@ -205,18 +217,30 @@ func newFixture(t *testing.T) *fixture {
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
-	srv, err := New(context.Background(), Config{
-		Store:      st,
-		Deployer:   f.deployer,
-		Backups:    f.backups,
-		Metrics:    f.metrics,
-		Logs:       fakeLogs{},
-		Updates:    f.updates,
-		Restart:    func() { f.restarts++ },
-		Auth:       authn,
-		GitHub:     gh,
+	plane := control.New(control.Config{
+		Store:    st,
+		Deployer: f.deployer,
+		Backups:  f.backups,
+		Metrics:  f.metrics,
+		Logs:     fakeLogs{},
+		Updates:  f.updates,
+		GitHub: func() (control.GitHub, bool) {
+			if c := gh.Get(); c != nil {
+				return c, true
+			}
+			return nil, false
+		},
 		BaseURL:    "http://localhost",
 		BaseDomain: "apps.example.com",
+		Log:        log,
+	})
+	srv, err := New(context.Background(), Config{
+		Control:  plane,
+		Settings: st,
+		Restart:  func() { f.restarts++ },
+		Auth:     authn,
+		GitHub:   gh,
+		BaseURL:  "http://localhost",
 		Web: fstest.MapFS{
 			"index.html":      {Data: []byte("<html>shed</html>")},
 			"assets/app-1.js": {Data: []byte("console.log(1)")},
@@ -448,6 +472,10 @@ func TestShedLogs(t *testing.T) {
 		t.Errorf("body = %q, want %q", rec.Body, want)
 	}
 }
+
+// msgFenced is the error of a request that a restore fence refuses.
+const msgFenced = "a restore of this service failed and its data may be incomplete; " +
+	"restart shed to retry recovering it, or clear the restore fence to keep the data as it is"
 
 func TestServiceControls(t *testing.T) {
 	f := newFixture(t)

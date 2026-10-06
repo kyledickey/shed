@@ -144,7 +144,7 @@ func TestRuntimeLogsMaskDeployedSecrets(t *testing.T) {
 	var out strings.Builder
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
 	defer cancel()
-	if err := f.d.RuntimeLogs(ctx, f.svc.ID, 100, &out); err != nil {
+	if err := f.d.RuntimeLogs(ctx, f.svc.ID, 100, true, &out); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), old) || !strings.Contains(out.String(), "token=***") {

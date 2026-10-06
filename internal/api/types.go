@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/backup"
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -108,20 +109,70 @@ type repoJSON struct {
 	Private       bool   `json:"private"`
 }
 
-func toDeployment(d store.Deployment) deploymentJSON {
+func toProject(p control.ProjectView) projectJSON[serviceJSON] {
+	services := make([]serviceJSON, 0, len(p.Services))
+	for _, svc := range p.Services {
+		services = append(services, toService(svc))
+	}
+	return projectJSON[serviceJSON]{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, Services: services}
+}
+
+func toService(v control.ServiceView) serviceJSON {
+	out := serviceJSON{
+		ID:              v.ID,
+		ProjectID:       v.ProjectID,
+		Name:            v.Name,
+		Kind:            v.Kind,
+		Repo:            v.Repo,
+		Branch:          v.Branch,
+		RootDir:         v.RootDir,
+		Image:           v.Image,
+		DockerfilePath:  v.DockerfilePath,
+		StartCommand:    v.StartCommand,
+		Port:            v.Port,
+		HealthcheckPath: v.HealthcheckPath,
+		PublicPort:      v.PublicPort,
+		CPULimit:        v.CPULimit,
+		MemoryLimit:     v.MemoryLimit,
+		AutoDeploy:      v.AutoDeploy,
+		WaitForCI:       v.WaitForCI,
+		Status:          v.Status,
+		PrivateHost:     v.Name,
+		Domains:         make([]domainJSON, 0, len(v.Domains)),
+		Volumes:         make([]volumeJSON, 0, len(v.Volumes)),
+		CreatedAt:       v.CreatedAt,
+	}
+	for _, d := range v.Domains {
+		out.Domains = append(out.Domains, toDomain(d))
+	}
+	for _, vol := range v.Volumes {
+		out.Volumes = append(out.Volumes, toVolume(vol))
+	}
+	if d := v.LatestDeployment; d != nil {
+		j := toDeployment(*d)
+		out.LatestDeployment = &j
+	}
+	if f := v.RestoreFence; f != nil {
+		out.RestoreFence = &restoreFenceJSON{RestoreID: f.RestoreID, Phase: f.Phase, CreatedAt: f.CreatedAt}
+	}
+	return out
+}
+
+func toDeployment(d control.DeploymentView) deploymentJSON {
 	return deploymentJSON{
-		ID:            d.ID,
-		ServiceID:     d.ServiceID,
-		Status:        d.Status,
-		Trigger:       d.Trigger,
-		CommitSHA:     d.CommitSHA,
-		CommitMessage: d.CommitMessage,
-		CommitAuthor:  d.CommitAuthor,
-		Image:         d.Image,
-		Error:         d.Error,
-		CreatedAt:     d.CreatedAt,
-		StartedAt:     d.StartedAt,
-		FinishedAt:    d.FinishedAt,
+		ImageAvailable: d.ImageAvailable,
+		ID:             d.ID,
+		ServiceID:      d.ServiceID,
+		Status:         d.Status,
+		Trigger:        d.Trigger,
+		CommitSHA:      d.CommitSHA,
+		CommitMessage:  d.CommitMessage,
+		CommitAuthor:   d.CommitAuthor,
+		Image:          d.Image,
+		Error:          d.Error,
+		CreatedAt:      d.CreatedAt,
+		StartedAt:      d.StartedAt,
+		FinishedAt:     d.FinishedAt,
 	}
 }
 
@@ -243,8 +294,7 @@ func toBackupPolicy(p backup.Policy) backupPolicyJSON {
 	}
 }
 
-// toBackup converts b. serviceName is empty for shed.db.
-func toBackup(b store.Backup, serviceName string) backupJSON {
+func toBackup(b control.BackupView) backupJSON {
 	var serviceID *string
 	if b.ServiceID != "" {
 		serviceID = &b.ServiceID
@@ -255,7 +305,7 @@ func toBackup(b store.Backup, serviceName string) backupJSON {
 		Trigger:     string(b.Trigger),
 		Method:      string(b.Method),
 		Status:      string(b.Status),
-		FileName:    backup.DownloadName(b, serviceName),
+		FileName:    b.FileName,
 		Size:        b.Size,
 		Encrypted:   b.Encrypted,
 		Local:       b.Local,

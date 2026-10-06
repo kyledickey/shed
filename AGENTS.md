@@ -34,7 +34,8 @@ internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
 internal/backup    backups and restores: dumps, archives, zstd, age, schedules, S3
 internal/auth      sessions, GitHub sign-in, middleware
-internal/api       HTTP API, SSE logs, webhook, SPA serving
+internal/control   operations and rules behind every interface (control.Plane)
+internal/api       HTTP API, SSE logs, webhook, SPA serving; thin handlers over control
 web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)
 web/site/          public site: home page and docs, prerendered to static HTML
 deploy/            systemd unit and example config

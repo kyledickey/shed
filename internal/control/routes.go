@@ -1,18 +1,13 @@
-package api
+package control
 
 import (
 	"context"
-	"net/http"
 	"sync"
 	"time"
 )
 
 // routeTimeout bounds one attempt to apply routes.
 const routeTimeout = 30 * time.Second
-
-// routesPendingHeader is set, to "pending", on the response to a domain
-// change that is stored but not yet routed.
-const routesPendingHeader = "Shed-Routes"
 
 // routeState records whether the proxy is behind the stored domains. It is
 // safe for concurrent use.
@@ -63,51 +58,52 @@ func (r *routeState) isPending() bool {
 
 // applyRoutes updates the proxy after a domain change. A failure does not
 // undo the change: SyncRoutes retries until routes apply.
-func (s *Server) applyRoutes(ctx context.Context) error {
-	n := s.routes.begin()
+func (p *Plane) applyRoutes(ctx context.Context) error {
+	n := p.routes.begin()
 	ctx, cancel := context.WithTimeout(ctx, routeTimeout)
 	defer cancel()
-	err := s.deployer.ApplyRoutes(ctx)
-	s.routes.end(n, err)
+	err := p.deployer.ApplyRoutes(ctx)
+	p.routes.end(n, err)
 	return err
 }
 
 // applyDomainRoutes applies routes after a domain change was stored, and
-// marks the response pending if that failed.
-func (s *Server) applyDomainRoutes(ctx context.Context, w http.ResponseWriter) {
-	if err := s.applyRoutes(ctx); err != nil {
-		s.log.Error("apply routes; retrying in the background", "err", err)
-		w.Header().Set(routesPendingHeader, "pending")
+// reports whether that succeeded.
+func (p *Plane) applyDomainRoutes(ctx context.Context) bool {
+	if err := p.applyRoutes(ctx); err != nil {
+		p.log.Error("apply routes; retrying in the background", "err", err)
+		return false
 	}
+	return true
 }
 
 // SyncRoutes applies routes again after a domain change failed to, with
 // backoff, until it succeeds. It returns when ctx is done.
-func (s *Server) SyncRoutes(ctx context.Context) {
-	delay := s.routes.retryMin
+func (p *Plane) SyncRoutes(ctx context.Context) {
+	delay := p.routes.retryMin
 	for {
-		if s.routes.isPending() {
-			err := s.applyRoutes(ctx)
+		if p.routes.isPending() {
+			err := p.applyRoutes(ctx)
 			if ctx.Err() != nil {
 				return
 			}
 			if err != nil {
-				s.log.Warn("apply routes failed; retrying", "in", delay, "err", err)
+				p.log.Warn("apply routes failed; retrying", "in", delay, "err", err)
 				select {
 				case <-ctx.Done():
 					return
 				case <-time.After(delay):
 				}
-				delay = min(2*delay, s.routes.retryMax)
+				delay = min(2*delay, p.routes.retryMax)
 				continue
 			}
-			s.log.Info("routes applied after an earlier failure")
+			p.log.Info("routes applied after an earlier failure")
 		}
-		delay = s.routes.retryMin
+		delay = p.routes.retryMin
 		select {
 		case <-ctx.Done():
 			return
-		case <-s.routes.wake:
+		case <-p.routes.wake:
 		}
 	}
 }

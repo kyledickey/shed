@@ -47,6 +47,29 @@ func TestFollow(t *testing.T) {
 	}
 }
 
+func TestLines(t *testing.T) {
+	tail := New(3)
+	fmt.Fprint(tail, "one\ntwo\nthree\nfour\nfi")
+	tests := []struct {
+		n    int
+		want []string
+	}{
+		{0, []string{}},
+		{-1, []string{}},
+		{2, []string{"three", "four"}},
+		{3, []string{"two", "three", "four"}},
+		{10, []string{"two", "three", "four"}},
+	}
+	for _, tt := range tests {
+		if got := tail.Lines(tt.n); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("Lines(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+	if got := New(3).Lines(5); len(got) != 0 {
+		t.Errorf("Lines of an empty tail = %q", got)
+	}
+}
+
 func TestSlowFollowerDoesNotBlock(t *testing.T) {
 	tail := New(10)
 	ctx, cancel := context.WithCancel(context.Background())
