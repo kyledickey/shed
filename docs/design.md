@@ -115,7 +115,8 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store, update |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail types |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -865,7 +866,7 @@ every 10 seconds, logging each failure once per push and reason.
 A pending push is dropped if the service is deleted, no longer deploys that
 repo and branch on push, or its latest deployment differs from the recorded
 `prior_deployment_id`. This comparison uses IDs, not timestamps. Storing a push,
-checking and enqueueing it, and the API's other deployment requests share a lock,
+checking and enqueueing it, and every other deployment the control plane creates share a lock,
 so newer pushes and manual deployments cannot interleave with that check.
 If deleting an enqueued push fails, its own deployment supersedes it on retry.
 Other events are acknowledged and ignored. GitHub does not automatically
@@ -1219,6 +1220,14 @@ values, so saving a new value does not unmask the one still running. Deployments
 without a runtime snapshot fall back to current variables. Changing variables
 cannot retroactively remove secrets from older saved logs.
 
+Log snapshots for agents (`control.Plane.BuildLog`, `RuntimeLogs`, `ShedLog`)
+return at most 2000 lines and never follow. A build log snapshot is masked
+again when read, with the values its container started with, the saved values
+of every variable of every service in the project, and the service's own
+variables as they resolve now, so values saved after the build are masked too.
+A runtime snapshot masks like the runtime stream. A snapshot of shed's own log
+masks the saved values of every service's variables.
+
 Redaction skips values shorter than 8 bytes: masking values like `1` or
 `true` would mangle timestamps, numbers, and JSON throughout the log.
 
@@ -1265,7 +1274,7 @@ canceled concurrently, so a routed candidate is not removed mid-activation.
 After a domain is created or deleted, the API applies routes with a 30-second
 context deadline. The change is already stored, so a failure does not fail the
 request: the response carries `Shed-Routes: pending`, the error is logged, and
-`Server.SyncRoutes` (started after `Reconcile`) retries immediately, then with
+`control.Plane.SyncRoutes` (started after `Reconcile`) retries immediately, then with
 backoff from 2 seconds doubling to 1 minute until it succeeds. It does nothing
 while routes are applied. Attempts are numbered so an older attempt's success
 cannot clear a newer failure. Route failures inside the deploy pipeline are

@@ -27,6 +27,7 @@ import (
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/config"
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/host"
@@ -211,23 +212,36 @@ func run() error {
 		return err
 	}
 
-	server, err := api.New(ctx, api.Config{
+	plane := control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
 		Backups:  backups,
 		Metrics:  collector,
 		Logs:     tail,
 		Updates:  updater,
+		GitHub: func() (control.GitHub, bool) {
+			if c := gh.Get(); c != nil {
+				return c, true
+			}
+			return nil, false
+		},
+		BaseURL:    cfg.Server.URL,
+		BaseDomain: cfg.Proxy.BaseDomain,
+		Log:        log,
+	})
+
+	server, err := api.New(ctx, api.Config{
+		Control:  plane,
+		Settings: st,
 		Restart: func() {
 			restarting.Store(true)
 			stop()
 		},
-		Auth:       authn,
-		GitHub:     gh,
-		BaseURL:    cfg.Server.URL,
-		BaseDomain: cfg.Proxy.BaseDomain,
-		Web:        web.Dist(),
-		Log:        log,
+		Auth:    authn,
+		GitHub:  gh,
+		BaseURL: cfg.Server.URL,
+		Web:     web.Dist(),
+		Log:     log,
 	})
 	if err != nil {
 		return err
@@ -246,8 +260,8 @@ func run() error {
 	var background sync.WaitGroup
 	background.Go(func() { collector.Run(ctx) })
 	background.Go(func() { backups.Run(ctx) })
-	background.Go(func() { server.ReplayPushes(ctx) })
-	background.Go(func() { server.SyncRoutes(ctx) })
+	background.Go(func() { plane.ReplayPushes(ctx) })
+	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.

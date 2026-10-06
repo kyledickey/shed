@@ -5,13 +5,27 @@ export type Package = { name: string; imports: string[] };
 export const packages: Package[] = [
   {
     name: "api",
-    imports: ["auth", "backup", "catalog", "deploy", "github", "logtail", "metrics", "store"],
+    imports: ["auth", "backup", "control", "deploy", "github", "metrics", "store", "update"],
   },
   { name: "auth", imports: ["github"] },
   { name: "backup", imports: ["docker", "store"] },
   { name: "build", imports: [] },
   { name: "catalog", imports: [] },
   { name: "config", imports: [] },
+  {
+    name: "control",
+    imports: [
+      "backup",
+      "build",
+      "catalog",
+      "deploy",
+      "github",
+      "logtail",
+      "metrics",
+      "store",
+      "update",
+    ],
+  },
   { name: "deploy", imports: ["build", "catalog", "docker", "github", "proxy", "store", "vars"] },
   { name: "docker", imports: [] },
   { name: "github", imports: [] },
@@ -21,6 +35,7 @@ export const packages: Package[] = [
   { name: "proxy", imports: [] },
   { name: "s3", imports: [] },
   { name: "store", imports: [] },
+  { name: "update", imports: [] },
   { name: "vars", imports: [] },
 ];
 

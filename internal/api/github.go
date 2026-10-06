@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -62,7 +61,7 @@ type storedApp struct {
 // loadGitHub creates the GitHub client from the stored App, or generates and
 // logs the setup token if there is none.
 func (s *Server) loadGitHub(ctx context.Context) error {
-	raw, err := s.store.Setting(ctx, githubAppKey)
+	raw, err := s.settings.Setting(ctx, githubAppKey)
 	if errors.Is(err, store.ErrNotFound) {
 		s.setupToken = rand.Text()
 		s.log.Warn("GitHub App is not configured; open the setup page and enter the setup token",
@@ -93,21 +92,6 @@ func (s *Server) requireGitHub() (*github.Client, error) {
 		return c, nil
 	}
 	return nil, errorf(http.StatusConflict, "GitHub App is not configured")
-}
-
-// branchHead returns the commit at the head of a repo service's branch.
-func (s *Server) branchHead(ctx context.Context, svc store.Service) (deploy.Commit, error) {
-	gh, err := s.requireGitHub()
-	if err != nil {
-		return deploy.Commit{}, err
-	}
-	c, err := gh.Commit(ctx, svc.Repo, svc.Branch)
-	if err != nil {
-		s.log.Warn("resolve branch head", "repo", svc.Repo, "branch", svc.Branch, "err", err)
-		return deploy.Commit{}, errorf(http.StatusBadRequest,
-			"cannot read branch %s of %s; is the GitHub App installed on it?", svc.Branch, svc.Repo)
-	}
-	return deploy.Commit{SHA: c.SHA, Message: c.Message, Author: c.Author}, nil
 }
 
 func installURL(slug string) string {
@@ -292,7 +276,7 @@ func (s *Server) saveApp(ctx context.Context, client *github.Client) error {
 	if err != nil {
 		return err
 	}
-	if err := s.store.SetSetting(ctx, githubAppKey, string(raw)); err != nil {
+	if err := s.settings.SetSetting(ctx, githubAppKey, string(raw)); err != nil {
 		return err
 	}
 	s.github.Set(client)
@@ -353,7 +337,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	}
-	services, err := s.store.ServicesForPush(r.Context(), ev.Repo, ev.Branch)
+	services, err := s.control.ServicesForPush(r.Context(), ev.Repo, ev.Branch)
 	if err != nil {
 		return err
 	}
@@ -369,7 +353,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		}
 		// Store the push before deploying it, so that it is deployed later
 		// if the service is held or fenced now, or shed restarts first.
-		err := s.receivePush(r.Context(), store.PendingPush{
+		err := s.control.ReceivePush(r.Context(), store.PendingPush{
 			ServiceID: svc.ID, Repo: ev.Repo, Branch: ev.Branch,
 			CommitSHA: ev.SHA, CommitMessage: ev.Message, CommitAuthor: ev.Author,
 		})
@@ -381,7 +365,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 			s.log.Error("store push", "service", svc.ID, "err", err)
 			return errorf(http.StatusServiceUnavailable, "could not store delivery; redeliver it later")
 		}
-		s.deployPush(r.Context(), svc.ID)
+		s.control.DeployPush(r.Context(), svc.ID)
 	}
 	s.log.Info("push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
 	w.WriteHeader(http.StatusAccepted)
@@ -389,13 +373,9 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) repos(w http.ResponseWriter, r *http.Request) error {
-	gh, err := s.requireGitHub()
+	repos, err := s.control.Repos(r.Context())
 	if err != nil {
 		return err
-	}
-	repos, err := gh.Repos(r.Context())
-	if err != nil {
-		return errorf(http.StatusBadGateway, "%v", err)
 	}
 	out := make([]repoJSON, 0, len(repos))
 	for _, repo := range repos {
@@ -405,16 +385,9 @@ func (s *Server) repos(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) branches(w http.ResponseWriter, r *http.Request) error {
-	gh, err := s.requireGitHub()
+	branches, err := s.control.Branches(r.Context(), r.PathValue("owner"), r.PathValue("repo"))
 	if err != nil {
 		return err
-	}
-	branches, err := gh.Branches(r.Context(), r.PathValue("owner")+"/"+r.PathValue("repo"))
-	if err != nil {
-		return errorf(http.StatusBadGateway, "%v", err)
-	}
-	if branches == nil {
-		branches = []string{}
 	}
 	return writeJSON(w, http.StatusOK, branches)
 }

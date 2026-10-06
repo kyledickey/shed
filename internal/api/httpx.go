@@ -9,10 +9,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/kyledickey/shed/internal/backup"
-	"github.com/kyledickey/shed/internal/deploy"
-	"github.com/kyledickey/shed/internal/store"
-	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/control"
 )
 
 // securityHeaders sets headers that forbid framing the dashboard
@@ -53,61 +50,36 @@ func (s *Server) handle(h handlerFunc) http.Handler {
 	})
 }
 
-// msgFenced explains why a fenced service cannot be started, deployed, or
-// restored into.
-const msgFenced = "a restore of this service failed and its data may be incomplete; " +
-	"restart shed to retry recovering it, or clear the restore fence to keep the data as it is"
-
 // writeError maps err to a status and sends it as {"error": message}.
 // Unexpected errors are logged and reported generically.
 func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var he *httpError
 	status, msg := http.StatusInternalServerError, "internal error"
-	switch {
-	case errors.As(err, &he):
+	if errors.As(err, &he) {
 		status, msg = he.status, he.msg
-	case errors.Is(err, store.ErrNotFound):
-		status, msg = http.StatusNotFound, "not found"
-	case errors.Is(err, store.ErrConflict):
-		status, msg = http.StatusConflict, "already exists"
-	case errors.Is(err, deploy.ErrNotInProgress):
-		status, msg = http.StatusConflict, "deployment is not in progress"
-	case errors.Is(err, deploy.ErrVolumeMissing):
-		status, msg = http.StatusConflict, "a volume of this service is missing on the server; restore it from a backup, or deploy again to start with an empty volume"
-	case errors.Is(err, deploy.ErrImageUnavailable):
-		status, msg = http.StatusConflict, "the deployment's image is no longer on the server; deploy again to build or pull it"
-	case errors.Is(err, deploy.ErrNoImage):
-		status, msg = http.StatusConflict, "deployment has no image to redeploy"
-	case errors.Is(err, deploy.ErrNoContainer):
-		status, msg = http.StatusConflict, "nothing to run; deploy the service first"
-	case errors.Is(err, deploy.ErrServiceStopped):
-		status, msg = http.StatusConflict, "service is stopped; start it instead"
-	case errors.Is(err, deploy.ErrServiceBusy):
-		status, msg = http.StatusConflict, "service is busy with a backup or restore; try again when it finishes"
-	case errors.Is(err, deploy.ErrFenced), errors.Is(err, backup.ErrFenced):
-		status, msg = http.StatusConflict, msgFenced
-	case errors.Is(err, deploy.ErrDeleting):
-		status, msg = http.StatusConflict, "service is being deleted"
-	case errors.Is(err, deploy.ErrStopped), errors.Is(err, backup.ErrStopped):
-		status, msg = http.StatusServiceUnavailable, "shutting down"
-	case errors.Is(err, backup.ErrInvalid):
-		status, msg = http.StatusBadRequest, err.Error()
-	case errors.Is(err, backup.ErrNoVolumes):
-		status, msg = http.StatusBadRequest, "service has no volumes to back up"
-	case errors.Is(err, backup.ErrBusy):
-		status, msg = http.StatusConflict, "a backup or restore is already in progress"
-	case errors.Is(err, update.ErrUnsupported):
-		status, msg = http.StatusConflict, "this build of shed cannot update itself"
-	case errors.Is(err, update.ErrNoUpdate):
-		status, msg = http.StatusConflict, "there is no newer release"
-	case errors.Is(err, update.ErrBusy):
-		status, msg = http.StatusConflict, "an update check, download, or install is already in progress"
-	case errors.Is(err, update.ErrNotStaged):
-		status, msg = http.StatusConflict, "download the update before installing it"
-	default:
+	} else if e, ok := control.Explain(err); ok {
+		status, msg = statusOf(e.Kind), e.Msg
+	} else {
 		s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 	}
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// statusOf returns the HTTP status of a kind of control error.
+func statusOf(kind error) int {
+	switch kind {
+	case control.ErrInvalid:
+		return http.StatusBadRequest
+	case control.ErrNotFound:
+		return http.StatusNotFound
+	case control.ErrConflict:
+		return http.StatusConflict
+	case control.ErrUpstream:
+		return http.StatusBadGateway
+	case control.ErrUnavailable:
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
 }
 
 // writeJSON sends v as JSON with the given status.
