@@ -153,4 +153,10 @@ export const docTopics = {
     summary:
       "shed checks GitHub for releases, verifies downloads, and installs on request with a short restart.",
   },
+  mcp: {
+    page: "mcp",
+    section: "connecting",
+    summary:
+      "Agents connect to shed's /mcp endpoint and sign in with GitHub. Access is read-only and never includes variable values.",
+  },
 } satisfies Record<string, { page: string; section: string; summary: string }>;

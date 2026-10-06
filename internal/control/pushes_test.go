@@ -1,16 +1,10 @@
-package api
+package control
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,30 +13,29 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// push delivers a signed push of sha to octo/app@main.
-func (f *fixture) push(sha string) int {
+// push receives a push of sha to octo/app@main for svc, as the webhook does.
+func (f *fixture) push(svc store.Service, sha string) {
 	f.t.Helper()
-	body := fmt.Sprintf(`{"ref":"refs/heads/main","after":%q,"repository":{"full_name":"octo/app"},
-		"head_commit":{"id":%[1]q,"message":"Change","author":{"name":"Mona"}}}`, sha)
-	mac := hmac.New(sha256.New, []byte("s3cret"))
-	mac.Write([]byte(body))
-	req := httptest.NewRequest("POST", "/api/github/webhook", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Event", "push")
-	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	return rec.Code
+	ctx := context.Background()
+	err := f.plane.ReceivePush(ctx, store.PendingPush{
+		ServiceID: svc.ID, Repo: "octo/app", Branch: "main",
+		CommitSHA: sha, CommitMessage: "Change", CommitAuthor: "Mona",
+	})
+	if err != nil {
+		f.t.Errorf("ReceivePush(%s) = %v", sha, err)
+		return
+	}
+	f.plane.DeployPush(ctx, svc.ID)
 }
 
 // replay runs ReplayPushes until the test ends.
 func (f *fixture) replay() {
-	f.server.pushRetry = 5 * time.Millisecond
+	f.plane.pushRetry = 5 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.server.ReplayPushes(ctx)
+		f.plane.ReplayPushes(ctx)
 	}()
 	f.t.Cleanup(func() {
 		cancel()
@@ -74,20 +67,15 @@ func (f *fixture) pendingSHA(serviceID string) string {
 	return p.CommitSHA
 }
 
-func TestWebhookDefersBlockedPush(t *testing.T) {
+func TestBlockedPushDeferred(t *testing.T) {
 	for _, blocked := range []error{deploy.ErrServiceBusy, deploy.ErrFenced, deploy.ErrStopped} {
 		t.Run(blocked.Error(), func(t *testing.T) {
 			f := newFixture(t)
 			svc := createApp(t, f.st)
-			f.github.Set(newGitHubClient(t, "s3cret"))
 			f.deployer.setDeployErr(blocked)
 
-			if code := f.push("aaa"); code != http.StatusAccepted {
-				t.Fatalf("status = %d, want 202", code)
-			}
-			if code := f.push("bbb"); code != http.StatusAccepted {
-				t.Fatalf("status = %d, want 202", code)
-			}
+			f.push(svc, "aaa")
+			f.push(svc, "bbb")
 			if got := f.deployer.deployed(); len(got) != 0 {
 				t.Fatalf("deployed while blocked: %v", got)
 			}
@@ -107,31 +95,25 @@ func TestWebhookDefersBlockedPush(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 			f.waitDeployed("bbb") // and only once
-
-			// A redelivery of a deployed push is not deployed again.
-			if code := f.push("bbb"); code != http.StatusAccepted {
-				t.Fatalf("redelivery: status = %d, want 202", code)
-			}
-			f.waitDeployed("bbb")
 		})
 	}
 }
 
-func TestWebhookDeploysImmediately(t *testing.T) {
+func TestPushDeploysImmediately(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
-	if code := f.push("aaa"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", code)
-	}
+	f.push(svc, "aaa")
 	f.waitDeployed("aaa")
+	if got := f.deployer.triggers(); !slices.Equal(got, []store.Trigger{store.TriggerPush}) {
+		t.Errorf("triggers = %v, want [push]", got)
+	}
 	if got := f.pendingSHA(svc.ID); got != "" {
 		t.Errorf("pending push = %q after deploying it", got)
 	}
 }
 
 func TestReplayPushesOnStart(t *testing.T) {
-	// A push stored before a restart, as the webhook stores it.
+	// A push stored before a restart, as ReceivePush stores it.
 	f := newFixture(t)
 	svc := createApp(t, f.st)
 	if _, err := f.st.SetPendingPush(context.Background(), store.PendingPush{
@@ -139,12 +121,12 @@ func TestReplayPushesOnStart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	f.server.pushRetry = time.Hour // only the first pass can deploy it
+	f.plane.pushRetry = time.Hour // only the first pass can deploy it
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		f.server.ReplayPushes(ctx)
+		f.plane.ReplayPushes(ctx)
 	}()
 	f.waitDeployed("aaa")
 	cancel()
@@ -194,14 +176,11 @@ func TestPendingPushDropped(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
 			svc := createApp(t, f.st)
-			f.github.Set(newGitHubClient(t, "s3cret"))
 			f.deployer.setDeployErr(deploy.ErrServiceBusy)
-			if code := f.push("aaa"); code != http.StatusAccepted {
-				t.Fatalf("status = %d, want 202", code)
-			}
+			f.push(svc, "aaa")
 			tt.change(t, f.st, svc)
 			f.deployer.setDeployErr(nil)
-			f.server.deployPush(context.Background(), svc.ID)
+			f.plane.DeployPush(context.Background(), svc.ID)
 			if got := f.deployer.deployed(); len(got) != 0 {
 				t.Errorf("deployed = %v, want none", got)
 			}
@@ -215,29 +194,29 @@ func TestPendingPushDropped(t *testing.T) {
 func TestPendingPushKeptOnDeployError(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
 	f.deployer.setDeployErr(errors.New("database is locked"))
-	if code := f.push("aaa"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", code)
-	}
+	f.push(svc, "aaa")
 	if got := f.pendingSHA(svc.ID); got != "aaa" {
 		t.Errorf("pending push = %q, want aaa", got)
 	}
 }
 
-func TestWebhookIgnoresDeletedService(t *testing.T) {
+func TestPendingPushOfDeletedService(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
 	f.deployer.setDeployErr(deploy.ErrDeleting)
-	if code := f.push("aaa"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", code)
-	}
+	f.push(svc, "aaa")
 	if err := f.st.DeleteService(context.Background(), svc.ID); err != nil {
 		t.Fatal(err)
 	}
 	if ps, err := f.st.PendingPushes(context.Background()); err != nil || len(ps) != 0 {
 		t.Errorf("PendingPushes() = %v, %v, want none", ps, err)
+	}
+	err := f.plane.ReceivePush(context.Background(), store.PendingPush{
+		ServiceID: svc.ID, Repo: "octo/app", Branch: "main", CommitSHA: "bbb",
+	})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ReceivePush for a deleted service = %v, want not found", err)
 	}
 }
 
@@ -271,9 +250,9 @@ func (d *storingDeployer) Redeploy(ctx context.Context, id string) (store.Deploy
 	})
 }
 
-// storeDeployments makes f's server use a storingDeployer with gate.
+// storeDeployments makes f's plane use a storingDeployer with gate.
 func (f *fixture) storeDeployments(gate func(sha string)) {
-	f.server.deployer = &storingDeployer{fakeDeployer: f.deployer, st: f.st, gate: gate}
+	f.plane.deployer = &storingDeployer{fakeDeployer: f.deployer, st: f.st, gate: gate}
 }
 
 // history returns the trigger and commit of a service's deployments, oldest
@@ -313,8 +292,7 @@ func TestPushesInSameMillisecondAsDeployment(t *testing.T) {
 	var want []string
 	for i := range 20 {
 		sha := fmt.Sprintf("sha%02d", i)
-		// As the webhook does, without its rate limit.
-		if err := f.server.receivePush(context.Background(), store.PendingPush{
+		if err := f.plane.ReceivePush(context.Background(), store.PendingPush{
 			ServiceID: svc.ID, Repo: "octo/app", Branch: "main", CommitSHA: sha,
 		}); err != nil {
 			t.Fatal(err)
@@ -332,22 +310,17 @@ func TestPushDuringEarlierPushDeploys(t *testing.T) {
 	// not be taken for one the older push's deployment superseded.
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
 	gate, entered, release := holdDeploy("aaa")
 	f.storeDeployments(gate)
 
 	var wg sync.WaitGroup
-	codes := make([]int, 2)
-	wg.Go(func() { codes[0] = f.push("aaa") })
+	wg.Go(func() { f.push(svc, "aaa") })
 	<-entered
-	wg.Go(func() { codes[1] = f.push("bbb") })
+	wg.Go(func() { f.push(svc, "bbb") })
 	time.Sleep(20 * time.Millisecond) // let bbb arrive while aaa is deploying
 	release()
 	wg.Wait()
 
-	if codes[0] != http.StatusAccepted || codes[1] != http.StatusAccepted {
-		t.Fatalf("status = %v, want 202s", codes)
-	}
 	if got, want := f.history(svc.ID), []string{"push aaa", "push bbb"}; !slices.Equal(got, want) {
 		t.Errorf("deployments = %v, want %v", got, want)
 	}
@@ -361,7 +334,6 @@ func TestRedeployDuringPushDeploy(t *testing.T) {
 	// the push's deployment, so the push does not supersede it.
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
 	old, err := f.st.CreateDeployment(context.Background(), store.Deployment{
 		ServiceID: svc.ID, Status: store.StatusActive, Trigger: store.TriggerManual, CommitSHA: "old",
 	})
@@ -372,16 +344,16 @@ func TestRedeployDuringPushDeploy(t *testing.T) {
 	f.storeDeployments(gate)
 
 	var wg sync.WaitGroup
-	var pushCode, redeployCode int
-	wg.Go(func() { pushCode = f.push("aaa") })
+	var redeployErr error
+	wg.Go(func() { f.push(svc, "aaa") })
 	<-entered
-	wg.Go(func() { redeployCode = f.do("POST", "/api/deployments/"+old.ID+"/redeploy", "").Code })
+	wg.Go(func() { _, redeployErr = f.plane.Redeploy(context.Background(), old.ID) })
 	time.Sleep(20 * time.Millisecond) // let the rollback arrive while aaa is deploying
 	release()
 	wg.Wait()
 
-	if pushCode != http.StatusAccepted || redeployCode != http.StatusCreated {
-		t.Fatalf("push = %d, redeploy = %d, want 202 and 201", pushCode, redeployCode)
+	if redeployErr != nil {
+		t.Fatalf("Redeploy() = %v", redeployErr)
 	}
 	want := []string{"manual old", "push aaa", "redeploy old"}
 	if got := f.history(svc.ID); !slices.Equal(got, want) {
@@ -394,7 +366,6 @@ func TestPendingPushDroppedForRedeploy(t *testing.T) {
 	// is created after it, even within the same millisecond.
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.github.Set(newGitHubClient(t, "s3cret"))
 	old, err := f.st.CreateDeployment(context.Background(), store.Deployment{
 		ServiceID: svc.ID, Status: store.StatusActive, Trigger: store.TriggerManual, CommitSHA: "old",
 	})
@@ -403,14 +374,12 @@ func TestPendingPushDroppedForRedeploy(t *testing.T) {
 	}
 	f.storeDeployments(nil)
 	f.deployer.setDeployErr(deploy.ErrServiceBusy)
-	if code := f.push("aaa"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202", code)
-	}
-	if rec := f.do("POST", "/api/deployments/"+old.ID+"/redeploy", ""); rec.Code != http.StatusCreated {
-		t.Fatalf("redeploy = %d %s", rec.Code, rec.Body)
+	f.push(svc, "aaa")
+	if _, err := f.plane.Redeploy(context.Background(), old.ID); err != nil {
+		t.Fatalf("Redeploy() = %v", err)
 	}
 	f.deployer.setDeployErr(nil)
-	f.server.deployPush(context.Background(), svc.ID)
+	f.plane.DeployPush(context.Background(), svc.ID)
 	if got, want := f.history(svc.ID), []string{"manual old", "redeploy old"}; !slices.Equal(got, want) {
 		t.Errorf("deployments = %v, want %v", got, want)
 	}

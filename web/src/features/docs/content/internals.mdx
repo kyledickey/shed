@@ -26,7 +26,8 @@ import { ResolverTrace } from "../components/internals/ResolverTrace";
 
 Session routes are wrapped by `authed` in `auth.Require(protectMutations(baseURL, requireJSON(s.handle(h))))`. Because `auth.Require` is outermost, an unauthenticated write gets 401, not 403. It also rechecks `auth.allowed_users` on every request, so removing a login takes effect at once for new requests. Details of the protections are on [Request protections](/docs/security#request-protections).
 
-- **Handlers return errors.** A `handlerFunc` returns `error`, and `Server.handle` passes it to `writeError`, which sends `{"error": "..."}`. Create one with `errorf(status, format, ...)`. `store.ErrNotFound` becomes 404, `store.ErrConflict` 409, and the sentinels of `deploy` and `backup` (`ErrFenced`, `ErrServiceBusy`, `ErrBusy`, and so on) map to 409, 400, or 503 in one switch. Anything else is logged and answered as `500 internal error`, so internals never leak.
+- **Handlers are thin.** A handler decodes the request, calls one method of the control plane (`api.Control`, which `*control.Plane` implements), and encodes the result. Validation, the push lock, route retries, and the views that merge live status live in `internal/control`; see [The control plane](/docs/internals#the-control-plane).
+- **Handlers return errors.** A `handlerFunc` returns `error`, and `Server.handle` passes it to `writeError`, which sends `{"error": "..."}`. Create one with `errorf(status, format, ...)` for request-shape problems. Everything else goes through `control.Explain`, which turns a `*control.Error` or a sentinel of `store`, `deploy`, `backup`, or `update` (`ErrFenced`, `ErrServiceBusy`, `ErrBusy`, and so on) into a kind and a message; `statusOf` maps the kind to 400, 404, 409, 502, or 503. Anything else is logged and answered as `500 internal error`, so internals never leak.
 - **Bodies.** `decodeJSON` reads at most `maxBody` (1 MiB) with `http.MaxBytesReader`. An empty body leaves the target unchanged. `requireJSON` only checks the media type of POST, PUT, and PATCH.
 - **The SPA.** `spa(fsys)` serves the embedded `web/dist`. A path that is not a file gets `index.html`, so client routes survive a reload. A missing `assets/*` file or anything with an extension is a 404. Files under `assets/` are cached for a year.
 - **Unknown API paths.** `/api/` catches everything unmatched and returns a JSON 404, so a typo never falls through to the SPA.
@@ -44,11 +45,33 @@ Session routes are wrapped by `authed` in `auth.Require(protectMutations(baseURL
 3. `webhookGuard.acquire`: a token bucket (burst 8, one token per second) and at most 4 requests in flight, else 429.
 4. Read the body, at most `maxWebhookBody` (1 MiB), else 413. Then `github.VerifySignature` compares the HMAC in constant time, else 401.
 5. Ignore anything but `push`, deleted branches, and empty refs with 202. Parse with `github.ParsePush`.
-6. `store.ServicesForPush` selects app services whose repo matches without case, whose branch matches exactly, and that have auto-deploy on.
+6. `Plane.ServicesForPush` selects app services whose repo matches without case, whose branch matches exactly, and that have auto-deploy on.
 7. For each service, `deliveryCache.begin` keys on the SHA-256 of the body and the service ID. A completed duplicate is skipped, an in-flight one makes the request return 503, and the cache keeps 1,024 entries for 24 hours in memory.
-8. `Deployer.Deploy(…, store.TriggerPush, commit)`. A fenced service is skipped with a warning. Any other error calls `deliveries.finish(key, false)` to forget the key and returns 503, so GitHub's retry is safe.
+8. `Plane.ReceivePush` stores the push as the service's pending push and tries to deploy it under the push lock. A service that is held or fenced keeps the push for `Plane.ReplayPushes`. A failure to store it calls `deliveries.finish(key, false)` to forget the key and returns 503, so GitHub's retry is safe.
 
 The operator view is [Push webhooks](/docs/github#push-webhooks) and [Webhook limits](/docs/security#webhook-limits).
+
+## The control plane
+
+`internal/control` holds what shed does, apart from how it is asked. `control.New(Config)` takes the store, the deployer, the backup manager, the metrics collector, the log tail, the updater, and a function that returns the GitHub client when there is one, each through an interface the package declares. Every interface to shed calls a `*control.Plane`, so the rules are written once:
+
+- **Validation.** Service names are DNS labels, host names are checked label by label, root and Dockerfile paths must be local relative paths, mount paths clean and absolute, limits within the host. A rule that fails returns a `*control.Error` of kind `ErrInvalid` with the message the dashboard shows.
+- **Views.** `ServiceView` and `ProjectView` merge the stored service with its live status from `Deployer.ServiceStatuses`, its domains, volumes, latest deployment, and restore fence. `DeploymentView` leaves out the runtime record, whose environment holds resolved variable values.
+- **The push lock.** `Plane.pushMu` serializes every deployment the plane creates (first deployments, manual deploys, redeploys) with storing and deploying pushes. A pending push compares its recorded predecessor with the latest deployment under the same lock, so a push never supersedes a deployment created after it arrived.
+- **Routes.** Creating or deleting a domain applies routes at once; if that fails, the change stays stored, the caller is told routes are pending, and `Plane.SyncRoutes` retries with backoff.
+- **Snapshots for agents.** `BuildLog`, `RuntimeLogs`, and `ShedLog` return at most `MaxLogLines` lines without following. Build logs are masked again with every saved variable value of the project; runtime logs with the values the container started with; shed's log with every saved variable value. `VariableNames` lists own and injected variable names without values.
+
+`control.Explain` turns an error into a kind (`ErrInvalid`, `ErrNotFound`, `ErrConflict`, `ErrUpstream`, `ErrUnavailable`) and a message, so each interface maps kinds to its own codes.
+
+## The MCP server
+
+`internal/mcp` serves the read-only [MCP tools](/docs/mcp#tools) for agents. `mcp.New(Config)` takes a `mcp.Backend`, the narrow interface of the `*control.Plane` methods the tools call, and registers each tool with the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) through `sdk.AddTool`, which infers the input schema from a typed argument struct and validates calls against it.
+
+- **Transport.** `Server.Handler` is the SDK's Streamable HTTP handler in stateless mode with plain JSON responses: no sessions, POST only. The SDK's DNS rebinding check is off because shed listens on loopback behind its own proxy, which passes the public `Host` through.
+- **Mounting.** `api.Server.Handler` mounts it at `/mcp` as `rejectForeignOrigins(auth.RequireBearer(resource)(requireScope("read", mcp)))`. There is no session route around it, so the dashboard cookie is never accepted.
+- **Results.** Tools map control views to their own compact result structs, which double as the output schema. Metrics are reduced to latest, average, and maximum per series. Log tools return one text block, bounded in lines, line length, and bytes.
+- **Errors.** `Server.fail` runs `control.Explain`: known kinds become tool errors with the control message, not-found ones naming the object and ID; anything else is logged and reported as `internal error`.
+- **Secrets.** No tool calls `Variables` or `ResolvedVariables`; `list_variables` uses `VariableNames`. The log tools use the masked snapshots described in [The control plane](#the-control-plane).
 
 ## The deployer
 

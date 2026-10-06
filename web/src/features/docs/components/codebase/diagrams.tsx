@@ -1,10 +1,10 @@
 import { Diagram, Edge, Node, Note, Zone } from "../../diagram";
 
-const consumers = [
-  { x: 40, title: "deploy", sub: "7 leaf packages" },
-  { x: 230, title: "metrics", sub: "docker host store" },
-  { x: 420, title: "backup", sub: "docker store" },
-  { x: 610, title: "auth", sub: "github" },
+/** Packages that control drives, below it. */
+const driven = [
+  { x: 230, title: "deploy", sub: "7 leaf packages" },
+  { x: 420, title: "metrics", sub: "docker host store" },
+  { x: 610, title: "backup", sub: "docker store" },
 ];
 
 const leaves = [
@@ -19,6 +19,7 @@ const leaves = [
   "s3",
   "config",
   "logtail",
+  "update",
 ];
 
 /** DependencyDiagram shows which internal packages import which. */
@@ -35,22 +36,61 @@ export function DependencyDiagram() {
         tone="accent"
         emphasis
       />
-      <Node x={320} y={88} w={160} h={44} title="api" sub="HTTP · SSE · webhook" />
+      <Node x={40} y={88} w={150} h={44} title="api" sub="HTTP · SSE · webhook" />
+      <Node x={420} y={88} w={150} h={44} title="control" sub="operations and rules" />
+      <Node x={610} y={88} w={150} h={44} title="mcp" sub="read-only agent tools" />
       <Edge
         points={[
-          [400, 52],
-          [400, 88],
+          [685, 52],
+          [685, 88],
         ]}
         flow
         tone="accent"
       />
-      {consumers.map((c) => (
+      <Edge
+        points={[
+          [610, 110],
+          [570, 110],
+        ]}
+        flow
+        tone="accent"
+      />
+      <Edge
+        points={[
+          [115, 52],
+          [115, 88],
+        ]}
+        flow
+        tone="accent"
+      />
+      <Edge
+        points={[
+          [190, 110],
+          [420, 110],
+        ]}
+        flow
+        tone="accent"
+      />
+      <Node x={40} y={176} w={150} h={44} title="auth" sub="github" />
+      <Edge
+        points={[
+          [115, 132],
+          [115, 176],
+        ]}
+      />
+      <Edge
+        points={[
+          [115, 220],
+          [115, 250],
+        ]}
+      />
+      {driven.map((c) => (
         <g key={c.title}>
           <Node x={c.x} y={176} w={150} h={44} title={c.title} sub={c.sub} />
           <Edge
             points={[
-              [400, 132],
-              [400, 154],
+              [495, 132],
+              [495, 154],
               [c.x + 75, 154],
               [c.x + 75, 176],
             ]}
@@ -79,7 +119,7 @@ export function DependencyDiagram() {
         );
       })}
       <Note x={400} y={424} anchor="middle">
-        api also imports store, github, logtail, and catalog directly.
+        api, control, and mcp also import store, github, update, and other leaf packages directly.
       </Note>
     </Diagram>
   );

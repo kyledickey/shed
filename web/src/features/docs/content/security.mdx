@@ -23,6 +23,8 @@ You sign in with GitHub through the same App that handles repositories and webho
 
 The rule is enforced again on every request, not just at sign-in. At startup shed also permanently deletes the sessions of logins that are no longer on the list. To revoke someone, remove them from `allowed_users` and restart shed, which also ends their open log streams. See [environment overrides](/docs/configuration#environment-overrides) for setting the list without editing the file.
 
+Agents that connect to the [MCP server](/docs/mcp) sign in through the same flow and the same list, but they get their own read-only tokens instead of a session.
+
 ## Sessions
 
 A session is a random token in a cookie. shed stores only its hash, so a copy of `shed.db` or a backup does not contain anything a browser could present.

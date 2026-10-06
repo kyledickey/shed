@@ -19,7 +19,7 @@ The dashboard is just a client of this API, so anything you can click has an end
 
 - **JSON, camelCase.** IDs are 12-character lowercase base32 strings. Times are RFC 3339 UTC. A `204` has no body.
 - **Errors** are `{"error": "message"}` with a real status. Unexpected failures are logged and reported as a generic `500 internal error`.
-- **Authentication** is the `shed_session` cookie. Auth, setup, and the webhook are public; everything else answers 401 without a session. Unknown `/api/*` paths are a JSON 404, not the dashboard.
+- **Authentication** is the `shed_session` cookie. Auth, setup, the webhook, and the OAuth endpoints under `/oauth` and `/.well-known` are public; everything else answers 401 without a session. `/mcp` takes only a bearer token, never the cookie; see [MCP](/docs/mcp). Unknown `/api/*` paths are a JSON 404, not the dashboard.
 - **Mutations** from a browser must come from the origin of `server.url`, and POST, PUT, and PATCH need `Content-Type: application/json` even with an empty body. See [request protections](/docs/security#request-protections).
 
 | Status        | Meaning                                                                                              |
@@ -30,7 +30,7 @@ The dashboard is just a client of this API, so anything you can click has an end
 | `404`         | Unknown route or id.                                                                                 |
 | `409`         | Conflict: a name in use, a service busy with a backup or restore, fenced, stopped, or being deleted. |
 | `413` / `415` | Webhook body too large, or a mutation without a JSON content type.                                   |
-| `429`         | The webhook guard is full.                                                                           |
+| `429`         | The webhook guard is full, or too many client registrations from one address.                        |
 | `502` / `503` | GitHub failed on repos and branches, or shed is shutting down.                                       |
 
 ### Streams
@@ -262,5 +262,38 @@ type BackupSettings = {
 type BackupSettingsInput = {
   s3: (Omit<S3Settings, "hasSecret"> & { secretAccessKey?: string }) | null;
   encryption: { enabled: boolean };
+};
+```
+
+### Updates
+
+```title="TypeScript"
+type Release = { version: string; url: string; notes: string; publishedAt: string };
+type UpdateStatus = {
+  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  latest: Release | null;              // null until a check succeeds
+  available: boolean;                  // latest is newer than current
+  checkedAt: string | null;
+  state: "idle" | "checking" | "downloading" | "restarting";
+  staged: string;                      // verified version ready to install, "" if none
+  error: string;                       // last check or download failure, "" if none
+  autoDownload: boolean;
+  unsupported: string;                 // why this build can't update itself, "" if it can
+};
+```
+
+### Agents
+
+```title="TypeScript"
+type OAuthRequest = {
+  id: string;
+  clientName: string;                  // self-reported at registration, not verified
+  clientUri: string;                   // "" when the client registered none
+  redirectHost: string;                // where the code will be sent
+  scopes: string[];
+};
+type OAuthGrant = {
+  id: string; clientName: string; redirectHost: string; scopes: string[];
+  createdAt: string; lastUsedAt: string | null;  // null until first used
 };
 ```

@@ -1,25 +1,12 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/kyledickey/shed/internal/update"
 )
-
-// Updates checks for, downloads, and installs new versions of shed.
-// *update.Updater implements it.
-type Updates interface {
-	Status(ctx context.Context) (update.Status, error)
-	Check(ctx context.Context) (update.Status, error)
-	Download(ctx context.Context) (update.Status, error)
-	SetAutoDownload(ctx context.Context, on bool) (update.Status, error)
-	Install(ctx context.Context) (update.Status, error)
-}
-
-var _ Updates = (*update.Updater)(nil)
 
 type releaseJSON struct {
 	Version     string    `json:"version"`
@@ -60,7 +47,7 @@ func toUpdateStatus(st update.Status) updateStatusJSON {
 }
 
 func (s *Server) getUpdate(w http.ResponseWriter, r *http.Request) error {
-	st, err := s.updates.Status(r.Context())
+	st, err := s.control.UpdateStatus(r.Context())
 	if err != nil {
 		return err
 	}
@@ -70,18 +57,15 @@ func (s *Server) getUpdate(w http.ResponseWriter, r *http.Request) error {
 // checkUpdate checks GitHub now. A failed check is reported in the status
 // rather than as an error, like a failed background check.
 func (s *Server) checkUpdate(w http.ResponseWriter, r *http.Request) error {
-	_, err := s.updates.Check(r.Context())
-	switch {
-	case errors.Is(err, update.ErrUnsupported), errors.Is(err, update.ErrBusy):
+	st, err := s.control.CheckUpdate(r.Context())
+	if err != nil {
 		return err
-	case err != nil:
-		s.log.Warn("update check failed", "err", err)
 	}
-	return s.getUpdate(w, r)
+	return writeJSON(w, http.StatusOK, toUpdateStatus(st))
 }
 
 func (s *Server) downloadUpdate(w http.ResponseWriter, r *http.Request) error {
-	st, err := s.updates.Download(r.Context())
+	st, err := s.control.DownloadUpdate(r.Context())
 	if err != nil {
 		return err
 	}
@@ -98,7 +82,7 @@ func (s *Server) putUpdateSettings(w http.ResponseWriter, r *http.Request) error
 	if in.AutoDownload == nil {
 		return errorf(http.StatusBadRequest, "autoDownload is required")
 	}
-	st, err := s.updates.SetAutoDownload(r.Context(), *in.AutoDownload)
+	st, err := s.control.SetAutoDownload(r.Context(), *in.AutoDownload)
 	if err != nil {
 		return err
 	}
@@ -108,7 +92,7 @@ func (s *Server) putUpdateSettings(w http.ResponseWriter, r *http.Request) error
 // installUpdate swaps in the downloaded binary, responds, and then restarts
 // shed. Shutting down waits for this response to be written.
 func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
-	st, err := s.updates.Install(r.Context())
+	st, err := s.control.InstallUpdate(r.Context())
 	if errors.Is(err, update.ErrUnsupported) || errors.Is(err, update.ErrBusy) || errors.Is(err, update.ErrNotStaged) {
 		return err
 	}

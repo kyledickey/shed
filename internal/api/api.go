@@ -2,8 +2,9 @@
 // server-sent event log streams, the GitHub App setup flow and webhook, and
 // the dashboard single-page app.
 //
-// Handlers are thin: they validate input, call the store or the deployer, and
-// map the result to the JSON types of the design document.
+// Handlers are thin: they decode the request, call the control plane, map
+// its errors to statuses, and encode the result as the JSON types of the
+// design document.
 package api
 
 import (
@@ -18,62 +19,95 @@ import (
 
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
-	"github.com/kyledickey/shed/internal/deploy"
+	"github.com/kyledickey/shed/internal/control"
+	"github.com/kyledickey/shed/internal/github"
+	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/update"
 )
 
-// Deployer runs deployments and owns the Docker side of services.
-// *deploy.Deployer implements it.
-type Deployer interface {
-	Deploy(ctx context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error)
-	Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error)
-	AvailableImages(ctx context.Context, serviceID string, images []string) (map[string]bool, error)
-	Cancel(ctx context.Context, deploymentID string) (store.Deployment, error)
-	ServiceStatuses(ctx context.Context, projectID string) (map[string]deploy.ServiceStatus, error)
-	ApplyRoutes(ctx context.Context) error
-	StopService(ctx context.Context, serviceID string) error
-	StartService(ctx context.Context, serviceID string) error
-	RestartService(ctx context.Context, serviceID string) error
-	ClearRestoreFence(ctx context.Context, serviceID string) error
-	DeleteService(ctx context.Context, serviceID string) error
-	DeleteProject(ctx context.Context, projectID string) error
-	DeleteVolume(ctx context.Context, volumeID string) error
-	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
-	RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error
-	ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error)
+// Control carries out the operations behind the API. *control.Plane
+// implements it.
+type Control interface {
+	ListProjects(ctx context.Context) ([]control.ProjectSummary, error)
+	Project(ctx context.Context, id string) (control.ProjectView, error)
+	ProjectRecord(ctx context.Context, id string) (store.Project, error)
+	CreateProject(ctx context.Context, name string) (control.ProjectView, error)
+	RenameProject(ctx context.Context, id, name string) (control.ProjectView, error)
+	DeleteProject(ctx context.Context, id string) error
+
+	CreateService(ctx context.Context, projectID string, req control.NewService) (control.ServiceView, error)
+	Service(ctx context.Context, id string) (control.ServiceView, error)
+	ServiceRecord(ctx context.Context, id string) (store.Service, error)
+	UpdateService(ctx context.Context, id string, patch control.ServicePatch) (control.ServiceView, error)
+	DeleteService(ctx context.Context, id string) error
+	StopService(ctx context.Context, id string) error
+	StartService(ctx context.Context, id string) error
+	RestartService(ctx context.Context, id string) error
+	ClearRestoreFence(ctx context.Context, id string) error
+
+	Variables(ctx context.Context, serviceID string) (map[string]string, error)
+	SetVariables(ctx context.Context, serviceID string, vars map[string]string) (map[string]string, error)
+	ResolvedVariables(ctx context.Context, serviceID string) (map[string]string, error)
+	CreateDomain(ctx context.Context, serviceID, host string) (store.Domain, bool, error)
+	DeleteDomain(ctx context.Context, id string) (bool, error)
+	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
+	DeleteVolume(ctx context.Context, id string) error
+
+	Deployments(ctx context.Context, serviceID string, limit int) ([]control.DeploymentView, error)
+	Deployment(ctx context.Context, id string) (control.DeploymentView, error)
+	Deploy(ctx context.Context, serviceID string) (control.DeploymentView, error)
+	Redeploy(ctx context.Context, deploymentID string) (control.DeploymentView, error)
+	CancelDeployment(ctx context.Context, deploymentID string) (control.DeploymentView, error)
+	FollowBuildLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
+	FollowRuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error
+	FollowShedLog(ctx context.Context, emit func(line string))
+
+	ServicesForPush(ctx context.Context, repo, branch string) ([]store.Service, error)
+	ReceivePush(ctx context.Context, push store.PendingPush) error
+	DeployPush(ctx context.Context, serviceID string)
+
+	ServiceMetrics(ctx context.Context, serviceID, rng string) (metrics.Series, error)
+	HostMetrics(ctx context.Context, rng string) (metrics.HostSeries, error)
+
+	ServiceBackups(ctx context.Context, serviceID string) (control.BackupList, error)
+	SystemBackups(ctx context.Context) (control.BackupList, error)
+	SetServiceBackupPolicy(ctx context.Context, serviceID string, in backup.PolicyInput) (backup.Policy, error)
+	SetSystemBackupPolicy(ctx context.Context, in backup.PolicyInput) (backup.Policy, error)
+	BackUpService(ctx context.Context, serviceID string) (control.BackupView, error)
+	BackUpSystem(ctx context.Context) (control.BackupView, error)
+	OpenBackup(ctx context.Context, id string) (io.ReadCloser, string, error)
+	RestoreBackup(ctx context.Context, id string) (store.Restore, error)
+	DeleteBackup(ctx context.Context, id string) error
+	BackupSettings(ctx context.Context) (backup.Settings, error)
+	SetBackupSettings(ctx context.Context, in backup.SettingsInput) (backup.Settings, error)
+	TestBackupS3(ctx context.Context, in backup.S3Input) error
+	BackupIdentity(ctx context.Context) (string, error)
+
+	UpdateStatus(ctx context.Context) (update.Status, error)
+	CheckUpdate(ctx context.Context) (update.Status, error)
+	DownloadUpdate(ctx context.Context) (update.Status, error)
+	SetAutoDownload(ctx context.Context, on bool) (update.Status, error)
+	InstallUpdate(ctx context.Context) (update.Status, error)
+
+	Repos(ctx context.Context) ([]github.Repo, error)
+	Branches(ctx context.Context, owner, repo string) ([]string, error)
 }
 
-var _ Deployer = (*deploy.Deployer)(nil)
+var _ Control = (*control.Plane)(nil)
 
-// Backups runs backups and restores and holds the backup settings.
-// *backup.Manager implements it.
-type Backups interface {
-	BackUp(ctx context.Context, serviceID string) (store.Backup, error)
-	Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error)
-	Restore(ctx context.Context, backupID string) (store.Restore, error)
-	Delete(ctx context.Context, backupID string) error
-	Open(ctx context.Context, backupID string) (io.ReadCloser, error)
-	PauseService(ctx context.Context, serviceID string) (resume func(), err error)
-	ForgetService(ctx context.Context, serviceID string) error
-	Policy(ctx context.Context, serviceID string) (backup.Policy, error)
-	SetPolicy(ctx context.Context, serviceID string, in backup.PolicyInput) (backup.Policy, error)
-	Settings(ctx context.Context) (backup.Settings, error)
-	SetSettings(ctx context.Context, in backup.SettingsInput) (backup.Settings, error)
-	TestS3(ctx context.Context, in backup.S3Input) error
-	Identity(ctx context.Context) (string, error)
+// Settings stores the GitHub App credentials. *store.Store implements it.
+type Settings interface {
+	Setting(ctx context.Context, key string) (string, error)
+	SetSetting(ctx context.Context, key, value string) error
 }
 
-var _ Backups = (*backup.Manager)(nil)
+var _ Settings = (*store.Store)(nil)
 
 // Config configures a Server.
 type Config struct {
-	Store    *store.Store
-	Deployer Deployer
-	Backups  Backups
-	Metrics  Metrics
-	// Logs is shed's own log, streamed to the dashboard.
-	Logs    Logs
-	Updates Updates
+	Control  Control
+	Settings Settings
 	// Restart shuts shed down gracefully and starts it again. The API calls
 	// it after installing an update.
 	Restart func()
@@ -83,31 +117,27 @@ type Config struct {
 	GitHub *GitHubHolder
 	// BaseURL is the public dashboard URL.
 	BaseURL string
-	// BaseDomain is the parent of generated service domains; empty disables
-	// them.
-	BaseDomain string
 	// Web holds the built dashboard, with index.html at its root.
 	Web fs.FS
 	// HTTPClient is used for GitHub API calls. Nil means a default client.
 	HTTPClient *http.Client
-	Log        *slog.Logger
+	// MCP serves the MCP server, mounted at /mcp behind bearer tokens. Nil
+	// leaves /mcp unmounted.
+	MCP http.Handler
+	Log *slog.Logger
 }
 
 // Server is the HTTP interface.
 type Server struct {
-	store      *store.Store
-	deployer   Deployer
-	backups    Backups
-	metrics    Metrics
-	logs       Logs
-	updates    Updates
+	control    Control
+	settings   Settings
 	restart    func()
 	auth       *auth.Auth
 	github     *GitHubHolder
 	baseURL    string
-	baseDomain string
 	web        fs.FS
 	httpClient *http.Client
+	mcp        http.Handler
 	log        *slog.Logger
 
 	webhooks   webhookGuard
@@ -115,35 +145,22 @@ type Server struct {
 	setupMu    sync.Mutex // serializes completing the GitHub setup
 	tokenMu    sync.Mutex
 	setupToken string // guarded by tokenMu; empty once GitHub is configured
-
-	routes *routeState
-
-	pushRetry time.Duration
-	pushMu    sync.Mutex        // serializes pushes with the API's other deployments
-	pushErrs  map[string]string // last logged failure by service ID; guarded by pushMu
 }
 
 // New returns a Server. It loads the GitHub App from the store, or, if none is
 // configured, generates the one-time setup token and logs it.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	s := &Server{
-		store:      cfg.Store,
-		deployer:   cfg.Deployer,
-		backups:    cfg.Backups,
-		metrics:    cfg.Metrics,
-		logs:       cfg.Logs,
-		updates:    cfg.Updates,
+		control:    cfg.Control,
+		settings:   cfg.Settings,
 		restart:    cfg.Restart,
 		auth:       cfg.Auth,
 		github:     cfg.GitHub,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		baseDomain: strings.ToLower(cfg.BaseDomain),
 		web:        cfg.Web,
 		httpClient: cfg.HTTPClient,
+		mcp:        cfg.MCP,
 		log:        cfg.Log,
-		routes:     newRouteState(),
-		pushRetry:  pushRetryInterval,
-		pushErrs:   make(map[string]string),
 	}
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err
@@ -165,6 +182,30 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/setup/github/import", protectMutations(s.baseURL, requireJSON(s.handle(s.importApp))))
 	mux.Handle("POST /api/github/webhook", s.handle(s.webhook))
 
+	// OAuth authorization server for agents. Metadata, registration, token,
+	// and revocation are called cross-origin without cookies, so they allow
+	// any origin; their methods are checked by the handlers.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", s.auth.ProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", s.auth.ProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", s.auth.AuthorizationServerMetadata)
+	mux.HandleFunc("/oauth/register", s.auth.Register)
+	mux.HandleFunc("GET /oauth/authorize", s.auth.Authorize)
+	mux.HandleFunc("/oauth/token", s.auth.Token)
+	mux.HandleFunc("/oauth/revoke", s.auth.Revoke)
+	oauthAPI := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, s.auth.Require(protectMutations(s.baseURL, requireJSON(h))))
+	}
+	oauthAPI("GET /api/oauth/requests/{id}", s.auth.AuthorizationRequest)
+	oauthAPI("POST /api/oauth/requests/{id}", s.auth.DecideAuthorization)
+	oauthAPI("GET /api/oauth/grants", s.auth.Grants)
+	oauthAPI("DELETE /api/oauth/grants/{id}", s.auth.RevokeGrant)
+
+	// The MCP server takes OAuth access tokens, never the session cookie.
+	if s.mcp != nil {
+		mux.Handle("/mcp", rejectForeignOrigins(s.baseURL,
+			s.auth.RequireBearer(s.auth.Resource())(requireScope(auth.ScopeRead, s.mcp))))
+	}
+
 	// Routes that need a session.
 	authed := func(pattern string, h handlerFunc) {
 		mux.Handle(pattern, s.auth.Require(protectMutations(s.baseURL, requireJSON(s.handle(h)))))
@@ -181,10 +222,10 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/services/{id}", s.getService)
 	authed("PATCH /api/services/{id}", s.patchService)
 	authed("DELETE /api/services/{id}", s.deleteService)
-	authed("POST /api/services/{id}/stop", s.controlService(Deployer.StopService))
-	authed("POST /api/services/{id}/start", s.controlService(Deployer.StartService))
-	authed("POST /api/services/{id}/restart", s.controlService(Deployer.RestartService))
-	authed("POST /api/services/{id}/restore-fence/clear", s.controlService(Deployer.ClearRestoreFence))
+	authed("POST /api/services/{id}/stop", s.controlService(Control.StopService))
+	authed("POST /api/services/{id}/start", s.controlService(Control.StartService))
+	authed("POST /api/services/{id}/restart", s.controlService(Control.RestartService))
+	authed("POST /api/services/{id}/restore-fence/clear", s.controlService(Control.ClearRestoreFence))
 
 	authed("GET /api/services/{id}/variables", s.getVariables)
 	authed("PUT /api/services/{id}/variables", s.putVariables)

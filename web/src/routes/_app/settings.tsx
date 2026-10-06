@@ -5,6 +5,7 @@ import { Page, Stack } from "../../components/Layout";
 import { PageHeader } from "../../components/Shell";
 import { EncryptionCard } from "../../features/backups/EncryptionCard";
 import { S3Card } from "../../features/backups/S3Card";
+import { AgentsCard } from "../../features/settings/AgentsCard";
 import { UpdatesCard } from "../../features/settings/UpdatesCard";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -18,10 +19,11 @@ function SettingsPage() {
     <Page>
       <PageHeader
         title="Settings"
-        description="Updates, backup storage, and encryption for this shed instance."
+        description="Updates, agents, backup storage, and encryption for this shed instance."
       />
       <Stack gap={4}>
         <UpdatesCard />
+        <AgentsCard />
         <S3Card settings={settings} />
         <EncryptionCard settings={settings} />
       </Stack>

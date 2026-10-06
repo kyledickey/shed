@@ -27,7 +27,10 @@ internal/
   metrics/         container and host resource sampling, time series
   s3/              S3-compatible object storage client
   backup/          backups and restores of service data and shed.db
-  auth/            sessions, GitHub sign-in, middleware
+  update/          release checks, verified downloads, replacing the binary
+  auth/            sessions, GitHub sign-in, middleware, OAuth server for agents
+  control/         operations and rules behind every interface
+  mcp/             read-only MCP server for agents, mounted at /mcp
   api/             HTTP API, SSE logs, webhook, SPA serving
 web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)
   embed.go         embeds web/dist into the Go binary
@@ -42,25 +45,28 @@ docs/design.md     data model, deploy pipeline, HTTP API contract
 
 The last column is the real import graph, taken from `go list`. Leaf packages import nothing from `internal/`.
 
-| Package    | Responsibility                                                                     | Imports from internal/                                         |
-| ---------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `cmd/shed` | Flags, config, logging, wiring, signals, shutdown.                                 | everything                                                     |
-| `config`   | Loads TOML and `SHED_*` env into a Config with defaults and validation.            | none                                                           |
-| `store`    | SQLite (modernc), embedded migrations, CRUD on plain structs.                      | none                                                           |
-| `docker`   | Docker Engine operations through the moby client.                                  | none                                                           |
-| `build`    | Clones a commit and builds an image from a Dockerfile or with Railpack.            | none                                                           |
-| `proxy`    | Embedded Caddy. Apply(routes) swaps the active route table.                        | none                                                           |
-| `github`   | GitHub App: manifest, JWT, installation tokens, repos, CI status, OAuth, webhooks. | none                                                           |
-| `vars`     | Resolves `${{ KEY }}` and `${{ service.KEY }}` references.                         | none                                                           |
-| `catalog`  | Database templates: image, port, volume path, default variables.                   | none                                                           |
-| `host`     | Host CPU, memory, network, disk I/O, and filesystem usage.                         | none                                                           |
-| `logtail`  | In-memory tail of shed's own log, followed over SSE.                               | none                                                           |
-| `s3`       | S3-compatible object storage client for off-site backups.                          | none                                                           |
-| `deploy`   | Deployment pipeline, per-service workers, reconcile on boot.                       | build, catalog, docker, github, proxy, store, vars             |
-| `metrics`  | Container and host sampling, per-service and host time series.                     | docker, host, store                                            |
-| `backup`   | Dumps, archives, zstd, age, schedule, retention, upload, restore.                  | docker, store                                                  |
-| `auth`     | Sessions, GitHub sign-in handlers, middleware.                                     | github                                                         |
-| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving.                                 | auth, backup, catalog, deploy, github, logtail, metrics, store |
+| Package    | Responsibility                                                                     | Imports from internal/                                                  |
+| ---------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `cmd/shed` | Flags, config, logging, wiring, signals, shutdown.                                 | everything                                                              |
+| `config`   | Loads TOML and `SHED_*` env into a Config with defaults and validation.            | none                                                                    |
+| `store`    | SQLite (modernc), embedded migrations, CRUD on plain structs.                      | none                                                                    |
+| `docker`   | Docker Engine operations through the moby client.                                  | none                                                                    |
+| `build`    | Clones a commit and builds an image from a Dockerfile or with Railpack.            | none                                                                    |
+| `proxy`    | Embedded Caddy. Apply(routes) swaps the active route table.                        | none                                                                    |
+| `github`   | GitHub App: manifest, JWT, installation tokens, repos, CI status, OAuth, webhooks. | none                                                                    |
+| `vars`     | Resolves `${{ KEY }}` and `${{ service.KEY }}` references.                         | none                                                                    |
+| `catalog`  | Database templates: image, port, volume path, default variables.                   | none                                                                    |
+| `host`     | Host CPU, memory, network, disk I/O, and filesystem usage.                         | none                                                                    |
+| `logtail`  | In-memory tail of shed's own log, followed over SSE.                               | none                                                                    |
+| `s3`       | S3-compatible object storage client for off-site backups.                          | none                                                                    |
+| `update`   | Release checks, verified downloads, replacing the shed binary.                     | none                                                                    |
+| `deploy`   | Deployment pipeline, per-service workers, reconcile on boot.                       | build, catalog, docker, github, proxy, store, vars                      |
+| `metrics`  | Container and host sampling, per-service and host time series.                     | docker, host, store                                                     |
+| `backup`   | Dumps, archives, zstd, age, schedule, retention, upload, restore.                  | docker, store                                                           |
+| `auth`     | Sessions, GitHub sign-in, middleware, OAuth 2.1 server and bearer middleware.      | github                                                                  |
+| `control`  | Operations on projects, services, deployments, backups; their validation rules.    | backup, build, catalog, deploy, github, logtail, metrics, store, update |
+| `mcp`      | Read-only MCP server for agents: tools, compact results, instructions.             | control, github, metrics, update                                        |
+| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving, `/mcp` mount. Calls `control`.  | auth, backup, control, deploy, github, metrics, store, update           |
 
 `web` is a Go package too, but only to embed the built dashboard. Its `Dist()` returns the files as an `fs.FS`.
 
@@ -75,7 +81,7 @@ Most imports from a consumer are for plain types, such as `store.Service`. The b
 ## Design principles
 
 - **Leaf packages import nothing from internal/.** That is what lets you understand, test, and replace one on its own. Keep it that way when you add code.
-- **Interfaces belong to the consumer.** `deploy.Docker`, `backup.Remote`, `auth.Store`, and `api.Deployer` are small and name only what that package calls. Tests pass fakes.
+- **Interfaces belong to the consumer.** `deploy.Docker`, `backup.Remote`, `auth.Store`, and `control.Deployer` are small and name only what that package calls. Tests pass fakes.
 - **Dependencies are passed in.** No package-level state, no `init` side effects, no global loggers. Each constructor takes a `Config` struct and a `*slog.Logger`.
 - **Caddy is the one exception.** Caddy keeps process-global state, so `internal/proxy` contains it, and nothing else touches Caddy.
 - **APIs stay narrow.** Export only what callers use. Prefer plain structs and functions over frameworks.
@@ -83,14 +89,14 @@ Most imports from a consumer are for plain types, such as `store.Service`. The b
 
 ## Wiring in cmd/shed
 
-`cmd/shed/main.go` builds every piece in dependency order and hands each one the real implementations of the interfaces it declared. The order is: config, logger, data directories, store, Docker client, proxy, deployer, backups, metrics collector, auth, API server. Then it recovers interrupted restores, reconciles services, starts the background loops, and serves HTTP until the process gets a signal.
+`cmd/shed/main.go` builds every piece in dependency order and hands each one the real implementations of the interfaces it declared. The order is: config, logger, data directories, store, Docker client, proxy, deployer, backups, metrics collector, updater, auth, control plane, MCP server, API server. Then it recovers interrupted restores, reconciles services, starts the background loops, and serves HTTP until the process gets a signal.
 
 Most real types satisfy the consumer's interface directly: the one `*docker.Client` is passed to `deploy`, `backup`, and `metrics`, each of which sees only its own small interface. Where the shapes differ, `main.go` uses a small adapter:
 
 - `backupServices` adapts the `*deploy.Deployer` to `backup.Services`, which lets a backup hold a service while it dumps data.
 - `api.AuthStore(st)` adapts the store to `auth.Store`.
 - A `NewRemote` closure converts `backup.S3Config` to `s3.Config`, so `backup` never imports `s3`.
-- A `GitHub` closure returns the client from `api.GitHubHolder`, or false before the GitHub App is set up. `deploy` and `auth` call it each time instead of holding a client.
+- A `GitHub` closure returns the client from `api.GitHubHolder`, or false before the GitHub App is set up. `deploy`, `auth`, and `control` call it each time instead of holding a client.
 - `deploy.Proxy` is left nil when `proxy.enabled` is false, which turns routing off.
 
 ```go title="cmd/shed/main.go (abridged)"
@@ -111,4 +117,4 @@ backups := backup.New(backup.Config{
 })
 ```
 
-To add a new capability, write it as a package with its own interfaces, then add the wiring here. If it needs to be visible in the dashboard, add the endpoint to `internal/api` and describe it in `docs/design.md`. For how the larger pieces work inside, read [Internals](/docs/internals).
+To add a new capability, write it as a package with its own interfaces, then add the wiring here. If it needs to be visible in the dashboard, add the operation to `internal/control`, a thin handler for it to `internal/api`, and describe it in `docs/design.md`. For how the larger pieces work inside, read [Internals](/docs/internals).

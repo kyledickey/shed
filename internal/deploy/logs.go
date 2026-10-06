@@ -114,12 +114,88 @@ func (d *Deployer) pruneHistory(serviceID string) {
 	}
 }
 
+// BuildLog returns the last n lines of a deployment's build log, for showing
+// outside the dashboard. The log was masked as it was written; BuildLog also
+// masks the values given by maskedValues, which covers values saved since.
+// Lines longer than 64 KiB are split.
+func (d *Deployer) BuildLog(ctx context.Context, deploymentID string, n int) ([]string, error) {
+	dep, err := d.store.Deployment(ctx, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := d.tailLog(deploymentID, n)
+	if err != nil {
+		return nil, err
+	}
+	secrets, err := d.maskedValues(ctx, dep)
+	if err != nil {
+		return nil, err
+	}
+	redactor := build.NewRedactor(io.Discard, secrets)
+	for i, l := range lines {
+		lines[i] = redactor.Redact(l)
+	}
+	return lines, nil
+}
+
+// tailLog returns the last n lines of a deployment's build log, or none if
+// it has no log.
+func (d *Deployer) tailLog(deploymentID string, n int) ([]string, error) {
+	if n <= 0 {
+		return []string{}, nil
+	}
+	f, err := os.Open(d.logPath(deploymentID))
+	if errors.Is(err, fs.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	ring := make([]string, 0, n)
+	next := 0
+	add := func(line string) {
+		if len(ring) < n {
+			ring = append(ring, line)
+			return
+		}
+		ring[next] = line
+		next = (next + 1) % n
+	}
+	r := bufio.NewReaderSize(f, maxLine)
+	partial := ""
+	for {
+		chunk, err := r.ReadSlice('\n')
+		partial += string(chunk)
+		if err == nil {
+			add(strings.TrimSuffix(partial, "\n"))
+			partial = ""
+			continue
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if len(partial) >= maxLine {
+				add(partial)
+				partial = ""
+			}
+			continue
+		}
+		if !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		break
+	}
+	if partial != "" {
+		add(partial)
+	}
+	return append(ring[next:], ring[:next]...), nil
+}
+
 // RuntimeLogs writes the last tail lines of the output of a service's active
-// container to w, then follows it until ctx ends or the container stops. The
-// values of the variables the container was started with are masked, not
-// those saved since. It returns ErrNoContainer if the service has no active
-// container.
-func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error {
+// container to w. With follow, it then follows the output until ctx ends or
+// the container stops. The values of the variables the container was started
+// with are masked, not those saved since. It returns ErrNoContainer if the
+// service has no active container.
+func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error {
 	dep, err := d.store.ActiveDeployment(ctx, serviceID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && dep.ContainerID == "") {
 		return ErrNoContainer
@@ -134,7 +210,7 @@ func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, 
 		return err
 	}
 	redactor := build.NewRedactor(w, secrets)
-	err = d.docker.Logs(ctx, dep.ContainerID, tail, true, redactor)
+	err = d.docker.Logs(ctx, dep.ContainerID, tail, follow, redactor)
 	return errors.Join(err, redactor.Flush())
 }
 
