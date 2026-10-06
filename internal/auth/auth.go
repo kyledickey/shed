@@ -86,7 +86,8 @@ type Auth struct {
 	secure  bool            // Whether cookies are marked Secure.
 	log     *slog.Logger
 
-	requests *requests // Pending authorization requests.
+	requests      *requests // Pending authorization requests.
+	registrations *limiter  // Client registrations per client address.
 
 	cleanMu   sync.Mutex
 	cleanedAt time.Time // Last removal of expired OAuth rows; guarded by cleanMu.
@@ -110,7 +111,8 @@ func New(store Store, oauth func() (OAuth, bool), baseURL string, allowedUsers [
 		secure:  strings.HasPrefix(baseURL, "https://"),
 		log:     log,
 
-		requests: newRequests(),
+		requests:      newRequests(),
+		registrations: newLimiter(registerBurst, registerPeriod, maxRegistrants),
 	}
 }
 

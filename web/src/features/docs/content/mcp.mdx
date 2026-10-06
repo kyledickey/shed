@@ -53,7 +53,9 @@ Clients find these on their own. They are listed here for operators who sit a re
 | `POST /oauth/token`                                  | Exchanges a code or refresh token for tokens.                                       |
 | `POST /oauth/revoke`                                 | Token revocation (RFC 7009).                                                        |
 
-Redirect URIs must be `https`, or `http` on loopback (`127.0.0.1`, `[::1]`, `localhost`), where any port is allowed, so desktop clients that listen on a random local port work. A redirect that does not exactly match a registered one is shown as an error page and is never followed.
+Redirect URIs must be `https`, or `http` on loopback (`127.0.0.1`, `[::1]`, `localhost`), where any port is allowed, so desktop clients that listen on a random local port work. A redirect that does not exactly match a registered one is shown as an error page and is never followed, and so is any other invalid sign-in request: shed only sends the browser back to the client after you approve or deny it.
+
+Anyone can register a client, so registration is bounded: each client address gets 10 registrations, regained over an hour (429 past that), and at most 1000 clients are kept (503 past that). Behind the built-in proxy the address comes from the `X-Forwarded-For` header it sets. Registrations that never led to a sign-in are dropped after 24 hours.
 
 ## Tools
 

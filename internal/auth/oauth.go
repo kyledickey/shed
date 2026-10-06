@@ -32,6 +32,9 @@ const (
 	cleanupInterval = time.Hour
 
 	maxClients      = 1000
+	registerBurst   = 10        // registrations per client address...
+	registerPeriod  = time.Hour // ...regained over this period
+	maxRegistrants  = 4096      // client addresses tracked for registration
 	maxPending      = 256
 	maxRedirectURIs = 10
 	maxNameLen      = 100
@@ -222,6 +225,12 @@ func (a *Auth) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if problem != "" {
 		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", problem)
+		return
+	}
+
+	if !a.registrations.allow(clientAddr(r), time.Now()) {
+		w.Header().Set("Retry-After", fmt.Sprint(int(registerPeriod.Seconds())/registerBurst))
+		oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many registrations; try again later")
 		return
 	}
 

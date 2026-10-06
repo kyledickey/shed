@@ -922,9 +922,13 @@ the only resource is `<server.url>/mcp`.
    it asked for. Redirect URIs (1 to 10, each at most 2000 bytes) must be
    https, or http on a loopback host (`127.0.0.1`, `[::1]`, `localhost`), with
    no fragment or user info. `client_name` is at most 100 printable
-   characters; `client_uri` must be https. At most 1000 clients are kept:
-   registrations unused for 24 hours are dropped (10 minutes when full), and
-   past the cap registration answers 503.
+   characters; `client_uri` must be https. Each client address may register 10
+   clients, regained at 10 per hour; past that registration answers 429 with
+   `Retry-After`. The address is the connection's, or the last
+   `X-Forwarded-For` entry when the connection is from loopback (the embedded
+   proxy overwrites that header); IPv6 addresses count per /64. At most 1000
+   clients are kept: registrations unused for 24 hours are dropped (10
+   minutes when full), and past the cap registration answers 503.
 3. `GET /oauth/authorize` checks `client_id`, `redirect_uri`,
    `response_type=code`, PKCE (`code_challenge_method=S256`), `scope`
    (default `read`), and `resource` (if present, `<server.url>/mcp`). The
@@ -1147,7 +1151,7 @@ POST   /api/github/webhook
 
 GET    /.well-known/oauth-protected-resource[/mcp]  RFC 9728 metadata (no session, CORS)
 GET    /.well-known/oauth-authorization-server  RFC 8414 metadata (no session, CORS)
-POST   /oauth/register          RFC 7591 JSON   201 → client  (no session, CORS)
+POST   /oauth/register          RFC 7591 JSON   201 → client  (no session, CORS; 429 past the per-address limit, 503 past the cap)
 GET    /oauth/authorize?…                       302 → /authorize?request= | /api/auth/login?next=; 400 HTML for an invalid request
 POST   /oauth/token             form            → token response  (no session, CORS)
 POST   /oauth/revoke            form            200  (no session, CORS)
