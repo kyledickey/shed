@@ -26,6 +26,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
+	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -245,6 +246,7 @@ func newFixture(t *testing.T) *fixture {
 			"index.html":      {Data: []byte("<html>shed</html>")},
 			"assets/app-1.js": {Data: []byte("console.log(1)")},
 		},
+		MCP: mcp.New(mcp.Config{Backend: plane, Version: "test", Log: log}).Handler(),
 		Log: log,
 	})
 	if err != nil {

@@ -23,7 +23,6 @@ import (
 // user; shed issues its own opaque tokens, stored hashed.
 const (
 	resourcePath = "/mcp" // The protected resource: the MCP endpoint.
-	scopeRead    = "read"
 
 	requestTTL      = 10 * time.Minute // pending authorization request
 	codeTTL         = time.Minute
@@ -43,7 +42,10 @@ const (
 	refreshPrefix = "shed_rt_"
 )
 
-var supportedScopes = []string{scopeRead}
+// ScopeRead is the scope that grants read-only access to the MCP server.
+const ScopeRead = "read"
+
+var supportedScopes = []string{ScopeRead}
 
 // ErrReplayed is returned by an [OAuthStore] when an authorization code or a
 // rotated refresh token is presented again. The store has revoked the grant
@@ -263,7 +265,7 @@ func (a *Auth) Register(w http.ResponseWriter, r *http.Request) {
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
-		"scope":                      scopeRead,
+		"scope":                      ScopeRead,
 	}
 	if c.URI != "" {
 		out["client_uri"] = c.URI
@@ -824,7 +826,7 @@ func withQuery(uri string, kv ...string) string {
 func parseScope(s string) (string, bool) {
 	fields := strings.Fields(s)
 	if len(fields) == 0 {
-		return scopeRead, true
+		return ScopeRead, true
 	}
 	if !subset(fields, supportedScopes...) {
 		return "", false

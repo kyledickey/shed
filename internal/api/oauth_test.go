@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-
-	"github.com/kyledickey/shed/internal/auth"
 )
 
 // TestOAuthEndToEnd runs the OAuth flow through the real routes and store.
@@ -76,18 +74,14 @@ func TestOAuthEndToEnd(t *testing.T) {
 		t.Fatalf("token = %v", tok)
 	}
 
-	protected := f.server.auth.RequireBearer(f.server.auth.Resource())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, _ := auth.UserFrom(r.Context())
-		w.Write([]byte(u.Login))
-	}))
 	call := func(token string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("POST", "/mcp", nil)
+		req := httptest.NewRequest("POST", "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}`))
 		req.Header.Set("Authorization", "Bearer "+token)
-		rec := httptest.NewRecorder()
-		protected.ServeHTTP(rec, req)
-		return rec
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		return serve(req)
 	}
-	if rec := call(access); rec.Code != http.StatusOK || rec.Body.String() != "octocat" {
+	if rec := call(access); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `\"projects\":[]`) {
 		t.Fatalf("bearer = %d %q", rec.Code, rec.Body)
 	}
 

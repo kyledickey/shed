@@ -120,7 +120,10 @@ type Config struct {
 	Web fs.FS
 	// HTTPClient is used for GitHub API calls. Nil means a default client.
 	HTTPClient *http.Client
-	Log        *slog.Logger
+	// MCP serves the MCP server, mounted at /mcp behind bearer tokens. Nil
+	// leaves /mcp unmounted.
+	MCP http.Handler
+	Log *slog.Logger
 }
 
 // Server is the HTTP interface.
@@ -133,6 +136,7 @@ type Server struct {
 	baseURL    string
 	web        fs.FS
 	httpClient *http.Client
+	mcp        http.Handler
 	log        *slog.Logger
 
 	webhooks   webhookGuard
@@ -154,6 +158,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		web:        cfg.Web,
 		httpClient: cfg.HTTPClient,
+		mcp:        cfg.MCP,
 		log:        cfg.Log,
 	}
 	if err := s.loadGitHub(ctx); err != nil {
@@ -193,6 +198,12 @@ func (s *Server) Handler() http.Handler {
 	oauthAPI("POST /api/oauth/requests/{id}", s.auth.DecideAuthorization)
 	oauthAPI("GET /api/oauth/grants", s.auth.Grants)
 	oauthAPI("DELETE /api/oauth/grants/{id}", s.auth.RevokeGrant)
+
+	// The MCP server takes OAuth access tokens, never the session cookie.
+	if s.mcp != nil {
+		mux.Handle("/mcp", rejectForeignOrigins(s.baseURL,
+			s.auth.RequireBearer(s.auth.Resource())(requireScope(auth.ScopeRead, s.mcp))))
+	}
 
 	// Routes that need a session.
 	authed := func(pattern string, h handlerFunc) {

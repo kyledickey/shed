@@ -28,8 +28,9 @@ internal/
   s3/              S3-compatible object storage client
   backup/          backups and restores of service data and shed.db
   update/          release checks, verified downloads, replacing the binary
-  auth/            sessions, GitHub sign-in, middleware
+  auth/            sessions, GitHub sign-in, middleware, OAuth server for agents
   control/         operations and rules behind every interface
+  mcp/             read-only MCP server for agents, mounted at /mcp
   api/             HTTP API, SSE logs, webhook, SPA serving
 web/               dashboard (Vite+, React, TanStack Router + Query, CSS modules)
   embed.go         embeds web/dist into the Go binary
@@ -62,9 +63,10 @@ The last column is the real import graph, taken from `go list`. Leaf packages im
 | `deploy`   | Deployment pipeline, per-service workers, reconcile on boot.                       | build, catalog, docker, github, proxy, store, vars                      |
 | `metrics`  | Container and host sampling, per-service and host time series.                     | docker, host, store                                                     |
 | `backup`   | Dumps, archives, zstd, age, schedule, retention, upload, restore.                  | docker, store                                                           |
-| `auth`     | Sessions, GitHub sign-in handlers, middleware.                                     | github                                                                  |
+| `auth`     | Sessions, GitHub sign-in, middleware, OAuth 2.1 server and bearer middleware.      | github                                                                  |
 | `control`  | Operations on projects, services, deployments, backups; their validation rules.    | backup, build, catalog, deploy, github, logtail, metrics, store, update |
-| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving. Calls `control`.                | auth, backup, control, deploy, github, metrics, store, update           |
+| `mcp`      | Read-only MCP server for agents: tools, compact results, instructions.             | control, github, metrics, update                                        |
+| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving, `/mcp` mount. Calls `control`.  | auth, backup, control, deploy, github, metrics, store, update           |
 
 `web` is a Go package too, but only to embed the built dashboard. Its `Dist()` returns the files as an `fs.FS`.
 
@@ -87,7 +89,7 @@ Most imports from a consumer are for plain types, such as `store.Service`. The b
 
 ## Wiring in cmd/shed
 
-`cmd/shed/main.go` builds every piece in dependency order and hands each one the real implementations of the interfaces it declared. The order is: config, logger, data directories, store, Docker client, proxy, deployer, backups, metrics collector, updater, auth, control plane, API server. Then it recovers interrupted restores, reconciles services, starts the background loops, and serves HTTP until the process gets a signal.
+`cmd/shed/main.go` builds every piece in dependency order and hands each one the real implementations of the interfaces it declared. The order is: config, logger, data directories, store, Docker client, proxy, deployer, backups, metrics collector, updater, auth, control plane, MCP server, API server. Then it recovers interrupted restores, reconciles services, starts the background loops, and serves HTTP until the process gets a signal.
 
 Most real types satisfy the consumer's interface directly: the one `*docker.Client` is passed to `deploy`, `backup`, and `metrics`, each of which sees only its own small interface. Where the shapes differ, `main.go` uses a small adapter:
 

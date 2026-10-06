@@ -118,7 +118,8 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
 | `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail types |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
+| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions | control via interface + types of control/deploy/github/metrics/update |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -1154,8 +1155,73 @@ POST   /api/oauth/requests/{id}  {approve}      → { redirect: string }
 GET    /api/oauth/grants                        → OAuthGrant[]  (signed-in user's, newest first)
 DELETE /api/oauth/grants/{id}                   204  (revokes all its tokens; 404 if not the user's)
 
+POST   /mcp                     JSON-RPC        → JSON-RPC  (MCP Streamable HTTP; bearer token with scope read; see MCP below)
+GET    /mcp, DELETE /mcp                        405  (stateless: no session stream to open or end)
+
 GET    /*                                       SPA (web/dist, index.html fallback)
 ```
+
+### MCP
+
+`/mcp` is a read-only MCP server for agents (`internal/mcp`, on the official
+Go SDK), speaking the Streamable HTTP transport statelessly: every POST is
+answered on its own with `application/json`, no `Mcp-Session-Id` is issued,
+and GET and DELETE answer 405. Requests are checked in this order:
+
+1. A browser `Origin` other than `server.url`'s answers 403. Requests without
+   `Origin`, as agents send them, pass.
+2. `(*auth.Auth).RequireBearer("<server.url>/mcp")`: no or a bad access token
+   answers 401 with the `WWW-Authenticate` challenge of
+   [Agent sign-in](#agent-sign-in-oauth). The session cookie is ignored.
+3. The token must carry scope `read`, else 403 with
+   `WWW-Authenticate: Bearer error="insufficient_scope", scope="read"`.
+
+Bodies are limited to 1 MiB. shed listens on loopback behind its own proxy,
+so the SDK's DNS rebinding check (loopback listener, non-loopback `Host`) is
+off; the Origin check and the bearer token take its place.
+
+`initialize` returns instructions that explain projects, services,
+deployments, and how to diagnose a failed deploy. Every tool is annotated
+`readOnlyHint` and calls a `control.Plane` method. Results are compact JSON
+(camelCase; empty strings, zero settings, and false flags left out) as both
+`structuredContent` and a text block, except the log tools, which return the
+lines as one text block. Not-found, invalid, and conflict errors become tool
+results with `isError` and the control plane's message (`service "x" not
+found`); unexpected errors are logged and reported as `internal error`.
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `list_projects` | — | `{projects: [{id, name, createdAt, services: [{id, name, kind, status}]}]}` |
+| `get_project` | `project_id` | `{id, name, createdAt, services: [service]}` |
+| `get_service` | `service_id` | service: settings, `status`, `domains`, `volumes`, `latestDeployment`, `restoreFence` |
+| `list_deployments` | `service_id`, `limit?` (default 20, at most 50) | `{deployments: [deployment]}`, newest first, with `imageAvailable` |
+| `get_deployment` | `deployment_id` | deployment: `status`, `trigger`, commit, `image`, `error`, times |
+| `build_log` | `deployment_id`, `lines?` | text: last lines of the build log (`BuildLog`) |
+| `runtime_logs` | `service_id`, `lines?` | text: snapshot of the active container's output (`RuntimeLogs`, not followed) |
+| `service_metrics` | `service_id`, `range?` (1h, 6h, 24h, 7d) | `{range, from, stepSeconds, cpuLimit, memoryLimit, cpuPercent, memoryBytes, netRxBytesPerSecond, netTxBytesPerSecond, diskReadBytesPerSecond, diskWriteBytesPerSecond}`; each metric is `{latest, avg, max}` over the sampled buckets, null if none |
+| `host_metrics` | `range?` | the same with `cpus`, `memoryTotalBytes`, `diskTotalBytes`, and `diskUsedBytes` |
+| `list_variables` | `service_id` | `{variables: [{name, injected?, reference?}], resolveError?}` (`VariableNames`): names only |
+| `list_backups` | `service_id` | `{policy, backups (newest 20), omitted?, restore?}` |
+| `shed_log` | `lines?` | text: last lines of shed's own log (`ShedLog`) |
+| `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
+| `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
+| `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
+
+`lines` defaults to 200 and is capped at 2000. Log lines are cut at 2000
+characters, and the oldest lines are dropped to keep a log result under
+256 KiB, with a note saying how many.
+
+Secrets: no tool returns a variable value, the resolved variables, the age
+key, S3 credentials, or a backup archive, and none changes anything. Log
+text is masked before it reaches the tools: `BuildLog` masks the values the
+deployment's container was started with, the saved values of every service in
+its project, and the service's variables as they resolve now;
+`RuntimeLogs` masks the values the running container was started with;
+`ShedLog` masks the saved values of every service's variables (references
+unexpanded, so a database password is masked wherever it appears, including
+inside a connection string). Masking has the limits of
+[build secret handling](#build-secret-handling): values under 8 bytes and
+encoded copies are not masked.
 
 ### Types
 

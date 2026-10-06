@@ -64,7 +64,7 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `list_projects`                        | Every project with its services and each service's status.                                                                  |
 | `get_project(project_id)`              | One project with its services' settings, domains, volumes, and latest deployments.                                          |
 | `get_service(service_id)`              | One service in full: kind, repo, branch, port, limits, status, domains, volumes, latest deployment.                         |
-| `list_deployments(service_id, limit?)` | A service's deployment history, newest first.                                                                               |
+| `list_deployments(service_id, limit?)` | A service's deployment history, newest first. Default 20, at most 50.                                                       |
 | `get_deployment(deployment_id)`        | One deployment: status, trigger, commit, image, and the error if it failed.                                                 |
 | `build_log(deployment_id, lines?)`     | The tail of a deployment's [build log](/docs/logs#build-logs). Default 200 lines, at most 2000.                             |
 | `runtime_logs(service_id, lines?)`     | A snapshot of the active container's [runtime log](/docs/logs#runtime-logs). Default 200 lines, at most 2000. Not a stream. |
@@ -77,6 +77,8 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `list_repos`                           | The repositories the shed GitHub App can see.                                                                               |
 | `list_branches(owner, repo)`           | The branches of one of them.                                                                                                |
 
+Results are compact JSON. Metrics come as a summary per metric (latest, average, and maximum over the range) rather than every data point. Log results are capped at 2000 lines, each line at 2000 characters, and 256 KiB in total, keeping the newest lines.
+
 The server also sends the agent a short description of how shed works (projects, services, deployments, and how to diagnose a failed one) when it connects, so it uses these in a sensible order.
 
 ## Security
@@ -84,7 +86,7 @@ The server also sends the agent a short description of how shed works (projects,
 - **Read-only.** There are no write tools in this version. Nothing an agent does can deploy, stop, delete, or change a setting.
 - **Variable values are never exposed.** `list_variables` returns names. The resolved variables, which include database passwords and connection strings, are not available to agents at all.
 - **Never exposed.** Variable values, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
-- **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.
+- **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. shed's own log has the saved values of every service's variables replaced. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.
 - **shed's own tokens.** GitHub is only used to prove who you are. shed issues its own opaque tokens and never hands a GitHub token to a client. Tokens are random, stored only as hashes, and bound to one client, one user, the `read` scope, and the MCP resource, so a token for one shed cannot be used on another.
 - **Lifetimes.** An access token lasts 1 hour. A refresh token lasts 30 days and rotates on every use. Using an old refresh token again revokes the whole grant, which cuts off a client whose token was stolen as well as the thief.
 - **Bearer only.** `/mcp` never accepts the dashboard cookie, and the dashboard never accepts these tokens. Requests carrying a browser `Origin` from another site are rejected.

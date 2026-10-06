@@ -63,6 +63,16 @@ The operator view is [Push webhooks](/docs/github#push-webhooks) and [Webhook li
 
 `control.Explain` turns an error into a kind (`ErrInvalid`, `ErrNotFound`, `ErrConflict`, `ErrUpstream`, `ErrUnavailable`) and a message, so each interface maps kinds to its own codes.
 
+## The MCP server
+
+`internal/mcp` serves the read-only [MCP tools](/docs/mcp#tools) for agents. `mcp.New(Config)` takes a `mcp.Backend`, the narrow interface of the `*control.Plane` methods the tools call, and registers each tool with the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) through `sdk.AddTool`, which infers the input schema from a typed argument struct and validates calls against it.
+
+- **Transport.** `Server.Handler` is the SDK's Streamable HTTP handler in stateless mode with plain JSON responses: no sessions, POST only. The SDK's DNS rebinding check is off because shed listens on loopback behind its own proxy, which passes the public `Host` through.
+- **Mounting.** `api.Server.Handler` mounts it at `/mcp` as `rejectForeignOrigins(auth.RequireBearer(resource)(requireScope("read", mcp)))`. There is no session route around it, so the dashboard cookie is never accepted.
+- **Results.** Tools map control views to their own compact result structs, which double as the output schema. Metrics are reduced to latest, average, and maximum per series. Log tools return one text block, bounded in lines, line length, and bytes.
+- **Errors.** `Server.fail` runs `control.Explain`: known kinds become tool errors with the control message, not-found ones naming the object and ID; anything else is logged and reported as `internal error`.
+- **Secrets.** No tool calls `Variables` or `ResolvedVariables`; `list_variables` uses `VariableNames`. The log tools use the masked snapshots described in [The control plane](#the-control-plane).
+
 ## The deployer
 
 `deploy.Deployer` owns every container shed runs for services. It is created by `deploy.New(Config)`, which takes the store, a `deploy.Docker`, a `deploy.Builder`, an optional `deploy.Proxy`, and a function that returns the GitHub client when there is one.

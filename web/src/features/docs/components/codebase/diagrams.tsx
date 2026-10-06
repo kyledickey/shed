@@ -38,6 +38,23 @@ export function DependencyDiagram() {
       />
       <Node x={40} y={88} w={150} h={44} title="api" sub="HTTP · SSE · webhook" />
       <Node x={420} y={88} w={150} h={44} title="control" sub="operations and rules" />
+      <Node x={610} y={88} w={150} h={44} title="mcp" sub="read-only agent tools" />
+      <Edge
+        points={[
+          [685, 52],
+          [685, 88],
+        ]}
+        flow
+        tone="accent"
+      />
+      <Edge
+        points={[
+          [610, 110],
+          [570, 110],
+        ]}
+        flow
+        tone="accent"
+      />
       <Edge
         points={[
           [115, 52],
@@ -102,7 +119,7 @@ export function DependencyDiagram() {
         );
       })}
       <Note x={400} y={424} anchor="middle">
-        api and control also import store, github, update, and other leaf packages directly.
+        api, control, and mcp also import store, github, update, and other leaf packages directly.
       </Note>
     </Diagram>
   );

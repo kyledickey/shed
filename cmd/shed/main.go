@@ -32,6 +32,7 @@ import (
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/logtail"
+	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
@@ -241,6 +242,7 @@ func run() error {
 		GitHub:  gh,
 		BaseURL: cfg.Server.URL,
 		Web:     web.Dist(),
+		MCP:     mcp.New(mcp.Config{Backend: plane, Version: version, Log: log}).Handler(),
 		Log:     log,
 	})
 	if err != nil {

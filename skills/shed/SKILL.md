@@ -50,11 +50,11 @@ All tools are read-only.
 | `list_projects` | Every project with its services and their status. Start here. |
 | `get_project(project_id)` | One project: its services with settings, domains, volumes, latest deployment. |
 | `get_service(service_id)` | One service in full: kind, repo, branch, port, limits, status, domains, volumes, latest deployment. |
-| `list_deployments(service_id, limit?)` | Deployment history, newest first (shed keeps 50 per service). |
+| `list_deployments(service_id, limit?)` | Deployment history, newest first. Default 20, at most 50 (shed keeps 50 per service). |
 | `get_deployment(deployment_id)` | One deployment: status, trigger, commit, image, and the recorded `error`. |
 | `build_log(deployment_id, lines?)` | The deployment's build log. Default 200 lines, max 2000. |
 | `runtime_logs(service_id, lines?)` | A snapshot of the active container's recent log. Default 200, max 2000. Not a live stream. |
-| `service_metrics(service_id, range?)` | CPU, memory, network, disk I/O. Range `1h`, `6h`, `24h`, or `7d`. |
+| `service_metrics(service_id, range?)` | Latest, average, and max of CPU, memory, network, disk I/O, plus limits. Range `1h`, `6h`, `24h`, or `7d`. |
 | `host_metrics(range?)` | The same for the whole server, plus disk used and totals. |
 | `list_variables(service_id)` | Variable **names** only, never values. |
 | `list_backups(service_id)` | The service's backups and its backup policy (schedule, retention). |

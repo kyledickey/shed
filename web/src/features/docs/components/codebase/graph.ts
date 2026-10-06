@@ -31,6 +31,7 @@ export const packages: Package[] = [
   { name: "github", imports: [] },
   { name: "host", imports: [] },
   { name: "logtail", imports: [] },
+  { name: "mcp", imports: ["control", "github", "metrics", "update"] },
   { name: "metrics", imports: ["docker", "host", "store"] },
   { name: "proxy", imports: [] },
   { name: "s3", imports: [] },
