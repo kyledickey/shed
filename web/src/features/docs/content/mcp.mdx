@@ -1,0 +1,105 @@
+---
+title: MCP and agents
+group: Operating
+order: 155
+description: "shed runs a read-only MCP server at /mcp, so coding agents like Claude Code, Claude.ai, and Cursor can look at your projects, deployments, logs, and metrics. They sign in with OAuth through your GitHub account, and they can never see a variable's value."
+---
+
+## Overview
+
+[MCP](https://modelcontextprotocol.io) is the protocol AI agents use to call tools on a server. shed has one built in, at `https://<your-shed>/mcp`. Connect an agent and you can ask it things like "why did my last deploy of web fail?" and it will read the deployment, the build log, the runtime log, and the metrics itself, then tell you what it found.
+
+This version is **read-only**. An agent can look at everything it needs to diagnose a problem, and it cannot change anything: no deploys, restarts, deletes, variable edits, restores, or updates. When a fix needs one of those, the agent tells you which button to press in the dashboard.
+
+- **Transport.** Streamable HTTP, at `<server.url>/mcp`. Any MCP client that supports remote servers and OAuth works.
+- **Sign-in.** OAuth 2.1 with dynamic client registration and PKCE. You approve each client in your browser once; there are no tokens to copy or paste, and shed has no personal access tokens.
+- **Same people.** Only the GitHub accounts in [`auth.allowed_users`](/docs/configuration#environment-overrides) can approve a client, and the rule is checked again on every request.
+
+## Connecting
+
+The MCP URL is your `server.url` plus `/mcp`. The server must be reachable over HTTPS from wherever the agent runs, since OAuth redirects pass through your browser.
+
+### Claude Code
+
+```sh title="on your machine"
+claude mcp add --transport http shed https://shed.example.com/mcp
+```
+
+Then run `/mcp` inside Claude Code and choose shed to sign in. Your browser opens shed's consent page.
+
+### Claude.ai, Cursor, and others
+
+Add a custom connector or remote MCP server and give it the URL `https://shed.example.com/mcp`. The client discovers everything else on its own from the standard metadata endpoints below, registers itself, and starts the sign-in.
+
+### What you see when signing in
+
+1. The client opens `/oauth/authorize` in your browser. If you have no dashboard session, shed sends you through the normal [GitHub sign-in](/docs/security#authentication) first and brings you back.
+2. shed shows a consent page in the dashboard: the client's name, the host it will return to, and the access it asks for (`read`). Approve or deny.
+3. On approval your browser returns to the client with a one-time code. The client exchanges it for tokens, using PKCE to prove it is the same client that started the flow.
+
+The page only shows the client's self-declared name, so check that the host it will return to is one you expect. A client that registers as a well-known name is still just a name.
+
+### Authorization endpoints
+
+Clients find these on their own. They are listed here for operators who sit a reverse proxy or firewall in front of shed, which must pass them through.
+
+| Endpoint                                             | Purpose                                                                             |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `/mcp`                                               | The MCP server. Bearer tokens only.                                                 |
+| `/.well-known/oauth-protected-resource` (and `/mcp`) | RFC 9728 metadata: the resource and its authorization server.                       |
+| `/.well-known/oauth-authorization-server`            | RFC 8414 metadata: endpoints, PKCE `S256`, public clients only.                     |
+| `POST /oauth/register`                               | Dynamic client registration (RFC 7591). Public clients, bounded in size and number. |
+| `GET /oauth/authorize`                               | Starts a sign-in. Redirects to the dashboard's consent page.                        |
+| `POST /oauth/token`                                  | Exchanges a code or refresh token for tokens.                                       |
+| `POST /oauth/revoke`                                 | Token revocation (RFC 7009).                                                        |
+
+Redirect URIs must be `https`, or `http` on loopback (`127.0.0.1`, `[::1]`, `localhost`), where any port is allowed, so desktop clients that listen on a random local port work. A redirect that does not exactly match a registered one is shown as an error page and is never followed.
+
+## Tools
+
+Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same 12-character IDs the [HTTP API](/docs/api) uses; an agent gets them from `list_projects`.
+
+| Tool                                   | Returns                                                                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `list_projects`                        | Every project with its services and each service's status.                                                                  |
+| `get_project(project_id)`              | One project with its services' settings, domains, volumes, and latest deployments.                                          |
+| `get_service(service_id)`              | One service in full: kind, repo, branch, port, limits, status, domains, volumes, latest deployment.                         |
+| `list_deployments(service_id, limit?)` | A service's deployment history, newest first.                                                                               |
+| `get_deployment(deployment_id)`        | One deployment: status, trigger, commit, image, and the error if it failed.                                                 |
+| `build_log(deployment_id, lines?)`     | The tail of a deployment's [build log](/docs/logs#build-logs). Default 200 lines, at most 2000.                             |
+| `runtime_logs(service_id, lines?)`     | A snapshot of the active container's [runtime log](/docs/logs#runtime-logs). Default 200 lines, at most 2000. Not a stream. |
+| `service_metrics(service_id, range?)`  | CPU, memory, network, and disk I/O for a service. Range `1h`, `6h`, `24h`, or `7d`. See [metrics](/docs/metrics).           |
+| `host_metrics(range?)`                 | The same for the whole server, with disk usage and totals.                                                                  |
+| `list_variables(service_id)`           | Variable **names** only, including injected ones. Never values.                                                             |
+| `list_backups(service_id)`             | The service's backups and its backup policy.                                                                                |
+| `shed_log(lines?)`                     | The tail of shed's own [application log](/docs/logs#sheds-own-log).                                                         |
+| `update_status`                        | The running version and whether a newer release exists.                                                                     |
+| `list_repos`                           | The repositories the shed GitHub App can see.                                                                               |
+| `list_branches(owner, repo)`           | The branches of one of them.                                                                                                |
+
+The server also sends the agent a short description of how shed works (projects, services, deployments, and how to diagnose a failed one) when it connects, so it uses these in a sensible order.
+
+## Security
+
+- **Read-only.** There are no write tools in this version. Nothing an agent does can deploy, stop, delete, or change a setting.
+- **Variable values are never exposed.** `list_variables` returns names. The resolved variables, which include database passwords and connection strings, are not available to agents at all.
+- **Never exposed.** Variable values, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
+- **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.
+- **shed's own tokens.** GitHub is only used to prove who you are. shed issues its own opaque tokens and never hands a GitHub token to a client. Tokens are random, stored only as hashes, and bound to one client, one user, the `read` scope, and the MCP resource, so a token for one shed cannot be used on another.
+- **Lifetimes.** An access token lasts 1 hour. A refresh token lasts 30 days and rotates on every use. Using an old refresh token again revokes the whole grant, which cuts off a client whose token was stolen as well as the thief.
+- **Bearer only.** `/mcp` never accepts the dashboard cookie, and the dashboard never accepts these tokens. Requests carrying a browser `Origin` from another site are rejected.
+- **Revoking.** Open **Settings, Agents** in the dashboard to see every connected client with when it was created and last used, and revoke any of them. Revoking ends its tokens immediately.
+- **`allowed_users` still applies.** Each request checks that the token's GitHub login is still on the list. Removing someone from [`auth.allowed_users`](/docs/security#authentication) and restarting shed also deletes their sessions and agent grants.
+
+## Skills
+
+A skill is a short folder of instructions that teaches an agent how to use a tool well. shed ships one, in the repository at `skills/shed/`: a `SKILL.md` that covers shed's model, the tools above, what an agent can and cannot do, and how to diagnose a failed deploy, plus reference files on deployments, builds, and variables that it reads when it needs them.
+
+You don't need the skill for the tools to work, but it makes agents noticeably better at using them. To install it for Claude Code, copy the folder into your skills directory:
+
+```sh title="on your machine"
+git clone https://github.com/kyledickey/shed
+cp -r shed/skills/shed ~/.claude/skills/shed
+```
+
+Use `.claude/skills/shed` inside a repository instead to share it with the team. The skill asks the agent to connect with the command in [Connecting](#connecting) when the shed tools are missing. Other agents that read `SKILL.md` folders take the same directory.
