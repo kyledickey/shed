@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as AuthorizeRouteImport } from './routes/authorize'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
@@ -35,6 +36,11 @@ import { Route as AppProjectsProjectIdServicesServiceIdVariablesRouteImport } fr
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthorizeRoute = AuthorizeRouteImport.update({
+  id: '/authorize',
+  path: '/authorize',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -159,6 +165,7 @@ const AppProjectsProjectIdServicesServiceIdVariablesRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
@@ -182,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/services/$serviceId/': typeof AppProjectsProjectIdServicesServiceIdIndexRoute
 }
 export interface FileRoutesByTo {
+  '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
@@ -204,6 +212,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/showcase': typeof ShowcaseRoute
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/authorize'
     | '/login'
     | '/setup'
     | '/showcase'
@@ -254,6 +264,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/services/$serviceId/'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/authorize'
     | '/login'
     | '/setup'
     | '/showcase'
@@ -275,6 +286,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/authorize'
     | '/login'
     | '/setup'
     | '/showcase'
@@ -301,6 +313,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  AuthorizeRoute: typeof AuthorizeRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
   ShowcaseRoute: typeof ShowcaseRoute
@@ -313,6 +326,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/authorize': {
+      id: '/authorize'
+      path: '/authorize'
+      fullPath: '/authorize'
+      preLoaderRoute: typeof AuthorizeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -567,6 +587,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  AuthorizeRoute: AuthorizeRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
   ShowcaseRoute: ShowcaseRoute,

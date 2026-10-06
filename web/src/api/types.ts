@@ -286,3 +286,26 @@ export type UpdateStatus = {
   /** Why this build cannot update itself, "" if it can. */
   unsupported: string;
 };
+
+/** A pending MCP client authorization, shown on the /authorize consent page. */
+export type OAuthRequest = {
+  id: string;
+  /** Self-reported by the client at registration; not verified. */
+  clientName: string;
+  /** "" when the client registered none. */
+  clientUri: string;
+  /** The host of the redirect_uri the code will be sent to. */
+  redirectHost: string;
+  scopes: string[];
+};
+
+/** An MCP client the user has authorized, covering all the tokens issued to it. */
+export type OAuthGrant = {
+  id: string;
+  clientName: string;
+  redirectHost: string;
+  scopes: string[];
+  createdAt: string;
+  /** Null until the client first uses an access token. */
+  lastUsedAt: string | null;
+};
