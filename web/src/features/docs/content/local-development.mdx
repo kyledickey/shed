@@ -97,7 +97,7 @@ bun run site:preview            # serve the build
 
 `site:build` makes a client build, a server build, and then runs `site/prerender.ts`, which renders every page to `site-dist/client`: `index.html` for the home page and `docs/<slug>.html` for each docs page. Crawlers get the full content as HTML, and the browser hydrates it into the app. It also writes `sitemap.xml` and `robots.txt` for `https://shed.land`.
 
-`web/site/Dockerfile` builds the site and serves it with Caddy on `PORT` (default 8080). Caddy also redirects `/install.sh` to the latest release's installer, which is what makes `https://shed.land/install.sh` work. To deploy it on shed, create an app from this repository with root directory `web` and Dockerfile path `site/Dockerfile`.
+`web/site/Dockerfile` builds the site and serves it with Caddy on `PORT` (default 8080). Caddy also redirects `/install.sh` to the latest release's installer, which is what makes `https://shed.land/install.sh` work. The footer shows the newest release in `CHANGELOG.md`, so the build context is the repository root. To deploy it on shed, create an app from this repository with an empty root directory and Dockerfile path `web/site/Dockerfile`.
 
 ## Tests and checks
 

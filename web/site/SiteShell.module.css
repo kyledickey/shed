@@ -55,6 +55,11 @@
 }
 
 .footer {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  gap: var(--space-4);
+
   & a {
     color: var(--ink-2);
     text-decoration: underline;
@@ -64,5 +69,10 @@
     &:hover {
       color: var(--ink);
     }
+  }
+
+  & .version {
+    color: var(--ink-3);
+    text-decoration: none;
   }
 }

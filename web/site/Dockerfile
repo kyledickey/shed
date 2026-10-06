@@ -1,12 +1,14 @@
-# The public site. Build with web/ as the context:
-#   docker build -f site/Dockerfile web
+# The public site. Build with the repository root as the context, which the
+# footer's version needs for CHANGELOG.md:
+#   docker build -f web/site/Dockerfile .
 FROM oven/bun:1 AS build
 WORKDIR /web
-COPY package.json bun.lock ./
+COPY web/package.json web/bun.lock ./
 RUN bun ci
-COPY . .
+COPY CHANGELOG.md /
+COPY web .
 RUN bun run site:build
 
 FROM caddy:2-alpine
-COPY site/Caddyfile /etc/caddy/Caddyfile
+COPY web/site/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /web/site-dist/client /srv

@@ -55,7 +55,12 @@ export function SiteShell({ children }: { children: ReactNode }) {
       }
       footer={
         <span className={styles.footer}>
-          shed.land · free and open source by <a href="https://novmbr.org">November</a>
+          <span>
+            shed.land · free and open source by <a href="https://novmbr.org">November</a>
+          </span>
+          <a href={`${repoUrl}/releases/tag/${__SHED_VERSION__}`} className={styles.version}>
+            {__SHED_VERSION__}
+          </a>
         </span>
       }
     >
