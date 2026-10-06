@@ -925,14 +925,15 @@ the only resource is `<server.url>/mcp`.
    characters; `client_uri` must be https. At most 1000 clients are kept:
    registrations unused for 24 hours are dropped (10 minutes when full), and
    past the cap registration answers 503.
-3. `GET /oauth/authorize` checks `client_id` and `redirect_uri` first: an
-   unknown client or an unregistered redirect URI gets an HTML error page,
-   never a redirect. The redirect URI must match a registered one exactly,
-   except that a loopback http URI may use any port (RFC 8252). Then
+3. `GET /oauth/authorize` checks `client_id`, `redirect_uri`,
    `response_type=code`, PKCE (`code_challenge_method=S256`), `scope`
-   (default `read`), and `resource` (if present, `<server.url>/mcp`) are
-   checked, and failures redirect back with `error` and `state`. A repeated
-   parameter is an error page. Without a valid session the browser goes to
+   (default `read`), and `resource` (if present, `<server.url>/mcp`). The
+   redirect URI must match a registered one exactly, except that a loopback
+   http URI may use any port (RFC 8252). Any failure, or a repeated
+   parameter, gets an HTML error page and is never redirected to the client:
+   anyone can register a redirect URI, so redirecting errors before the user
+   has consented would make shed an open redirector (RFC 9700 section
+   4.11.2). Without a valid session the browser goes to
    `/api/auth/login?next=<this authorize URL>`. Otherwise shed keeps a pending
    request in memory for 10 minutes (at most 256; a restart forgets them),
    bound to the signed-in user, and redirects to the dashboard's
@@ -1147,7 +1148,7 @@ POST   /api/github/webhook
 GET    /.well-known/oauth-protected-resource[/mcp]  RFC 9728 metadata (no session, CORS)
 GET    /.well-known/oauth-authorization-server  RFC 8414 metadata (no session, CORS)
 POST   /oauth/register          RFC 7591 JSON   201 → client  (no session, CORS)
-GET    /oauth/authorize?…                       302 → /authorize?request= | /api/auth/login?next= | redirect_uri?error=; 400 HTML for bad client/redirect
+GET    /oauth/authorize?…                       302 → /authorize?request= | /api/auth/login?next=; 400 HTML for an invalid request
 POST   /oauth/token             form            → token response  (no session, CORS)
 POST   /oauth/revoke            form            200  (no session, CORS)
 GET    /api/oauth/requests/{id}                 → OAuthRequest  (404 if unknown, expired, decided, or another user's)

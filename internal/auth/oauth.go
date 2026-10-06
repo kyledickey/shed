@@ -275,8 +275,8 @@ func (a *Auth) Register(w http.ResponseWriter, r *http.Request) {
 
 // Authorize starts an authorization: it validates the request, sends a user
 // without a session to sign in first, and otherwise hands the request to the
-// dashboard's consent page. Requests with an unknown client or redirect URI
-// get an error page rather than a redirect.
+// dashboard's consent page. Invalid requests get an error page, never a
+// redirect to the client.
 func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	for k, v := range q {
@@ -301,25 +301,25 @@ func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// From here on, problems are reported to the client.
-	state := q.Get("state")
-	fail := func(code, desc string) {
-		http.Redirect(w, r, withQuery(redirect, "error", code, "error_description", desc, "state", state), http.StatusFound)
-	}
+	// Anyone can register a client with any https redirect URI, so errors
+	// are shown here rather than redirected: redirecting them would let
+	// shed bounce visitors to an arbitrary site without their consent
+	// (RFC 9700 section 4.11.2).
 	scope, scopeOK := parseScope(q.Get("scope"))
 	resource := q.Get("resource")
+	var problem string
 	switch {
 	case q.Get("response_type") != "code":
-		fail("unsupported_response_type", `response_type must be "code"`)
-		return
+		problem = `The app asked for an unsupported response type; it must be "code".`
 	case q.Get("code_challenge_method") != "S256" || !validChallenge(q.Get("code_challenge")):
-		fail("invalid_request", "PKCE with code_challenge_method S256 is required")
-		return
+		problem = "The app did not use PKCE with code_challenge_method S256."
 	case !scopeOK:
-		fail("invalid_scope", `the only scope is "read"`)
-		return
+		problem = `The app asked for an unknown scope; the only scope is "read".`
 	case resource != "" && resource != a.Resource():
-		fail("invalid_target", "resource must be "+a.Resource())
+		problem = "The app asked for access to another resource than " + a.Resource() + "."
+	}
+	if problem != "" {
+		errorPage(w, http.StatusBadRequest, problem)
 		return
 	}
 
@@ -337,7 +337,7 @@ func (a *Auth) Authorize(w http.ResponseWriter, r *http.Request) {
 		client:      client,
 		githubID:    user.GitHubID,
 		redirectURI: redirect,
-		state:       state,
+		state:       q.Get("state"),
 		challenge:   q.Get("code_challenge"),
 		scope:       scope,
 		resource:    a.Resource(),

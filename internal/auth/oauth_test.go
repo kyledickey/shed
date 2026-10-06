@@ -532,46 +532,45 @@ func TestRefreshErrors(t *testing.T) {
 }
 
 func TestAuthorizeValidation(t *testing.T) {
+	// Every invalid request gets an error page, signed in or not: a
+	// redirect to a dynamically registered URI would make shed an open
+	// redirector.
 	tests := []struct {
 		name   string
 		change func(q url.Values)
-		// page is true for errors shown to the user instead of redirected.
-		page bool
-		err  string
 	}{
-		{"unknown client", func(q url.Values) { q.Set("client_id", "nope") }, true, ""},
-		{"missing client", func(q url.Values) { q.Del("client_id") }, true, ""},
-		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://evil.example.com/callback") }, true, ""},
-		{"redirect path differs", func(q url.Values) { q.Set("redirect_uri", "http://127.0.0.1:4000/other") }, true, ""},
-		{"redirect host differs", func(q url.Values) { q.Set("redirect_uri", "http://localhost:4000/callback") }, true, ""},
-		{"missing redirect", func(q url.Values) { q.Del("redirect_uri") }, true, ""},
-		{"repeated parameter", func(q url.Values) { q.Add("state", "again") }, true, ""},
-		{"wrong response type", func(q url.Values) { q.Set("response_type", "token") }, false, "unsupported_response_type"},
-		{"no PKCE", func(q url.Values) { q.Del("code_challenge"); q.Del("code_challenge_method") }, false, "invalid_request"},
-		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }, false, "invalid_request"},
-		{"malformed challenge", func(q url.Values) { q.Set("code_challenge", "short") }, false, "invalid_request"},
-		{"unknown scope", func(q url.Values) { q.Set("scope", "read write") }, false, "invalid_scope"},
-		{"other resource", func(q url.Values) { q.Set("resource", "https://other.example.com/mcp") }, false, "invalid_target"},
+		{"unknown client", func(q url.Values) { q.Set("client_id", "nope") }},
+		{"missing client", func(q url.Values) { q.Del("client_id") }},
+		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://evil.example.com/callback") }},
+		{"redirect path differs", func(q url.Values) { q.Set("redirect_uri", "http://127.0.0.1:4000/other") }},
+		{"redirect host differs", func(q url.Values) { q.Set("redirect_uri", "http://localhost:4000/callback") }},
+		{"missing redirect", func(q url.Values) { q.Del("redirect_uri") }},
+		{"repeated parameter", func(q url.Values) { q.Add("state", "again") }},
+		{"wrong response type", func(q url.Values) { q.Set("response_type", "token") }},
+		{"missing response type", func(q url.Values) { q.Del("response_type") }},
+		{"no PKCE", func(q url.Values) { q.Del("code_challenge"); q.Del("code_challenge_method") }},
+		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }},
+		{"malformed challenge", func(q url.Values) { q.Set("code_challenge", "short") }},
+		{"unknown scope", func(q url.Values) { q.Set("scope", "read write") }},
+		{"other resource", func(q url.Values) { q.Set("resource", "https://other.example.com/mcp") }},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newOAuthEnv(t)
-			q := authorizeQuery(e.client())
-			tt.change(q)
-			rec := e.authorize(q, e.cookie)
-			if tt.page {
+		for _, signedIn := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/signed in %t", tt.name, signedIn), func(t *testing.T) {
+				e := newOAuthEnv(t)
+				q := authorizeQuery(e.client())
+				tt.change(q)
+				var cookie *http.Cookie
+				if signedIn {
+					cookie = e.cookie
+				}
+				rec := e.authorize(q, cookie)
 				if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" ||
 					!strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
 					t.Errorf("got %d Location=%q, want error page", rec.Code, rec.Header().Get("Location"))
 				}
-				return
-			}
-			loc, _ := url.Parse(rec.Header().Get("Location"))
-			if rec.Code != http.StatusFound || loc.Host != "127.0.0.1:4000" ||
-				loc.Query().Get("error") != tt.err || loc.Query().Get("state") != "xyz" {
-				t.Errorf("got %d %q, want redirect with %s", rec.Code, rec.Header().Get("Location"), tt.err)
-			}
-		})
+			})
+		}
 	}
 }
 
