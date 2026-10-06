@@ -10,13 +10,16 @@ import (
 const deploymentCols = `id, service_id, status, trigger, commit_sha, commit_message, commit_author,
 	image, port, container_id, error, created_at, started_at, finished_at, runtime`
 
-func scanDeployment(r scanner) (Deployment, error) {
+func (s *Store) scanDeployment(r scanner) (Deployment, error) {
 	var d Deployment
 	var runtime string
 	err := r.Scan(&d.ID, &d.ServiceID, &d.Status, &d.Trigger, &d.CommitSHA, &d.CommitMessage,
 		&d.CommitAuthor, &d.Image, &d.Port, &d.ContainerID, &d.Error, (*timestamp)(&d.CreatedAt),
 		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt}, &runtime)
 	if err == nil && runtime != "" {
+		if runtime, err = s.crypt.open(runtime, deploymentAD(d.ID)); err != nil {
+			return d, fmt.Errorf("store: runtime of deployment %s: %w", d.ID, err)
+		}
 		d.Runtime = new(DeploymentRuntime)
 		if err := json.Unmarshal([]byte(runtime), d.Runtime); err != nil {
 			return d, fmt.Errorf("store: runtime of deployment %s: %w", d.ID, err)
@@ -25,13 +28,17 @@ func scanDeployment(r scanner) (Deployment, error) {
 	return d, err
 }
 
-// formatRuntime returns the stored form of rt: JSON, or empty for nil.
-func formatRuntime(rt *DeploymentRuntime) (string, error) {
+// formatRuntime returns the stored form of the runtime of deployment id:
+// encrypted JSON, or empty for nil. It holds resolved variables.
+func (s *Store) formatRuntime(id string, rt *DeploymentRuntime) (string, error) {
 	if rt == nil {
 		return "", nil
 	}
 	b, err := json.Marshal(rt)
-	return string(b), err
+	if err != nil {
+		return "", err
+	}
+	return s.crypt.seal(string(b), deploymentAD(id)), nil
 }
 
 // updateDeployment overwrites the mutable fields of a deployment; its
@@ -65,7 +72,7 @@ func (s *Store) CreateDeployment(ctx context.Context, d Deployment) (Deployment,
 
 // Deployment returns the deployment with the given ID, or ErrNotFound.
 func (s *Store) Deployment(ctx context.Context, id string) (Deployment, error) {
-	d, err := queryOne(ctx, s, scanDeployment, `SELECT `+deploymentCols+` FROM deployments WHERE id = ?`, id)
+	d, err := queryOne(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+` FROM deployments WHERE id = ?`, id)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("store: deployment %s: %w", id, err)
 	}
@@ -78,7 +85,7 @@ func (s *Store) Deployments(ctx context.Context, serviceID string, limit int) ([
 	if limit <= 0 {
 		limit = -1 // SQLite: no limit.
 	}
-	ds, err := queryAll(ctx, s, scanDeployment, `SELECT `+deploymentCols+`
+	ds, err := queryAll(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+`
 		FROM deployments WHERE service_id = ?
 		ORDER BY created_at DESC, rowid DESC LIMIT ?`, serviceID, limit)
 	if err != nil {
@@ -117,7 +124,7 @@ func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
 		return err
 	}
 	defer tx.Rollback()
-	runtime, err := formatRuntime(d.Runtime)
+	runtime, err := s.formatRuntime(d.ID, d.Runtime)
 	if err != nil {
 		return err
 	}
@@ -144,7 +151,7 @@ func (s *Store) activateDeployment(ctx context.Context, d Deployment) error {
 // ActiveDeployment returns the active deployment of a service, or ErrNotFound
 // if there is none.
 func (s *Store) ActiveDeployment(ctx context.Context, serviceID string) (Deployment, error) {
-	d, err := queryOne(ctx, s, scanDeployment, `SELECT `+deploymentCols+`
+	d, err := queryOne(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+`
 		FROM deployments WHERE service_id = ? AND status = ?
 		ORDER BY created_at DESC, rowid DESC LIMIT 1`, serviceID, StatusActive)
 	if err != nil {
@@ -156,7 +163,7 @@ func (s *Store) ActiveDeployment(ctx context.Context, serviceID string) (Deploym
 // LatestDeployment returns the most recently created deployment of a service,
 // or ErrNotFound if there is none.
 func (s *Store) LatestDeployment(ctx context.Context, serviceID string) (Deployment, error) {
-	d, err := queryOne(ctx, s, scanDeployment, `SELECT `+deploymentCols+`
+	d, err := queryOne(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+`
 		FROM deployments WHERE service_id = ?
 		ORDER BY created_at DESC, rowid DESC LIMIT 1`, serviceID)
 	if err != nil {
@@ -176,7 +183,7 @@ func (s *Store) DeploymentsByStatus(ctx context.Context, statuses ...DeploymentS
 		args[i] = st
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(statuses)), ", ")
-	ds, err := queryAll(ctx, s, scanDeployment, `SELECT `+deploymentCols+`
+	ds, err := queryAll(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+`
 		FROM deployments WHERE status IN (`+placeholders+`)
 		ORDER BY created_at, rowid`, args...)
 	if err != nil {

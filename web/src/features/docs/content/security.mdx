@@ -86,7 +86,7 @@ The secrets in shed.db are encrypted with the key described in [Encryption at re
 
 ## Encryption at rest
 
-shed encrypts secrets in shed.db with AES-256-GCM under a 32-byte master key. The encrypted values are every row of `settings` (including the GitHub App credentials and the backup age identity), every service variable, and the S3 secret access key of each backup destination. Each value is bound to its row, so it can't be copied to another one. Stored values start with `v1:`.
+shed encrypts secrets in shed.db with AES-256-GCM under a 32-byte master key. The encrypted values are every row of `settings` (including the GitHub App credentials and the backup age identity), every service variable, the resolved variables kept for each active deployment, and the S3 secret access key of each backup destination. Each value is bound to its row, so it can't be copied to another one. Stored values start with `v1:`.
 
 **The key file.** The key is `shed.key` next to the config file, by default `/etc/shed/shed.key`, outside `data.dir`. It holds 32 random bytes, base64-encoded. If the file is missing, shed generates it on start with mode 0600 and logs a warning to back it up. The first start of a version with encryption converts existing plaintext values in one transaction. After that, a key that doesn't match makes shed refuse to start, with an error naming the key path.
 

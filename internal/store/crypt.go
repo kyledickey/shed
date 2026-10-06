@@ -86,6 +86,12 @@ func destinationAD(id string) string {
 	return "backup_destinations\x00" + id
 }
 
+// deploymentAD returns the additional data binding a runtime to a
+// deployments row.
+func deploymentAD(id string) string {
+	return "deployments\x00" + id
+}
+
 // keyCheckSetting names the setting whose encrypted value proves that the
 // database was encrypted with the key it is opened with.
 const keyCheckSetting = "store.key_check"
@@ -147,6 +153,11 @@ func encryptAll(ctx context.Context, tx *sql.Tx, c *crypter) error {
 			`SELECT id, secret_access_key FROM backup_destinations`,
 			`UPDATE backup_destinations SET secret_access_key = ? WHERE id = ?`,
 			func(k []string) string { return destinationAD(k[0]) },
+		},
+		{
+			`SELECT id, runtime FROM deployments WHERE runtime <> ''`,
+			`UPDATE deployments SET runtime = ? WHERE id = ?`,
+			func(k []string) string { return deploymentAD(k[0]) },
 		},
 	}
 	for _, t := range tables {

@@ -76,6 +76,10 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dep, err := s.CreateDeployment(ctx, Deployment{ServiceID: sv.ID, Status: StatusActive, Trigger: TriggerManual})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Rewind the database to before encryption: plaintext values and no
 	// key check.
 	for _, q := range []struct {
@@ -86,6 +90,7 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 		{`INSERT INTO settings (key, value) VALUES ('github.app', 'pem')`, nil},
 		{`INSERT INTO variables (service_id, key, value) VALUES (?, 'TOKEN', 'abc'), (?, 'EMPTY', '')`, []any{sv.ID, sv.ID}},
 		{`UPDATE backup_destinations SET secret_access_key = 'SK' WHERE id = ?`, []any{d.ID}},
+		{`UPDATE deployments SET runtime = '{"env":{"TOKEN":"abc"}}' WHERE id = ?`, []any{dep.ID}},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.query, q.args...); err != nil {
 			t.Fatal(err)
@@ -101,6 +106,7 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 		`SELECT value FROM settings`,
 		`SELECT value FROM variables`,
 		`SELECT secret_access_key FROM backup_destinations`,
+		`SELECT runtime FROM deployments`,
 	} {
 		rows := rawRows(t, s, q)
 		if len(rows) == 0 {
@@ -120,6 +126,9 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 	}
 	if got, err := s.BackupDestination(ctx, d.ID); err != nil || got.SecretAccessKey != "SK" {
 		t.Errorf("BackupDestination() = %+v, %v; want secret SK", got, err)
+	}
+	if got, err := s.Deployment(ctx, dep.ID); err != nil || got.Runtime == nil || got.Runtime.Env["TOKEN"] != "abc" {
+		t.Errorf("Deployment() runtime = %+v, %v; want TOKEN=abc", got.Runtime, err)
 	}
 	s.Close()
 

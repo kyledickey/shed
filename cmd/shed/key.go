@@ -76,12 +76,32 @@ func generateKey(path string) ([]byte, error) {
 		return nil, fmt.Errorf("generate key: %w", err)
 	}
 	_, err = f.WriteString(base64.StdEncoding.EncodeToString(key) + "\n")
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil {
+		// The key must be durable before the database is encrypted with it.
+		err = syncDir(filepath.Dir(path))
 	}
 	if err != nil {
 		os.Remove(path)
 		return nil, fmt.Errorf("generate key: write %s: %w", path, err)
 	}
 	return key, nil
+}
+
+// syncDir flushes a directory's entries to stable storage.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }

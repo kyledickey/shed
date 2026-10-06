@@ -216,7 +216,7 @@ CREATE TABLE deployments (
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
-  runtime TEXT NOT NULL DEFAULT '' -- JSON container config of the active deployment
+  runtime TEXT NOT NULL DEFAULT '' -- encrypted JSON container config of the active deployment
 );
 CREATE INDEX deployments_service ON deployments(service_id, created_at DESC);
 -- At most one active deployment per service.
@@ -374,15 +374,18 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 
 Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
 key: every `settings.value` (including the GitHub App credentials and the backup
-age identity), `variables.value`, and `backup_destinations.secret_access_key`.
+age identity), `variables.value`, `backup_destinations.secret_access_key`, and
+`deployments.runtime` (the active deployment's resolved variables).
 
 - **Format.** `v1:` + base64 (raw std, no padding) of `nonce‖ciphertext`. The
   additional data binds each value to its row: the table plus `key`
-  (settings), `service_id`+`key` (variables), or the destination id. A value
+  (settings), `service_id`+`key` (variables), or the destination or
+  deployment id. A value
   copied to another row fails to decrypt.
 - **Key file.** `shed.key` next to the config file (default
   `/etc/shed/shed.key`), deliberately outside `data.dir`. Contents: base64 of
-  32 bytes. If missing, shed generates it on start (mode 0600) and logs a
+  32 bytes. If missing, shed generates it on start (mode 0600, fsynced with
+  its directory before the database is opened) and logs a
   warning to back it up. If `$CREDENTIALS_DIRECTORY/shed.key` exists (systemd
   `LoadCredential=` or `LoadCredentialEncrypted=`, which can bind it to a TPM),
   that is used instead and is never generated.
