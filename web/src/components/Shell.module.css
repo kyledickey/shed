@@ -37,6 +37,7 @@
   @media (max-width: 760px) {
     order: 3;
     flex-basis: 100%;
+    padding-top: 4px;
     padding-bottom: 6px;
   }
 }
