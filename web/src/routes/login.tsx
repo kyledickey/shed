@@ -4,23 +4,32 @@ import { meQuery, setupQuery } from "../api/auth";
 import { LinkButton } from "../components/Button";
 import { Callout, GitHubIcon } from "../components/Misc";
 import { AuthCard } from "../features/auth/AuthCard";
+import { safeNext } from "../lib/next";
 
-type LoginSearch = { error?: string };
+/** next is a relative path to return to after signing in. */
+type LoginSearch = { error?: string; next?: string };
 
 export const Route = createFileRoute("/login")({
-  validateSearch: (search): LoginSearch =>
-    typeof search.error === "string" ? { error: search.error } : {},
-  beforeLoad: async ({ context: { queryClient } }) => {
+  validateSearch: (search): LoginSearch => ({
+    ...(typeof search.error === "string" ? { error: search.error } : {}),
+    ...(safeNext(search.next) ? { next: safeNext(search.next) } : {}),
+  }),
+  beforeLoad: async ({ context: { queryClient }, search }) => {
     const setup = await queryClient.fetchQuery(setupQuery);
     if (!setup.githubConfigured) throw redirect({ to: "/setup" });
     const me = await queryClient.fetchQuery(meQuery).catch(() => null);
-    if (me) throw redirect({ to: "/" });
+    // next may be a server route such as /oauth/authorize, so leave the SPA for it.
+    if (me) {
+      throw search.next
+        ? redirect({ href: search.next, reloadDocument: true })
+        : redirect({ to: "/" });
+    }
   },
   component: LoginPage,
 });
 
 function LoginPage() {
-  const { error } = Route.useSearch();
+  const { error, next } = Route.useSearch();
   return (
     <AuthCard title="Sign in" description="Use the GitHub account that owns this shed.">
       {error && (
@@ -30,7 +39,11 @@ function LoginPage() {
             : `Sign in failed: ${error}`}
         </Callout>
       )}
-      <LinkButton href="/api/auth/login" variant="primary" size="lg">
+      <LinkButton
+        href={next ? `/api/auth/login?next=${encodeURIComponent(next)}` : "/api/auth/login"}
+        variant="primary"
+        size="lg"
+      >
         <GitHubIcon size={16} />
         Sign in with GitHub
       </LinkButton>

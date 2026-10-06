@@ -14,4 +14,6 @@ export const keys = {
   update: ["update"] as const,
   repos: ["github", "repos"] as const,
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
+  oauthRequest: (id: string) => ["oauth", "requests", id] as const,
+  oauthGrants: ["oauth", "grants"] as const,
 };

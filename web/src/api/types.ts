@@ -287,23 +287,25 @@ export type UpdateStatus = {
   unsupported: string;
 };
 
-/** A pending agent authorization, shown on the consent page. */
+/** A pending MCP client authorization, shown on the /authorize consent page. */
 export type OAuthRequest = {
   id: string;
+  /** Self-reported by the client at registration; not verified. */
   clientName: string;
-  /** "" if the client registered none. */
+  /** "" when the client registered none. */
   clientUri: string;
-  /** Host and port of the address that approval returns to. */
+  /** The host of the redirect_uri the code will be sent to. */
   redirectHost: string;
   scopes: string[];
 };
 
-/** An agent (OAuth client) the signed-in user has connected. */
+/** An MCP client the user has authorized, covering all the tokens issued to it. */
 export type OAuthGrant = {
   id: string;
   clientName: string;
   redirectHost: string;
   scopes: string[];
   createdAt: string;
+  /** Null until the client first uses an access token. */
   lastUsedAt: string | null;
 };
