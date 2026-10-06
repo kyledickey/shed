@@ -165,6 +165,24 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/setup/github/import", protectMutations(s.baseURL, requireJSON(s.handle(s.importApp))))
 	mux.Handle("POST /api/github/webhook", s.handle(s.webhook))
 
+	// OAuth authorization server for agents. Metadata, registration, token,
+	// and revocation are called cross-origin without cookies, so they allow
+	// any origin; their methods are checked by the handlers.
+	mux.HandleFunc("/.well-known/oauth-protected-resource", s.auth.ProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", s.auth.ProtectedResourceMetadata)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", s.auth.AuthorizationServerMetadata)
+	mux.HandleFunc("/oauth/register", s.auth.Register)
+	mux.HandleFunc("GET /oauth/authorize", s.auth.Authorize)
+	mux.HandleFunc("/oauth/token", s.auth.Token)
+	mux.HandleFunc("/oauth/revoke", s.auth.Revoke)
+	oauthAPI := func(pattern string, h http.HandlerFunc) {
+		mux.Handle(pattern, s.auth.Require(protectMutations(s.baseURL, requireJSON(h))))
+	}
+	oauthAPI("GET /api/oauth/requests/{id}", s.auth.AuthorizationRequest)
+	oauthAPI("POST /api/oauth/requests/{id}", s.auth.DecideAuthorization)
+	oauthAPI("GET /api/oauth/grants", s.auth.Grants)
+	oauthAPI("DELETE /api/oauth/grants/{id}", s.auth.RevokeGrant)
+
 	// Routes that need a session.
 	authed := func(pattern string, h handlerFunc) {
 		mux.Handle(pattern, s.auth.Require(protectMutations(s.baseURL, requireJSON(s.handle(h)))))

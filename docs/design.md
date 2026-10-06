@@ -88,7 +88,9 @@ max_age_days = 30
 ```
 
 GitHub App credentials and other runtime state live in the database
-(`settings` table), not the config file. Sessions are rows of `sessions`.
+(`settings` table), not the config file. Sessions are rows of `sessions`;
+agent (OAuth) clients, grants, codes, and tokens are rows of the `oauth_*`
+tables.
 
 ## Packages
 
@@ -114,7 +116,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
-| `internal/auth` | sessions, GitHub sign-in handlers, middleware | store via interface |
+| `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
 | `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving | deploy, auth, github, metrics, backup, store, update |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
@@ -316,6 +318,50 @@ CREATE TABLE pending_pushes (             -- newest undeployed push per app serv
   received_at TEXT NOT NULL,
   prior_deployment_id TEXT NOT NULL DEFAULT '' -- latest deployment when stored
 );
+
+-- OAuth for agents; see "Agent sign-in (OAuth)". Codes and tokens are stored
+-- as the sha256 hex of their value.
+CREATE TABLE oauth_clients (              -- dynamic client registrations; all public
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  uri TEXT NOT NULL DEFAULT '',
+  redirect_uris TEXT NOT NULL,            -- JSON array
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE oauth_grants (               -- a user approved a client
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+  github_id INTEGER NOT NULL REFERENCES users(github_id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL,
+  scope TEXT NOT NULL,                    -- space-separated; only "read"
+  resource TEXT NOT NULL,                 -- token audience: <server.url>/mcp
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+);
+CREATE INDEX oauth_grants_user ON oauth_grants(github_id, created_at DESC);
+CREATE INDEX oauth_grants_client ON oauth_grants(client_id);
+
+CREATE TABLE oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+  github_id INTEGER NOT NULL REFERENCES users(github_id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL,
+  code_challenge TEXT NOT NULL,           -- PKCE S256
+  scope TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  expires_at TEXT NOT NULL,               -- 1 minute
+  grant_id TEXT NOT NULL DEFAULT ''       -- set once redeemed; kept until expiry to detect replay
+);
+
+CREATE TABLE oauth_tokens (
+  token_hash TEXT PRIMARY KEY,
+  grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,                     -- access (1 hour) | refresh (30 days)
+  expires_at TEXT NOT NULL,
+  rotated INTEGER NOT NULL DEFAULT 0      -- refresh token already exchanged; reuse revokes the grant
+);
+CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
 ```
 
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
@@ -850,6 +896,83 @@ startup permanently revokes sessions for removed logins. Change the configuratio
 and restart shed to revoke a user, including all existing streams.
 Session cookie `shed_session` (random 32 bytes, stored hashed), HttpOnly,
 SameSite=Lax, Secure when `server.url` is https, 30 days.
+`/api/auth/login?next=<path>` returns there after sign-in instead of `/`. Only
+a path on this server is accepted (starts with one `/`, no `//`, backslashes,
+or control characters, at most 2048 bytes); it travels in the state cookie and
+is checked again by the callback. Anything else is ignored.
+
+### Agent sign-in (OAuth)
+
+Agents (MCP clients such as Claude Code, Claude.ai, and Cursor) sign in with
+OAuth 2.1. shed is the authorization server; GitHub only identifies the user
+through the dashboard session, and the same `auth.allowed_users` rule
+applies. shed issues its own opaque tokens and never hands GitHub tokens to
+clients. There are no personal access tokens. The only scope is `read`, and
+the only resource is `<server.url>/mcp`.
+
+1. The client finds the metadata: `/.well-known/oauth-protected-resource/mcp`
+   (RFC 9728; also served without the `/mcp` suffix) names `server.url` as
+   the authorization server, and `/.well-known/oauth-authorization-server`
+   (RFC 8414) lists the endpoints below.
+2. `POST /oauth/register` (RFC 7591) registers a public client. Every client is
+   registered with `token_endpoint_auth_method` `none`, the
+   `authorization_code` and `refresh_token` grants, and scope `read`, whatever
+   it asked for. Redirect URIs (1 to 10, each at most 2000 bytes) must be
+   https, or http on a loopback host (`127.0.0.1`, `[::1]`, `localhost`), with
+   no fragment or user info. `client_name` is at most 100 printable
+   characters; `client_uri` must be https. At most 1000 clients are kept:
+   registrations unused for 24 hours are dropped (10 minutes when full), and
+   past the cap registration answers 503.
+3. `GET /oauth/authorize` checks `client_id` and `redirect_uri` first: an
+   unknown client or an unregistered redirect URI gets an HTML error page,
+   never a redirect. The redirect URI must match a registered one exactly,
+   except that a loopback http URI may use any port (RFC 8252). Then
+   `response_type=code`, PKCE (`code_challenge_method=S256`), `scope`
+   (default `read`), and `resource` (if present, `<server.url>/mcp`) are
+   checked, and failures redirect back with `error` and `state`. A repeated
+   parameter is an error page. Without a valid session the browser goes to
+   `/api/auth/login?next=<this authorize URL>`. Otherwise shed keeps a pending
+   request in memory for 10 minutes (at most 256; a restart forgets them),
+   bound to the signed-in user, and redirects to the dashboard's
+   `/authorize?request=<id>` consent page.
+4. The consent page reads `GET /api/oauth/requests/{id}` and posts
+   `{approve}` to `POST /api/oauth/requests/{id}`, which answers with the URL
+   to send the browser to: the redirect URI with `code` and `state`, or with
+   `error=access_denied` and `state`. A request can be decided once, and only
+   by the user who started it.
+5. `POST /oauth/token` (form-encoded) redeems the code (single use, 1 minute):
+   `client_id`, `redirect_uri`, and the PKCE `code_verifier` must match, and
+   `resource`, if sent, must match the authorization. A failed redemption
+   spends the code; redeeming a code twice revokes the grant it produced. The
+   answer is `{access_token, token_type: "Bearer", expires_in: 3600,
+   refresh_token, scope}`. The `refresh_token` grant (with `client_id`)
+   rotates the refresh token, which lasts 30 days from each rotation; the
+   user must still be allowed. Presenting a rotated refresh token revokes the
+   whole grant. Access tokens start with `shed_at_`, refresh tokens with
+   `shed_rt_`; both are 32 random bytes, stored hashed.
+6. `POST /oauth/revoke` (RFC 7009) revokes the token's whole grant when the
+   token was issued to the given `client_id` (or no `client_id` is sent), and
+   answers 200 for unknown tokens.
+
+The token, registration, and revocation endpoints and the metadata are called
+cross-origin without cookies: they send `Access-Control-Allow-Origin: *` and
+answer preflight requests. Token responses are `Cache-Control: no-store`.
+OAuth errors are `{"error", "error_description"}`.
+
+Protected endpoints use `(*auth.Auth).RequireBearer(resource)`: it reads only
+`Authorization: Bearer` (never cookies), and accepts an unexpired access token
+whose grant's resource equals `resource` and whose user is in
+`auth.allowed_users`. Otherwise it answers 401 with
+`WWW-Authenticate: Bearer resource_metadata="<server.url>/.well-known/oauth-protected-resource/mcp"`,
+adding `error="invalid_token"` when a token was presented. It records the
+grant's last use at most once a minute.
+
+The dashboard lists the user's connected clients (`GET /api/oauth/grants`,
+grants with a live refresh token) and revokes them
+(`DELETE /api/oauth/grants/{id}`, all tokens at once). Startup revokes the
+grants and codes of logins no longer allowed, like sessions; expired codes,
+tokens, dead grants, and stale registrations are removed at startup and, at
+most hourly, when a client registers or requests a token.
 
 ### Webhooks
 
@@ -932,7 +1055,8 @@ installed version, then reloads the page to pick up the new dashboard.
 ## HTTP API
 
 JSON over `/api`, camelCase. Errors: `{"error": "message"}` with a proper
-status. All routes except auth, setup, and webhook require a session.
+status. All routes except auth, setup, webhook, and the OAuth endpoints
+outside `/api` require a session.
 Mutating browser requests must match the origin of `server.url`; sibling
 application origins are rejected. POST, PUT, and PATCH require
 `Content-Type: application/json`, even with an empty body. Logout and the
@@ -1017,6 +1141,17 @@ POST   /api/update/install                      202 → UpdateStatus  (state res
 GET    /api/github/repos                        → Repo[]
 GET    /api/github/repos/{owner}/{repo}/branches → string[]
 POST   /api/github/webhook
+
+GET    /.well-known/oauth-protected-resource[/mcp]  RFC 9728 metadata (no session, CORS)
+GET    /.well-known/oauth-authorization-server  RFC 8414 metadata (no session, CORS)
+POST   /oauth/register          RFC 7591 JSON   201 → client  (no session, CORS)
+GET    /oauth/authorize?…                       302 → /authorize?request= | /api/auth/login?next= | redirect_uri?error=; 400 HTML for bad client/redirect
+POST   /oauth/token             form            → token response  (no session, CORS)
+POST   /oauth/revoke            form            200  (no session, CORS)
+GET    /api/oauth/requests/{id}                 → OAuthRequest  (404 if unknown, expired, decided, or another user's)
+POST   /api/oauth/requests/{id}  {approve}      → { redirect: string }
+GET    /api/oauth/grants                        → OAuthGrant[]  (signed-in user's, newest first)
+DELETE /api/oauth/grants/{id}                   204  (revokes all its tokens; 404 if not the user's)
 
 GET    /*                                       SPA (web/dist, index.html fallback)
 ```
@@ -1184,6 +1319,21 @@ type UpdateStatus = {
   error: string;                       // last check or download failure, "" if none
   autoDownload: boolean;
   unsupported: string;                 // why this build cannot update itself, "" if it can
+};
+type OAuthRequest = {                  // pending agent authorization, for the consent page
+  id: string;
+  clientName: string;
+  clientUri: string;                   // "" if none registered
+  redirectHost: string;                // host[:port] approval returns to
+  scopes: string[];                    // ["read"]
+};
+type OAuthGrant = {                    // a connected agent
+  id: string;
+  clientName: string;
+  redirectHost: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
 };
 ```
 

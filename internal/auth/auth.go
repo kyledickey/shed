@@ -1,9 +1,11 @@
-// Package auth implements dashboard authentication: GitHub sign-in handlers,
-// cookie sessions, and middleware that guards API routes.
+// Package auth implements authentication: GitHub sign-in handlers, cookie
+// sessions, and middleware that guards API routes, plus an OAuth 2.1
+// authorization server that lets agents (MCP clients) act for a signed-in
+// user with bearer tokens.
 //
-// Auth stores sessions through the small [Store] interface and reaches GitHub
-// through [OAuth], so neither storage nor the GitHub client is imported here
-// beyond the [github.User] type.
+// Auth stores sessions, clients, and tokens through the small [Store]
+// interface and reaches GitHub through [OAuth], so neither storage nor the
+// GitHub client is imported here beyond the [github.User] type.
 package auth
 
 import (
@@ -19,8 +21,10 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kyledickey/shed/internal/github"
@@ -32,6 +36,7 @@ const (
 
 	sessionTTL = 30 * 24 * time.Hour
 	stateTTL   = 10 * time.Minute
+	maxNextLen = 2048 // Longest post-sign-in path carried in the state cookie.
 
 	callbackPath = "/api/auth/callback"
 )
@@ -44,8 +49,8 @@ type User struct {
 	AvatarURL string
 }
 
-// Store persists users and sessions. Sessions are keyed by the hash of their
-// token, never the token itself.
+// Store persists users, sessions, and OAuth state. Sessions, codes, and
+// tokens are keyed by the hash of their value, never the value itself.
 type Store interface {
 	// UpsertUser creates the user or updates its profile.
 	UpsertUser(ctx context.Context, u User) error
@@ -58,6 +63,8 @@ type Store interface {
 	DeleteSession(ctx context.Context, tokenHash string) error
 	// DeleteDisallowedSessions removes sessions for logins outside allowed.
 	DeleteDisallowedSessions(ctx context.Context, allowed []string) error
+
+	OAuthStore
 }
 
 // OAuth performs the GitHub sign-in handshake. *github.Client implements it.
@@ -78,6 +85,11 @@ type Auth struct {
 	allowed map[string]bool // Lowercase logins.
 	secure  bool            // Whether cookies are marked Secure.
 	log     *slog.Logger
+
+	requests *requests // Pending authorization requests.
+
+	cleanMu   sync.Mutex
+	cleanedAt time.Time // Last removal of expired OAuth rows; guarded by cleanMu.
 }
 
 // New returns an Auth that keeps sessions in store. oauth reports the GitHub
@@ -97,11 +109,15 @@ func New(store Store, oauth func() (OAuth, bool), baseURL string, allowedUsers [
 		allowed: allowed,
 		secure:  strings.HasPrefix(baseURL, "https://"),
 		log:     log,
+
+		requests: newRequests(),
 	}
 }
 
 // Login starts GitHub sign-in: it sets a short-lived state cookie and
-// redirects to GitHub.
+// redirects to GitHub. A next query parameter holding a path on this server
+// is where Callback sends the user after signing in; anything else is
+// ignored.
 func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	oauth, ok := a.oauth()
 	if !ok {
@@ -113,7 +129,12 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "generate oauth state", err)
 		return
 	}
-	a.setCookie(w, stateCookie, state, "/api/auth", stateTTL)
+	next := r.URL.Query().Get("next")
+	if !localPath(next) {
+		next = ""
+	}
+	value := state + "." + base64.RawURLEncoding.EncodeToString([]byte(next))
+	a.setCookie(w, stateCookie, value, "/api/auth", stateTTL)
 	http.Redirect(w, r, oauth.AuthorizeURL(a.baseURL+callbackPath, state), http.StatusFound)
 }
 
@@ -129,9 +150,20 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie(stateCookie)
 	state := r.URL.Query().Get("state")
 	a.clearCookie(w, stateCookie, "/api/auth")
-	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+	var want, next string
+	if err == nil {
+		var encNext string
+		want, encNext, _ = strings.Cut(cookie.Value, ".")
+		if b, err := base64.RawURLEncoding.DecodeString(encNext); err == nil && localPath(string(b)) {
+			next = string(b)
+		}
+	}
+	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(want), []byte(state)) != 1 {
 		writeError(w, http.StatusBadRequest, "invalid oauth state")
 		return
+	}
+	if next == "" {
+		next = "/"
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" { // The user declined, or GitHub reported an error.
@@ -155,7 +187,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, "sign in", err)
 	default:
 		a.setCookie(w, sessionCookie, token, "/", sessionTTL)
-		http.Redirect(w, r, "/", http.StatusFound)
+		http.Redirect(w, r, next, http.StatusFound)
 	}
 }
 
@@ -175,22 +207,52 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 // 401 JSON error.
 func (a *Auth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return
-		}
-		user, ok, err := a.store.SessionUser(r.Context(), hashToken(c.Value))
+		user, ok, err := a.sessionUser(r)
 		if err != nil {
 			a.fail(w, "look up session", err)
 			return
 		}
-		if !ok || !a.allowed[strings.ToLower(user.Login)] {
+		if !ok {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
 	})
+}
+
+// sessionUser returns the permitted user of the request's session cookie,
+// and whether there is one.
+func (a *Auth) sessionUser(r *http.Request) (User, bool, error) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return User{}, false, nil
+	}
+	user, ok, err := a.store.SessionUser(r.Context(), hashToken(c.Value))
+	if err != nil || !ok || !a.permits(user.Login) {
+		return User{}, false, err
+	}
+	return user, true, nil
+}
+
+// permits reports whether login is in the allowlist.
+func (a *Auth) permits(login string) bool {
+	return a.allowed[strings.ToLower(login)]
+}
+
+// localPath reports whether p is a path on this server that is safe to
+// redirect to: it starts with a single slash and has no backslashes or
+// control characters, which browsers may turn into another host.
+func localPath(p string) bool {
+	if len(p) > maxNextLen || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return false
+	}
+	for _, c := range p {
+		if c < 0x20 || c == 0x7f || c == '\\' {
+			return false
+		}
+	}
+	u, err := url.Parse(p)
+	return err == nil && u.Scheme == "" && u.Host == "" && u.User == nil
 }
 
 type userKey struct{}
@@ -206,7 +268,7 @@ var errDenied = errors.New("auth: user not permitted")
 // admit applies the access rule to user and, if it passes, records the user
 // and a new session, returning the session token. The allowlist is authoritative.
 func (a *Auth) admit(ctx context.Context, user User) (token string, err error) {
-	if !a.allowed[strings.ToLower(user.Login)] {
+	if !a.permits(user.Login) {
 		return "", errDenied
 	}
 
@@ -274,8 +336,16 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// RevokeDisallowedSessions permanently invalidates sessions for removed users.
-// Call it on startup after loading the access policy.
+// RevokeDisallowedSessions permanently invalidates the sessions and OAuth
+// grants of removed users, and removes expired OAuth codes and tokens. Call
+// it on startup after loading the access policy.
 func (a *Auth) RevokeDisallowedSessions(ctx context.Context) error {
-	return a.store.DeleteDisallowedSessions(ctx, slices.Sorted(maps.Keys(a.allowed)))
+	allowed := slices.Sorted(maps.Keys(a.allowed))
+	if err := a.store.DeleteDisallowedSessions(ctx, allowed); err != nil {
+		return err
+	}
+	if err := a.store.DeleteDisallowedGrants(ctx, allowed); err != nil {
+		return err
+	}
+	return a.cleanUp(ctx)
 }
