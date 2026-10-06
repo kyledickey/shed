@@ -45,6 +45,12 @@ func (p *Plane) Project(ctx context.Context, id string) (ProjectView, error) {
 	return p.projectView(ctx, pr)
 }
 
+// ProjectRecord returns the stored project, without the lookups of its
+// services that Project makes.
+func (p *Plane) ProjectRecord(ctx context.Context, id string) (store.Project, error) {
+	return p.store.Project(ctx, id)
+}
+
 // CreateProject creates an empty project.
 func (p *Plane) CreateProject(ctx context.Context, name string) (ProjectView, error) {
 	name, err := projectName(name)

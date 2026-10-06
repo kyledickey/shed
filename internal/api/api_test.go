@@ -409,6 +409,24 @@ func TestValidation(t *testing.T) {
 	}
 }
 
+// TestUnknownIDBeforeBody checks that an unknown ID is a 404 even when the
+// body is malformed: the target is looked up before the body is read.
+func TestUnknownIDBeforeBody(t *testing.T) {
+	f := newFixture(t)
+	for _, tt := range []struct{ method, target string }{
+		{"POST", "/api/projects/nope/services"},
+		{"PATCH", "/api/services/nope"},
+		{"PUT", "/api/services/nope/variables"},
+		{"POST", "/api/services/nope/domains"},
+		{"POST", "/api/services/nope/volumes"},
+		{"PUT", "/api/services/nope/backups/policy"},
+	} {
+		if rec := f.do(tt.method, tt.target, `{`); rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s: status = %d, want 404; body: %s", tt.method, tt.target, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestDeploymentLogStream(t *testing.T) {
 	f := newFixture(t)
 	dep := createApp(t, f.st)

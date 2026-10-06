@@ -42,6 +42,9 @@ func (s *Server) systemBackups(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) putServiceBackupPolicy(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ServiceRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	var in backupPolicyInput
 	if err := decodeJSON(w, r, &in); err != nil {
 		return err

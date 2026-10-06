@@ -79,6 +79,9 @@ type newServiceRequest struct {
 
 // createService creates a service and starts its first deployment.
 func (s *Server) createService(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ProjectRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	var req newServiceRequest
 	if err := decodeJSON(w, r, &req); err != nil {
 		return err
@@ -116,6 +119,9 @@ type servicePatch struct {
 
 // patchService saves settings; they apply from the next deployment.
 func (s *Server) patchService(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ServiceRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	var p servicePatch
 	if err := decodeJSON(w, r, &p); err != nil {
 		return err
@@ -163,6 +169,9 @@ func (s *Server) getResolvedVariables(w http.ResponseWriter, r *http.Request) er
 }
 
 func (s *Server) putVariables(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ServiceRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	vars := map[string]string{}
 	if err := decodeJSON(w, r, &vars); err != nil {
 		return err
@@ -185,6 +194,9 @@ func markRoutesPending(w http.ResponseWriter, pending bool) {
 }
 
 func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ServiceRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	var req struct {
 		Host string `json:"host"`
 	}
@@ -210,6 +222,9 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.control.ServiceRecord(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
 	var req struct {
 		MountPath string `json:"mountPath"`
 	}

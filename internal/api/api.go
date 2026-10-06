@@ -31,6 +31,7 @@ import (
 type Control interface {
 	ListProjects(ctx context.Context) ([]control.ProjectSummary, error)
 	Project(ctx context.Context, id string) (control.ProjectView, error)
+	ProjectRecord(ctx context.Context, id string) (store.Project, error)
 	CreateProject(ctx context.Context, name string) (control.ProjectView, error)
 	RenameProject(ctx context.Context, id, name string) (control.ProjectView, error)
 	DeleteProject(ctx context.Context, id string) error
