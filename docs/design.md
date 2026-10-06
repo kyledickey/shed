@@ -1081,8 +1081,8 @@ when nothing is running. Setup failures redirect to `/setup?error=…`.
 
 ```
 GET    /api/me                                  → User
-GET    /api/auth/login                          302 → GitHub
-GET    /api/auth/callback                       302 → /
+GET    /api/auth/login?next=                    302 → GitHub
+GET    /api/auth/callback                       302 → next or /
 POST   /api/auth/logout                         204
 
 GET    /api/setup                               → Setup
