@@ -18,10 +18,11 @@ import (
 type memStore struct {
 	users    map[int64]User
 	sessions map[string]int64 // token hash -> GitHub ID
+	oauthMem
 }
 
 func newMemStore() *memStore {
-	return &memStore{users: map[int64]User{}, sessions: map[string]int64{}}
+	return &memStore{users: map[int64]User{}, sessions: map[string]int64{}, oauthMem: newOAuthMem()}
 }
 
 func (m *memStore) CountUsers(context.Context) (int, error) { return len(m.users), nil }
@@ -106,7 +107,7 @@ func TestLoginRedirectAndStateCookie(t *testing.T) {
 		t.Errorf("Location = %v", loc)
 	}
 	c := cookieNamed(rec, stateCookie)
-	if c == nil || c.Value != loc.Query().Get("state") || c.Value == "" {
+	if c == nil || loc.Query().Get("state") == "" || c.Value != loc.Query().Get("state")+"." {
 		t.Fatalf("state cookie = %+v", c)
 	}
 	if !c.HttpOnly || !c.Secure || c.MaxAge != 600 {

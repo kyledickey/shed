@@ -286,3 +286,24 @@ export type UpdateStatus = {
   /** Why this build cannot update itself, "" if it can. */
   unsupported: string;
 };
+
+/** A pending agent authorization, shown on the consent page. */
+export type OAuthRequest = {
+  id: string;
+  clientName: string;
+  /** "" if the client registered none. */
+  clientUri: string;
+  /** Host and port of the address that approval returns to. */
+  redirectHost: string;
+  scopes: string[];
+};
+
+/** An agent (OAuth client) the signed-in user has connected. */
+export type OAuthGrant = {
+  id: string;
+  clientName: string;
+  redirectHost: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+};
