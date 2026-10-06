@@ -66,6 +66,14 @@ func (t *Tail) add(line string) {
 	}
 }
 
+// Lines returns up to the last n kept lines, oldest first.
+func (t *Tail) Lines(n int) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	all := append(append([]string(nil), t.lines[t.next:]...), t.lines[:t.next]...)
+	return all[len(all)-min(max(n, 0), len(all)):]
+}
+
 // Follow calls emit with every kept line, oldest first, then with each new
 // line until ctx is done. emit is called from Follow's goroutine only.
 func (t *Tail) Follow(ctx context.Context, emit func(line string)) {

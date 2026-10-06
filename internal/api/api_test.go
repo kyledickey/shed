@@ -130,7 +130,7 @@ func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { retur
 func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
-func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, io.Writer) error {
+func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, bool, io.Writer) error {
 	return deploy.ErrNoContainer
 }
 func (f *fakeDeployer) FollowLog(_ context.Context, _ string, line func(string), status func(store.DeploymentStatus)) error {

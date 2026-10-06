@@ -39,7 +39,7 @@ type Deployer interface {
 	DeleteProject(ctx context.Context, projectID string) error
 	DeleteVolume(ctx context.Context, volumeID string) error
 	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
-	RuntimeLogs(ctx context.Context, serviceID string, tail int, w io.Writer) error
+	RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error
 	ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error)
 }
 

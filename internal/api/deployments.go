@@ -128,7 +128,7 @@ func (s *Server) serviceLogs(w http.ResponseWriter, r *http.Request) error {
 	stream := startSSE(w, r)
 	defer stream.close()
 	lines := &lineWriter{emit: func(line string) { stream.send("log", line) }}
-	err := s.deployer.RuntimeLogs(r.Context(), id, runtimeLogTail, lines)
+	err := s.deployer.RuntimeLogs(r.Context(), id, runtimeLogTail, true, lines)
 	lines.flush()
 	if r.Context().Err() != nil {
 		return nil
