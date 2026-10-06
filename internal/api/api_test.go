@@ -36,12 +36,10 @@ import (
 type fakeDeployer struct {
 	mu          sync.Mutex
 	deploy      []store.Trigger
-	commits     []string // SHA of each deployment
-	routeFails  int      // how many more ApplyRoutes calls fail
+	routeFails  int // how many more ApplyRoutes calls fail
 	routeCalls  int
 	controls    []string        // "stop <id>", "start <id>", "restart <id>"
 	controlErr  error           // returned by the service controls
-	deployErr   error           // returned by Deploy
 	redeployErr error           // returned by Redeploy instead of deploy.ErrNoImage
 	deleteErr   error           // returned by DeleteService and DeleteProject
 	onDelete    func(id string) // called by them with "delete <id>"
@@ -78,24 +76,8 @@ func (f *fakeDeployer) ClearRestoreFence(_ context.Context, id string) error {
 func (f *fakeDeployer) Deploy(_ context.Context, serviceID string, trigger store.Trigger, c deploy.Commit) (store.Deployment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.deployErr != nil {
-		return store.Deployment{}, f.deployErr
-	}
 	f.deploy = append(f.deploy, trigger)
-	f.commits = append(f.commits, c.SHA)
 	return store.Deployment{ServiceID: serviceID, Trigger: trigger, CommitSHA: c.SHA, Status: store.StatusQueued}, nil
-}
-
-func (f *fakeDeployer) setDeployErr(err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.deployErr = err
-}
-
-func (f *fakeDeployer) deployed() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.commits...)
 }
 
 func (f *fakeDeployer) triggers() []store.Trigger {
