@@ -123,6 +123,10 @@ func (s *Store) Variables(ctx context.Context, serviceID string) (map[string]str
 		if err := rows.Scan(&k, &v); err != nil {
 			return nil, fmt.Errorf("store: variables of service %s: %w", serviceID, err)
 		}
+		v, err := s.crypt.open(v, variableAD(serviceID, k))
+		if err != nil {
+			return nil, fmt.Errorf("store: variable %s of service %s: %w", k, serviceID, err)
+		}
 		vars[k] = v
 	}
 	if err := rows.Err(); err != nil {
@@ -150,7 +154,8 @@ func (s *Store) setVariables(ctx context.Context, serviceID string, vars map[str
 	}
 	for k, v := range vars {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO variables (service_id, key, value) VALUES (?, ?, ?)`, serviceID, k, v); err != nil {
+			`INSERT INTO variables (service_id, key, value) VALUES (?, ?, ?)`,
+			serviceID, k, s.crypt.seal(v, variableAD(serviceID, k))); err != nil {
 			return err
 		}
 	}

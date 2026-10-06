@@ -13,7 +13,7 @@ import (
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "shed.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "shed.db"), testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func mustService(t *testing.T, s *Store, sv Service) Service {
 func TestOpenReopenKeepsData(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "shed.db")
-	s, err := Open(path)
+	s, err := Open(path, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestOpenReopenKeepsData(t *testing.T) {
 	}
 	s.Close()
 
-	s, err = Open(path) // Migrations must be idempotent.
+	s, err = Open(path, testKey) // Migrations must be idempotent.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestOpenReopenKeepsData(t *testing.T) {
 
 func TestOpenRefusesNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shed.db")
-	s, err := Open(path)
+	s, err := Open(path, testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestOpenRefusesNewerSchema(t *testing.T) {
 	}
 	s.Close()
 
-	if s, err := Open(path); err == nil {
+	if s, err := Open(path, testKey); err == nil {
 		s.Close()
 		t.Fatal("Open() succeeded on a database from a newer shed")
 	} else if !strings.Contains(err.Error(), "newer than this shed supports") {

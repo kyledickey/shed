@@ -70,7 +70,7 @@ shed keeps secrets in as few places as it can, and keeps them out of everything 
 
 | Secret                            | Where it lives                                             | How it is protected                                                                                                                                         |
 | --------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Service variables                 | variables table in shed.db, in plain text                  | Supplied to builds as BuildKit secrets in private files outside the source, never as build arguments. Dockerfiles read them with `RUN --mount=type=secret`. |
+| Service variables                 | variables table in shed.db, encrypted                      | Supplied to builds as BuildKit secrets in private files outside the source, never as build arguments. Dockerfiles read them with `RUN --mount=type=secret`. |
 | GitHub App credentials            | settings table: client secret, webhook secret, private key | Never returned by the API.                                                                                                                                  |
 | Git clone credentials             | Short-lived installation tokens                            | Passed as a scoped HTTP authorization header in the child process environment, not on a command line or in repository config.                               |
 | age secret key                    | settings table, backup.age_identity                        | Only `GET /api/backups/settings/key` returns it, on demand.                                                                                                 |
@@ -82,7 +82,32 @@ shed keeps secrets in as few places as it can, and keeps them out of everything 
 
 Build logs mask the literal values of the service's variables and of clone credentials, including values split across writes. Container startup and runtime log streams mask the literal resolved values of stored variables the same way. Two limits are worth knowing. Masking uses the variable configuration at the time, so changing a variable can't scrub older saved logs. And a build can still embed or encode a secret it receives, so secret mounts don't make an untrusted build script safe.
 
-Because `shed.db` holds most of the secrets above in plain text, treat the disk as sensitive, and turn on [backup encryption](/docs/backups#encryption) so its backups are not readable in your bucket.
+The secrets in shed.db are encrypted with the key described in [Encryption at rest](#encryption-at-rest). Turn on [backup encryption](/docs/backups#encryption) as well so service backups are not readable in your bucket.
+
+## Encryption at rest
+
+shed encrypts secrets in shed.db with AES-256-GCM under a 32-byte master key. The encrypted values are every row of `settings` (including the GitHub App credentials and the backup age identity), every service variable, and the S3 secret access key of each backup destination. Each value is bound to its row, so it can't be copied to another one. Stored values start with `v1:`.
+
+**The key file.** The key is `shed.key` next to the config file, by default `/etc/shed/shed.key`, outside `data.dir`. It holds 32 random bytes, base64-encoded. If the file is missing, shed generates it on start with mode 0600 and logs a warning to back it up. The first start of a version with encryption converts existing plaintext values in one transaction. After that, a key that doesn't match makes shed refuse to start, with an error naming the key path.
+
+**systemd credentials.** If `$CREDENTIALS_DIRECTORY/shed.key` exists, shed uses it instead and never generates one. Provide it with `LoadCredential=` or `LoadCredentialEncrypted=` in the unit. An encrypted credential made with `systemd-creds` can be bound to the host's TPM, so the key is never readable from disk.
+
+**Back up the key off the server.** Losing it means losing the variables, GitHub App credentials, S3 secret, and backup age identity stored in shed.db. A shed.db backup contains only ciphertext, so [recovering shed.db](/docs/restores#recovering-sheddb) needs the original `shed.key` as well.
+
+**What is not encrypted by shed:**
+
+- Docker volumes, so database and app data.
+- Docker's container configs under `/var/lib/docker/containers`, which hold each container's resolved environment variables in plain text.
+- Images and the build cache.
+- Build logs in `<data>/logs`, container logs, and `shed.log`.
+- Caddy's certificate storage in `<data>/caddy`.
+- Backups, unless [backup encryption](/docs/backups#encryption) is on.
+
+Sessions and OAuth tokens are already stored only as hashes.
+
+**What this protects.** A copy of shed.db, or a backup of it, that leaks without the key file. It does not protect against root on the running host, which can read the key and the process.
+
+For everything else, use full-disk encryption: your provider's encrypted block storage, or LUKS on the host covering `/var/lib/shed` and `/var/lib/docker`. A VPS that boots unattended needs a TPM, network unlock (Clevis with Tang), or a manual unlock after each reboot.
 
 ## Webhook limits
 

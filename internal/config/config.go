@@ -170,6 +170,14 @@ func LogFile(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "shed.log")
 }
 
+// KeyFile returns the path of the key that encrypts secrets in the database,
+// for the configuration file at configPath: shed.key in the same directory.
+// It is kept apart from the data directory, so that copies of the data do
+// not carry the key.
+func KeyFile(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), "shed.key")
+}
+
 // validate reports the first invalid setting in c.
 func (c Config) validate() error {
 	if c.Server.Listen == "" {

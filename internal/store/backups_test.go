@@ -358,7 +358,7 @@ func TestSnapshot(t *testing.T) {
 	if err := s.Snapshot(ctx, path); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Open(path)
+	snap, err := Open(path, testKey)
 	if err != nil {
 		t.Fatalf("Open(snapshot): %v", err)
 	}

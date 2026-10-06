@@ -129,7 +129,7 @@ func TestMigrateBackupDestinations(t *testing.T) {
 			}
 			db.Close()
 
-			s, err := Open(path)
+			s, err := Open(path, testKey)
 			if err != nil {
 				t.Fatal(err)
 			}
