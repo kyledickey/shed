@@ -3,6 +3,11 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.1 - 2026-10-06
+
+- Settings → Agents, the MCP docs, and the `shed` skill show how to connect
+  with `npx add-mcp` (any agent) and Codex, alongside Claude Code.
+
 ## v0.2.0 - 2026-10-06
 
 - Secrets in shed.db are encrypted at rest: variables, GitHub App

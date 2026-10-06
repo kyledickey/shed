@@ -19,7 +19,9 @@ not connected. Tell the user to run this, then sign in in the browser and
 approve access:
 
 ```sh
-claude mcp add --transport http shed https://<shed-host>/mcp
+npx add-mcp https://<shed-host>/mcp --name shed                 # any agent
+claude mcp add --transport http shed https://<shed-host>/mcp   # Claude Code
+codex mcp add shed --url https://<shed-host>/mcp && codex mcp login shed  # Codex
 ```
 
 Other MCP clients take the same URL (`https://<shed-host>/mcp`) and sign in

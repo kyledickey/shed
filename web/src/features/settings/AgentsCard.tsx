@@ -29,9 +29,9 @@ export function AgentsCard() {
     >
       <div className={settings.section}>
         <p className={styles.intro}>
-          Agents like Claude Code, Claude.ai, and Cursor can read your projects, deployments, logs,
-          and metrics to help diagnose problems. Access is read-only and never includes variable
-          values. Each agent signs in through your browser with your GitHub account.
+          Agents like Claude Code, Codex, and Cursor can read your projects, deployments, logs, and
+          metrics to help diagnose problems. Access is read-only and never includes variable values.
+          Each agent signs in through your browser with your GitHub account.
         </p>
         <Link to="/docs/$slug" params={{ slug: "mcp" }} className={styles.docs}>
           Read the MCP docs <ArrowRight size={12} />
@@ -39,8 +39,17 @@ export function AgentsCard() {
       </div>
       <div className={settings.section}>
         <div className={styles.group}>
+          <p className={settings.subhead}>Any agent</p>
+          <p className={settings.note}>Pick your agents, such as Claude Code, Codex, or Cursor.</p>
+          <CodeLine value={`npx add-mcp ${url} --name shed`} label="Copy command" />
+        </div>
+        <div className={styles.group}>
           <p className={settings.subhead}>Claude Code</p>
           <CodeLine value={`claude mcp add --transport http shed ${url}`} label="Copy command" />
+        </div>
+        <div className={styles.group}>
+          <p className={settings.subhead}>Codex</p>
+          <CodeLine value={`codex mcp add shed --url ${url}`} label="Copy command" />
         </div>
         <div className={styles.group}>
           <p className={settings.subhead}>Other clients</p>

@@ -2,7 +2,7 @@
 title: MCP and agents
 group: Operating
 order: 155
-description: "shed runs a read-only MCP server at /mcp, so coding agents like Claude Code, Claude.ai, and Cursor can look at your projects, deployments, logs, and metrics. They sign in with OAuth through your GitHub account, and they can never see a variable's value."
+description: "shed runs a read-only MCP server at /mcp, so coding agents like Claude Code, Codex, and Cursor can look at your projects, deployments, logs, and metrics. They sign in with OAuth through your GitHub account, and they can never see a variable's value."
 ---
 
 ## Overview
@@ -19,6 +19,14 @@ This version is **read-only**. An agent can look at everything it needs to diagn
 
 The MCP URL is your `server.url` plus `/mcp`. The server must be reachable over HTTPS from wherever the agent runs, since OAuth redirects pass through your browser.
 
+### Any agent
+
+```sh title="on your machine"
+npx add-mcp https://shed.example.com/mcp --name shed
+```
+
+[add-mcp](https://add-mcp.com) asks which agents to add shed to (Claude Code, Codex, Cursor, VS Code, and more) and writes each one's config. Each agent then signs in the first time it uses shed.
+
 ### Claude Code
 
 ```sh title="on your machine"
@@ -26,6 +34,15 @@ claude mcp add --transport http shed https://shed.example.com/mcp
 ```
 
 Then run `/mcp` inside Claude Code and choose shed to sign in. Your browser opens shed's consent page.
+
+### Codex
+
+```sh title="on your machine"
+codex mcp add shed --url https://shed.example.com/mcp
+codex mcp login shed
+```
+
+`codex mcp login` opens shed's consent page in your browser.
 
 ### Claude.ai, Cursor, and others
 
