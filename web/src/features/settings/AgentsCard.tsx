@@ -7,6 +7,7 @@ import { oauthGrantsQuery, useRevokeOAuthGrant } from "../../api/oauth";
 import type { OAuthGrant } from "../../api/types";
 import { Button } from "../../components/Button";
 import { LayerCard } from "../../components/Card";
+import { Segmented } from "../../components/Form";
 import { CopyButton, ServiceIcon, Skeleton } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { formatDate, relativeTime } from "../../lib/time";
@@ -15,9 +16,42 @@ import styles from "./AgentsCard.module.css";
 import { ConfirmDialog } from "./ConfirmDialog";
 import settings from "./Settings.module.css";
 
+type Client = "any" | "claude" | "codex" | "url";
+
+const clients: { value: Client; label: string }[] = [
+  { value: "any", label: "Any agent" },
+  { value: "claude", label: "Claude Code" },
+  { value: "codex", label: "Codex" },
+  { value: "url", label: "URL" },
+];
+
+function connect(client: Client, url: string): { value: string; note: string } {
+  switch (client) {
+    case "any":
+      return {
+        value: `npx add-mcp ${url} --name shed`,
+        note: "Asks which agents to add shed to, like Claude Code, Codex, or Cursor.",
+      };
+    case "claude":
+      return {
+        value: `claude mcp add --transport http shed ${url}`,
+        note: "Then run /mcp in Claude Code and choose shed to sign in.",
+      };
+    case "codex":
+      return {
+        value: `codex mcp add shed --url ${url} && codex mcp login shed`,
+        note: "The login opens the sign-in page in your browser.",
+      };
+    case "url":
+      return { value: url, note: "Add it as a remote MCP server (Streamable HTTP)." };
+  }
+}
+
 /** AgentsCard explains how to connect MCP clients and lists the ones that are connected. */
 export function AgentsCard() {
   const url = `${window.location.origin}/mcp`;
+  const [client, setClient] = useState<Client>("any");
+  const { value, note } = connect(client, url);
   return (
     <LayerCard
       title={
@@ -29,32 +63,22 @@ export function AgentsCard() {
     >
       <div className={settings.section}>
         <p className={styles.intro}>
-          Agents like Claude Code, Codex, and Cursor can read your projects, deployments, logs, and
-          metrics to help diagnose problems. Access is read-only and never includes variable values.
-          Each agent signs in through your browser with your GitHub account.
+          Agents can read your projects, deployments, logs, and metrics, never variable values. Each
+          signs in through your browser with GitHub.{" "}
+          <Link to="/docs/$slug" params={{ slug: "mcp" }} className={styles.docs}>
+            Docs <ArrowRight size={12} />
+          </Link>
         </p>
-        <Link to="/docs/$slug" params={{ slug: "mcp" }} className={styles.docs}>
-          Read the MCP docs <ArrowRight size={12} />
-        </Link>
-      </div>
-      <div className={settings.section}>
         <div className={styles.group}>
-          <p className={settings.subhead}>Any agent</p>
-          <p className={settings.note}>Pick your agents, such as Claude Code, Codex, or Cursor.</p>
-          <CodeLine value={`npx add-mcp ${url} --name shed`} label="Copy command" />
-        </div>
-        <div className={styles.group}>
-          <p className={settings.subhead}>Claude Code</p>
-          <CodeLine value={`claude mcp add --transport http shed ${url}`} label="Copy command" />
-        </div>
-        <div className={styles.group}>
-          <p className={settings.subhead}>Codex</p>
-          <CodeLine value={`codex mcp add shed --url ${url}`} label="Copy command" />
-        </div>
-        <div className={styles.group}>
-          <p className={settings.subhead}>Other clients</p>
-          <p className={settings.note}>Add a remote MCP server (Streamable HTTP) with this URL.</p>
-          <CodeLine value={url} label="Copy URL" />
+          <Segmented
+            value={client}
+            onChange={setClient}
+            options={clients}
+            size="sm"
+            label="Client"
+          />
+          <CodeLine value={value} label={client === "url" ? "Copy URL" : "Copy command"} />
+          <p className={settings.note}>{note}</p>
         </div>
       </div>
       <ConnectedClients />
