@@ -33,6 +33,14 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// DeleteSetting removes a setting, if it exists.
+func (s *Store) DeleteSetting(ctx context.Context, key string) error {
+	if err := s.exec(ctx, `DELETE FROM settings WHERE key = ?`, key); err != nil {
+		return fmt.Errorf("store: delete setting %q: %w", key, err)
+	}
+	return nil
+}
+
 // AddSetting stores a setting unless the key already has a value, atomically.
 // It reports whether it stored value.
 func (s *Store) AddSetting(ctx context.Context, key, value string) (bool, error) {
