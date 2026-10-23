@@ -66,7 +66,16 @@ func (c *Client) openSDK(ctx context.Context, token string) (envReader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cl.Environments(), nil
+	return sdkReader{cl}, nil
+}
+
+// sdkReader holds the SDK client itself, not just its EnvironmentsAPI: the SDK
+// ends the client's session in the core when the *sdk.Client is garbage
+// collected, after which reads fail with "invalid client id".
+type sdkReader struct{ client *sdk.Client }
+
+func (r sdkReader) GetVariables(ctx context.Context, environmentID string) (sdk.GetVariablesResponse, error) {
+	return r.client.Environments().GetVariables(ctx, environmentID)
 }
 
 // Preload builds the SDK client in the background if a token is saved, so
