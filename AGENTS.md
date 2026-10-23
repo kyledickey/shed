@@ -28,6 +28,7 @@ internal/github    GitHub App: manifest, tokens, repos, CI status, OAuth, webhoo
 internal/vars      ${{ KEY }} / ${{ service.KEY }} reference resolution
 internal/catalog   database templates
 internal/s3        S3-compatible object storage client
+internal/notify    notifications: types, provider registry, adapters (hark push)
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
 internal/host      host resource usage from procfs, sysfs, and statfs
 internal/logtail   in-memory tail of shed's own log

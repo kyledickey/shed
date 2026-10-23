@@ -112,6 +112,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
+| `internal/notify` | notification types, provider registry, fan-out to endpoints, Hark push adapter | store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
