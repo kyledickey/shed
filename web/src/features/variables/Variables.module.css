@@ -137,15 +137,6 @@
   font-size: var(--text-xs);
 }
 
-.link {
-  color: var(--accent-ink);
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
 .mark {
   display: inline-flex;
   margin-right: 6px;

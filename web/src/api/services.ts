@@ -20,7 +20,7 @@ export const variablesQuery = (serviceId: string) =>
 export const resolveVariables = (serviceId: string) =>
   api.get<Variables>(`/services/${serviceId}/variables/resolved`);
 
-function refreshService(qc: QueryClient, service: Service) {
+export function refreshService(qc: QueryClient, service: Service) {
   qc.setQueryData(keys.service(service.id), service);
   return qc.invalidateQueries({ queryKey: keys.project(service.projectId) });
 }

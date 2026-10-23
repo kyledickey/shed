@@ -1,12 +1,8 @@
-import { queryOptions, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { OnePassword, Variables } from "./types";
-
-export const onePasswordQuery = queryOptions({
-  queryKey: keys.onePassword,
-  queryFn: () => api.get<OnePassword>("/onepassword"),
-});
+import { refreshService } from "./services";
+import type { Service, Variables } from "./types";
 
 /**
  * onePasswordVariablesQuery lists the variables of a service's linked
@@ -23,22 +19,32 @@ export const onePasswordVariablesQuery = (serviceId: string, environment: string
     retry: false,
   });
 
-// keys.onePassword prefixes every Environment listing, so this refreshes those too.
-const refresh = (qc: QueryClient) => qc.invalidateQueries({ queryKey: keys.onePassword });
-
-/** useConnectOnePassword saves a service account token; 1Password checks it first. */
-export function useConnectOnePassword() {
+/**
+ * useLinkOnePassword links a service to an Environment with a service account
+ * token; shed reads the Environment with it before saving. A blank token keeps
+ * the saved one.
+ */
+export function useLinkOnePassword(serviceId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (token: string) => api.put<OnePassword>("/onepassword", { token }),
-    onSuccess: () => refresh(qc),
+    mutationFn: (link: { environment: string; token?: string }) =>
+      api.put<Service>(`/services/${serviceId}/onepassword`, link),
+    onSuccess: (service) =>
+      Promise.all([
+        refreshService(qc, service),
+        qc.invalidateQueries({ queryKey: keys.onePasswordVariables(serviceId) }),
+      ]),
   });
 }
 
-export function useDisconnectOnePassword() {
+export function useUnlinkOnePassword(serviceId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.delete("/onepassword"),
-    onSuccess: () => refresh(qc),
+    mutationFn: () => api.delete<Service>(`/services/${serviceId}/onepassword`),
+    onSuccess: (service) =>
+      Promise.all([
+        refreshService(qc, service),
+        qc.invalidateQueries({ queryKey: keys.onePasswordVariables(serviceId) }),
+      ]),
   });
 }

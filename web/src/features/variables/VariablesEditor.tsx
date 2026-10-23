@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { Check, Eye, EyeOff, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
 import { useRef, useState } from "react";
 import { onePasswordVariablesQuery } from "../../api/onepassword";
@@ -54,15 +53,13 @@ function rowsToVars(rows: Row[]): { vars: Variables; errors: string[] } {
 export function VariablesEditor({
   service,
   variables,
-  connected,
 }: {
   service: Service;
   variables: Variables;
-  /** Whether 1Password is connected in Settings. */
-  connected: boolean;
 }) {
   const serviceId = service.id;
-  const environment = service.onePasswordEnvironment;
+  const link = service.onePassword;
+  const [linking, setLinking] = useState(false);
   const save = useSaveVariables(serviceId);
   const hint = useRedeployHint();
   const toast = useToast();
@@ -84,8 +81,8 @@ export function VariablesEditor({
   const changes = diff(current.vars, variables);
   const dirty = changes > 0;
   const onePassword = useQuery({
-    ...onePasswordVariablesQuery(serviceId, environment),
-    enabled: connected && environment !== "",
+    ...onePasswordVariablesQuery(serviceId, link?.environment ?? ""),
+    enabled: link?.hasToken ?? false,
   });
   const fromOnePassword = onePassword.data ?? {};
 
@@ -179,8 +176,10 @@ export function VariablesEditor({
       meta="References resolve at deploy time."
       actions={
         <>
-          {mode === "table" && <OnePasswordLink service={service} connected={connected} />}
-          {mode === "table" && (rows.length > 0 || environment) && (
+          {mode === "table" && (
+            <OnePasswordLink service={service} open={linking} onOpenChange={setLinking} />
+          )}
+          {mode === "table" && (rows.length > 0 || link) && (
             <Button
               size="sm"
               onClick={() =>
@@ -219,7 +218,7 @@ export function VariablesEditor({
             aria-label="Variables in .env format"
           />
         </div>
-      ) : rows.length === 0 && !environment ? (
+      ) : rows.length === 0 && !link ? (
         <EmptyState
           icon={<KeyRound size={20} />}
           title="No variables yet"
@@ -324,8 +323,13 @@ export function VariablesEditor({
               </div>
             ),
           )}
-          {environment && (
-            <OnePasswordRows connected={connected} query={onePassword} shadowed={current.vars} />
+          {link && (
+            <OnePasswordRows
+              hasToken={link.hasToken}
+              query={onePassword}
+              shadowed={current.vars}
+              onAddToken={() => setLinking(true)}
+            />
           )}
         </div>
       )}
@@ -343,25 +347,26 @@ export function VariablesEditor({
 
 /** OnePasswordRows lists a linked Environment's variables, minus the ones the service overrides. */
 function OnePasswordRows({
-  connected,
+  hasToken,
   query,
   shadowed,
+  onAddToken,
 }: {
-  connected: boolean;
+  hasToken: boolean;
   query: { data?: Variables; error: Error | null };
   shadowed: Variables;
+  onAddToken: () => void;
 }) {
   const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
 
-  if (!connected) {
+  if (!hasToken) {
     return (
       <div className={styles.row}>
-        <span className={styles.status}>
-          Connect 1Password in{" "}
-          <Link to="/settings" className={styles.link}>
-            Settings
-          </Link>{" "}
-          to load this Environment.
+        <span className={styles.status}>Add a service account token to load this Environment.</span>
+        <span className={styles.actions}>
+          <Button size="sm" onClick={onAddToken}>
+            Add token
+          </Button>
         </span>
       </div>
     );

@@ -55,8 +55,8 @@ export type Service = {
   memoryLimit: number;
   autoDeploy: boolean;
   waitForCi: boolean;
-  /** Linked 1Password Environment ID; "" = none. */
-  onePasswordEnvironment: string;
+  /** The linked 1Password Environment; null = none. */
+  onePassword: OnePasswordLink | null;
   status: ServiceStatus;
   privateHost: string;
   domains: Domain[];
@@ -101,7 +101,6 @@ export type ServicePatch = Partial<
     | "memoryLimit"
     | "autoDeploy"
     | "waitForCi"
-    | "onePasswordEnvironment"
   >
 >;
 
@@ -127,7 +126,11 @@ export type Deployment = {
 export type Domain = { id: string; host: string; generated: boolean; url: string };
 export type Volume = { id: string; mountPath: string; createdAt: string };
 export type Repo = { fullName: string; defaultBranch: string; private: boolean };
-export type OnePassword = { connected: boolean };
+/**
+ * A service's link to a 1Password Environment. The service account token is
+ * write-only: responses say only whether one is saved.
+ */
+export type OnePasswordLink = { environment: string; hasToken: boolean };
 
 export type Variables = Record<string, string>;
 
