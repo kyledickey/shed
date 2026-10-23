@@ -8,3 +8,4 @@ web/dist/*
 /shed.dev.toml
 *.log
 .dev/
+shed.key
