@@ -50,7 +50,10 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		maps.Copy(merged, own)
 		all[s.Name] = merged
 	}
-	env, err := vars.Resolve(svc.Name, all)
+	env, err := vars.Resolve(svc.Name, slices.Collect(maps.Keys(all[svc.Name])), func(service, key string) (string, bool, error) {
+		v, ok := all[service][key]
+		return v, ok, nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("deploy: resolve variables: %w", err)
 	}
