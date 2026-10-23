@@ -131,3 +131,54 @@
   color: var(--ink-3);
   font-size: var(--text-xs);
 }
+
+.section {
+  padding: var(--space-3);
+}
+
+.section + .list,
+.section + .linkForm {
+  border-top: 1px solid var(--line-soft);
+}
+
+.linkForm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.envId {
+  font-family: var(--font-mono);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.mark {
+  display: inline-flex;
+  margin-right: 6px;
+  color: var(--ink-3);
+  vertical-align: -2px;
+}
+
+.row[data-overridden] .key,
+.row[data-overridden] .value {
+  color: var(--ink-3);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
