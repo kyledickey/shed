@@ -6,6 +6,7 @@ import (
 
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 )
@@ -22,7 +23,7 @@ var (
 	// ErrConflict reports a request that the current state does not allow,
 	// such as a name already in use or a service that is busy.
 	ErrConflict = errors.New("control: conflict")
-	// ErrUpstream reports that GitHub failed a request.
+	// ErrUpstream reports that GitHub or 1Password failed a request.
 	ErrUpstream = errors.New("control: upstream")
 	// ErrUnavailable reports that shed is shutting down.
 	ErrUnavailable = errors.New("control: unavailable")
@@ -75,6 +76,7 @@ var known = []struct {
 	{backup.ErrInvalid, ErrInvalid, ""},
 	{backup.ErrNoVolumes, ErrInvalid, "service has no volumes to back up"},
 	{backup.ErrBusy, ErrConflict, "a backup or restore is already in progress"},
+	{onepassword.ErrNotConnected, ErrConflict, "1Password is not connected"},
 	{update.ErrUnsupported, ErrConflict, "this build of shed cannot update itself"},
 	{update.ErrNoUpdate, ErrConflict, "there is no newer release"},
 	{update.ErrBusy, ErrConflict, "an update check, download, or install is already in progress"},

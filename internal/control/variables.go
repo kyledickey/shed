@@ -47,8 +47,8 @@ func (p *Plane) ResolvedVariables(ctx context.Context, serviceID string) (map[st
 }
 
 // VariableNames returns the names of the variables a service's next
-// deployment would see: its own and the ones shed injects. It never returns
-// values.
+// deployment would see: its own, the ones from its 1Password Environment, and
+// the ones shed injects. It never returns values.
 func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNames, error) {
 	own, err := p.Variables(ctx, serviceID)
 	if err != nil {
@@ -66,7 +66,12 @@ func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNa
 		out.ResolveError = err.Error()
 	}
 	for name := range resolved.Env {
-		if _, ok := own[name]; !ok {
+		if _, ok := own[name]; ok {
+			continue
+		}
+		if slices.Contains(resolved.OnePassword, name) {
+			out.Variables = append(out.Variables, VariableName{Name: name, OnePassword: true})
+		} else {
 			out.Variables = append(out.Variables, VariableName{Name: name, Injected: true})
 		}
 	}

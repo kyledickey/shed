@@ -180,6 +180,33 @@ func TestUpdateService(t *testing.T) {
 	}
 }
 
+func TestUpdateServiceOnePasswordEnvironment(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	svc := createApp(t, f.st)
+	tests := []struct {
+		in, want string
+		valid    bool
+	}{
+		{" abc123 ", "abc123", true},
+		{strings.Repeat("a", 64), strings.Repeat("a", 64), true},
+		{"", "", true},
+		{"ABC", "", false},
+		{"a-b", "", false},
+		{strings.Repeat("a", 65), "", false},
+	}
+	for _, tt := range tests {
+		got, err := f.plane.UpdateService(ctx, svc.ID, ServicePatch{OnePasswordEnvironment: &tt.in})
+		if !tt.valid {
+			wantKind(t, err, ErrInvalid, "1Password Environment")
+			continue
+		}
+		if err != nil || got.OnePasswordEnvironment != tt.want {
+			t.Errorf("UpdateService(%q) = %q, %v; want %q", tt.in, got.OnePasswordEnvironment, err, tt.want)
+		}
+	}
+}
+
 func TestProjectNames(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
