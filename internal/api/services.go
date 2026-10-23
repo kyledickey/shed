@@ -115,8 +115,6 @@ type servicePatch struct {
 	MemoryLimit     *int64   `json:"memoryLimit"`
 	AutoDeploy      *bool    `json:"autoDeploy"`
 	WaitForCI       *bool    `json:"waitForCi"`
-
-	OnePasswordEnvironment *string `json:"onePasswordEnvironment"`
 }
 
 // patchService saves settings; they apply from the next deployment.

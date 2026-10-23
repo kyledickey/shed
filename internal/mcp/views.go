@@ -272,8 +272,9 @@ func toService(v control.ServiceView) serviceOut {
 		WaitForCI:       v.WaitForCI,
 		Stopped:         v.Stopped,
 		CreatedAt:       v.CreatedAt,
-
-		OnePasswordEnvironment: v.OnePasswordEnvironment,
+	}
+	if l := v.OnePassword; l != nil {
+		out.OnePasswordEnvironment = l.Environment
 	}
 	for _, d := range v.Domains {
 		out.Domains = append(out.Domains, domainOut{Host: d.Host, Generated: d.Generated})

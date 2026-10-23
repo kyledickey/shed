@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -51,7 +52,8 @@ func TestResolveVariables(t *testing.T) {
 	}
 }
 
-// fakeOnePassword serves 1Password Environments and counts reads.
+// fakeOnePassword serves 1Password Environments, each to the token
+// "<id>-token" only, and counts reads.
 type fakeOnePassword struct {
 	mu    sync.Mutex
 	envs  map[string]map[string]string
@@ -59,12 +61,15 @@ type fakeOnePassword struct {
 	err   error
 }
 
-func (f *fakeOnePassword) Variables(_ context.Context, id string) (map[string]string, error) {
+func (f *fakeOnePassword) Variables(_ context.Context, token, id string) (map[string]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads[id]++
 	if f.err != nil {
 		return nil, f.err
+	}
+	if token != id+"-token" {
+		return nil, fmt.Errorf("token %s cannot read Environment %s", token, id)
 	}
 	return maps.Clone(f.envs[id]), nil
 }
@@ -75,14 +80,12 @@ func (f *fakeOnePassword) readCount(id string) int {
 	return f.reads[id]
 }
 
-// linkEnvironment links svc to the 1Password Environment id.
-func (f *fixture) linkEnvironment(t *testing.T, svc store.Service, id string) store.Service {
+// linkEnvironment links svc to the 1Password Environment id, read with token.
+func (f *fixture) linkEnvironment(t *testing.T, svc store.Service, id, token string) {
 	t.Helper()
-	svc.OnePasswordEnvironment = id
-	if err := f.st.UpdateService(context.Background(), svc); err != nil {
+	if err := f.st.SetOnePasswordLink(context.Background(), store.OnePasswordLink{ServiceID: svc.ID, Environment: id, Token: token}); err != nil {
 		t.Fatal(err)
 	}
-	return svc
 }
 
 // newOnePasswordFixture links web and a new service db to Environments.
@@ -97,12 +100,13 @@ func newOnePasswordFixture(t *testing.T) (*fixture, *fakeOnePassword, store.Serv
 		reads: make(map[string]int),
 	}
 	f.d.onePassword = op
-	f.svc = f.linkEnvironment(t, f.svc, "webenv")
+	f.linkEnvironment(t, f.svc, "webenv", "webenv-token")
 	db, err := f.st.CreateService(context.Background(), store.Service{ProjectID: f.svc.ProjectID, Name: "db", Kind: "postgres"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f, op, f.linkEnvironment(t, db, "dbenv")
+	f.linkEnvironment(t, db, "dbenv", "dbenv-token")
+	return f, op, db
 }
 
 func TestResolveVariablesOnePassword(t *testing.T) {
@@ -196,12 +200,52 @@ func TestDeployOnePassword(t *testing.T) {
 
 func TestDeployFailsWhenOnePasswordFails(t *testing.T) {
 	f, op, _ := newOnePasswordFixture(t)
-	op.err = errors.New("onepassword: 1Password is not connected")
+	op.err = errors.New("onepassword: 1Password rejected the token")
 	dep := f.wait(t, f.deploy(t).ID, terminal)
 	if dep.Status != store.StatusFailed || !strings.Contains(dep.Error, "1Password") {
 		t.Fatalf("deployment = %s (%q), want failed with a 1Password error", dep.Status, dep.Error)
 	}
 	if len(f.docker.runs) != 0 {
 		t.Error("started a container without its 1Password variables")
+	}
+}
+
+func TestDeployFailsWithoutOnePasswordToken(t *testing.T) {
+	f, op, _ := newOnePasswordFixture(t)
+	f.linkEnvironment(t, f.svc, "webenv", "")
+	dep := f.wait(t, f.deploy(t).ID, terminal)
+	want := "1Password link of service web has no token; add one on its Variables tab"
+	if dep.Status != store.StatusFailed || !strings.Contains(dep.Error, want) {
+		t.Fatalf("deployment = %s (%q), want failed with %q", dep.Status, dep.Error, want)
+	}
+	if len(f.docker.runs) != 0 || op.readCount("webenv") != 0 {
+		t.Error("deployed or read 1Password without a token")
+	}
+	if _, err := f.d.ResolveVariables(context.Background(), f.svc.ID); !errors.Is(err, ErrNoOnePasswordToken) {
+		t.Errorf("ResolveVariables() error = %v, want ErrNoOnePasswordToken", err)
+	}
+}
+
+func TestResolveVariablesTokenlessOtherService(t *testing.T) {
+	f, op, db := newOnePasswordFixture(t)
+	ctx := context.Background()
+	f.linkEnvironment(t, db, "dbenv", "")
+	if err := f.st.SetVariables(ctx, db.ID, map[string]string{"URL": "pg://own"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.SetVariables(ctx, f.svc.ID, map[string]string{"DB": "${{ db.URL }}"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.d.ResolveVariables(ctx, f.svc.ID); err != nil || got.Env["DB"] != "pg://own" {
+		t.Fatalf("DB = %q, %v; a key db defines needs no token", got.Env["DB"], err)
+	}
+	if err := f.st.SetVariables(ctx, f.svc.ID, map[string]string{"DB": "${{ db.PASSWORD }}"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.d.ResolveVariables(ctx, f.svc.ID); !errors.Is(err, ErrNoOnePasswordToken) || !strings.Contains(err.Error(), "service db") {
+		t.Errorf("ResolveVariables() error = %v, want db's missing token", err)
+	}
+	if n := op.readCount("dbenv"); n != 0 {
+		t.Errorf("read db's Environment %d times without a token", n)
 	}
 }

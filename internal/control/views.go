@@ -28,10 +28,13 @@ type ProjectView struct {
 	Services []ServiceView
 }
 
-// ServiceView is a service with its settings, live status, domains, volumes,
-// latest deployment, and restore fence. It holds no variable values.
+// ServiceView is a service with its settings, 1Password link, live status,
+// domains, volumes, latest deployment, and restore fence. It holds no
+// variable values or tokens.
 type ServiceView struct {
 	store.Service
+	// OnePassword is nil if the service links no 1Password Environment.
+	OnePassword *OnePasswordLink
 	// Status is derived from the service's deployments and container;
 	// offline if it has neither.
 	Status  deploy.ServiceStatus

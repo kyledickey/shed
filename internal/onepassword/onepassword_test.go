@@ -10,123 +10,103 @@ import (
 	sdk "github.com/1password/onepassword-sdk-go"
 )
 
-type memTokens struct{ token string }
-
-func (m *memTokens) Token(context.Context) (string, error) { return m.token, nil }
-
-func (m *memTokens) SetToken(_ context.Context, token string) error {
-	m.token = token
-	return nil
-}
-
-// fake1Password accepts the token "good" and serves envs.
+// fake1Password accepts the tokens in envs, each of which reads its own
+// Environments.
 type fake1Password struct {
-	envs    map[string][]sdk.EnvironmentVariable
-	opens   int
+	envs    map[string]map[string][]sdk.EnvironmentVariable // by token, then Environment ID
+	opens   map[string]int
 	readErr error
 }
 
+type fakeReader struct {
+	f     *fake1Password
+	token string
+}
+
 func (f *fake1Password) open(_ context.Context, token string) (envReader, error) {
-	f.opens++
-	if token != "good" {
+	f.opens[token]++
+	if _, ok := f.envs[token]; !ok {
 		return nil, errors.New("invalid service account token")
 	}
-	return f, nil
+	return fakeReader{f, token}, nil
 }
 
-func (f *fake1Password) GetVariables(_ context.Context, id string) (sdk.GetVariablesResponse, error) {
-	if f.readErr != nil {
-		return sdk.GetVariablesResponse{}, f.readErr
+func (r fakeReader) GetVariables(_ context.Context, id string) (sdk.GetVariablesResponse, error) {
+	if r.f.readErr != nil {
+		return sdk.GetVariablesResponse{}, r.f.readErr
 	}
-	return sdk.GetVariablesResponse{Variables: f.envs[id]}, nil
+	vars, ok := r.f.envs[r.token][id]
+	if !ok {
+		return sdk.GetVariablesResponse{}, errors.New("403 forbidden")
+	}
+	return sdk.GetVariablesResponse{Variables: vars}, nil
 }
 
-func newClient(token string) (*Client, *memTokens, *fake1Password) {
-	tokens := &memTokens{token: token}
-	fake := &fake1Password{envs: map[string][]sdk.EnvironmentVariable{
-		"env1": {{Name: "API_KEY", Value: "k"}, {Name: "DEBUG", Value: "1"}},
-	}}
-	c := New(tokens, "test", slog.New(slog.DiscardHandler))
+func newClient() (*Client, *fake1Password) {
+	fake := &fake1Password{
+		envs: map[string]map[string][]sdk.EnvironmentVariable{
+			"web": {"env1": {{Name: "API_KEY", Value: "k"}, {Name: "DEBUG", Value: "1"}}},
+			"db":  {"env2": {{Name: "PASSWORD", Value: "p"}}},
+		},
+		opens: make(map[string]int),
+	}
+	c := New("test", slog.New(slog.DiscardHandler))
 	c.open = fake.open
-	return c, tokens, fake
-}
-
-func TestConnectSavesOnlyAcceptedTokens(t *testing.T) {
-	ctx := context.Background()
-	c, tokens, _ := newClient("")
-
-	if err := c.Connect(ctx, "bad"); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("Connect(bad) = %v, want ErrInvalidToken", err)
-	}
-	if ok, _ := c.Connected(ctx); ok || tokens.token != "" {
-		t.Fatalf("rejected token saved: %q", tokens.token)
-	}
-
-	if err := c.Connect(ctx, "good"); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := c.Connected(ctx); !ok || tokens.token != "good" {
-		t.Fatalf("token = %q, want good", tokens.token)
-	}
-
-	if err := c.Connect(ctx, "bad"); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("Connect(bad) = %v, want ErrInvalidToken", err)
-	}
-	if tokens.token != "good" {
-		t.Errorf("rejected token replaced the saved one: %q", tokens.token)
-	}
-
-	if err := c.Disconnect(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := c.Connected(ctx); ok {
-		t.Error("connected after Disconnect")
-	}
-	if _, err := c.Variables(ctx, "env1"); !errors.Is(err, ErrNotConnected) {
-		t.Errorf("Variables after Disconnect = %v, want ErrNotConnected", err)
-	}
+	return c, fake
 }
 
 func TestVariables(t *testing.T) {
 	ctx := context.Background()
-	c, _, fake := newClient("")
-	if _, err := c.Variables(ctx, "env1"); !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("Variables without token = %v, want ErrNotConnected", err)
-	}
-	if fake.opens != 0 {
-		t.Errorf("signed in %d times without a token", fake.opens)
-	}
-
-	c, _, fake = newClient("good")
+	c, fake := newClient()
 	for range 2 {
-		got, err := c.Variables(ctx, "env1")
+		got, err := c.Variables(ctx, "web", "env1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if want := map[string]string{"API_KEY": "k", "DEBUG": "1"}; !maps.Equal(got, want) {
-			t.Errorf("Variables = %v, want %v", got, want)
+			t.Errorf("Variables(web, env1) = %v, want %v", got, want)
 		}
 	}
-	if fake.opens != 1 {
-		t.Errorf("signed in %d times for two reads, want 1", fake.opens)
+	if got, err := c.Variables(ctx, "db", "env2"); err != nil || got["PASSWORD"] != "p" {
+		t.Errorf("Variables(db, env2) = %v, %v; want PASSWORD=p", got, err)
+	}
+	if fake.opens["web"] != 1 || fake.opens["db"] != 1 {
+		t.Errorf("sign-ins = %v, want one per token", fake.opens)
 	}
 
-	fake.readErr = errors.New("network down")
-	if _, err := c.Variables(ctx, "env1"); err == nil {
-		t.Fatal("Variables succeeded on a failed read")
+	if _, err := c.Variables(ctx, "web", "env2"); !errors.Is(err, ErrRead) {
+		t.Errorf("Variables(web, env2) = %v, want ErrRead for an Environment the token cannot read", err)
 	}
-	fake.readErr = nil
-	if _, err := c.Variables(ctx, "env1"); err != nil {
+	if _, err := c.Variables(ctx, "db", "env2"); err != nil {
 		t.Fatal(err)
 	}
-	if fake.opens != 2 {
-		t.Errorf("signed in %d times, want the client rebuilt once after a failed read", fake.opens)
+	if fake.opens["web"] != 1 || fake.opens["db"] != 1 {
+		t.Errorf("sign-ins = %v; a failed read of one token rebuilt another's client", fake.opens)
 	}
 }
 
-func TestVariablesWithRejectedSavedToken(t *testing.T) {
-	c, _, _ := newClient("revoked")
-	if _, err := c.Variables(context.Background(), "env1"); !errors.Is(err, ErrInvalidToken) {
+func TestVariablesRebuildsAfterFailedRead(t *testing.T) {
+	ctx := context.Background()
+	c, fake := newClient()
+	if _, err := c.Variables(ctx, "web", "env1"); err != nil {
+		t.Fatal(err)
+	}
+	fake.readErr = errors.New("network down")
+	if _, err := c.Variables(ctx, "web", "env1"); !errors.Is(err, ErrRead) {
+		t.Fatalf("Variables on a failed read = %v, want ErrRead", err)
+	}
+	fake.readErr = nil
+	if _, err := c.Variables(ctx, "web", "env1"); err != nil {
+		t.Fatal(err)
+	}
+	if fake.opens["web"] != 2 {
+		t.Errorf("signed in %d times, want the client rebuilt once after a failed read", fake.opens["web"])
+	}
+}
+
+func TestVariablesWithRejectedToken(t *testing.T) {
+	c, _ := newClient()
+	if _, err := c.Variables(context.Background(), "revoked", "env1"); !errors.Is(err, ErrInvalidToken) {
 		t.Errorf("Variables = %v, want ErrInvalidToken", err)
 	}
 }

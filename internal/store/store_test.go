@@ -232,7 +232,7 @@ func TestServices(t *testing.T) {
 		t.Errorf("ServicesForPush() = %+v, %v; want only api", push, err)
 	}
 
-	app.Port, app.WaitForCI, app.Name, app.OnePasswordEnvironment = 9090, true, "api2", "env1"
+	app.Port, app.WaitForCI, app.Name = 9090, true, "api2"
 	if err := s.UpdateService(ctx, app); err != nil {
 		t.Fatal(err)
 	}

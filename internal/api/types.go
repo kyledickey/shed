@@ -64,8 +64,14 @@ type serviceJSON struct {
 	LatestDeployment *deploymentJSON      `json:"latestDeployment"`
 	RestoreFence     *restoreFenceJSON    `json:"restoreFence"`
 	CreatedAt        time.Time            `json:"createdAt"`
+	// OnePassword is null if the service links no 1Password Environment.
+	OnePassword *onePasswordLinkJSON `json:"onePassword"`
+}
 
-	OnePasswordEnvironment string `json:"onePasswordEnvironment"`
+// onePasswordLinkJSON is a service's 1Password link, without its token.
+type onePasswordLinkJSON struct {
+	Environment string `json:"environment"`
+	HasToken    bool   `json:"hasToken"`
 }
 
 // restoreFenceJSON is the fence a failed restore left on a service.
@@ -143,8 +149,9 @@ func toService(v control.ServiceView) serviceJSON {
 		Domains:         make([]domainJSON, 0, len(v.Domains)),
 		Volumes:         make([]volumeJSON, 0, len(v.Volumes)),
 		CreatedAt:       v.CreatedAt,
-
-		OnePasswordEnvironment: v.OnePasswordEnvironment,
+	}
+	if l := v.OnePassword; l != nil {
+		out.OnePassword = &onePasswordLinkJSON{Environment: l.Environment, HasToken: l.HasToken}
 	}
 	for _, d := range v.Domains {
 		out.Domains = append(out.Domains, toDomain(d))

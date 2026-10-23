@@ -153,8 +153,8 @@ func run() error {
 		routes = px
 	}
 
-	onePassword := onepassword.New(onePasswordTokens{st}, version, log)
-	onePassword.Preload(ctx)
+	onePassword := onepassword.New(version, log)
+	preloadOnePassword(ctx, st, onePassword, log)
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
@@ -322,24 +322,21 @@ func (s updateSettings) SetSetting(ctx context.Context, key, value string) error
 	return s.st.SetSetting(ctx, key, value)
 }
 
-// onePasswordTokens adapts the store to onepassword.Tokens.
-type onePasswordTokens struct{ st *store.Store }
-
-const onePasswordTokenKey = "onepassword.token"
-
-func (t onePasswordTokens) Token(ctx context.Context) (string, error) {
-	v, err := t.st.Setting(ctx, onePasswordTokenKey)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", nil
+// preloadOnePassword loads the 1Password SDK in the background with the
+// token of the first service whose link has one, so the first deployment that
+// reads an Environment does not wait for it.
+func preloadOnePassword(ctx context.Context, st *store.Store, op *onepassword.Client, log *slog.Logger) {
+	svcs, err := st.AllServices(ctx)
+	if err != nil {
+		log.Warn("load 1Password", "err", err)
+		return
 	}
-	return v, err
-}
-
-func (t onePasswordTokens) SetToken(ctx context.Context, token string) error {
-	if token == "" {
-		return t.st.DeleteSetting(ctx, onePasswordTokenKey)
+	for _, svc := range svcs {
+		if link, err := st.OnePasswordLink(ctx, svc.ID); err == nil && link.Token != "" {
+			op.Preload(ctx, link.Token)
+			return
+		}
 	}
-	return t.st.SetSetting(ctx, onePasswordTokenKey, token)
 }
 
 // backupServices adapts the deployer to backup.Services.

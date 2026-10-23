@@ -50,6 +50,8 @@ type Control interface {
 	SetVariables(ctx context.Context, serviceID string, vars map[string]string) (map[string]string, error)
 	ResolvedVariables(ctx context.Context, serviceID string) (map[string]string, error)
 	OnePasswordVariables(ctx context.Context, serviceID string) (map[string]string, error)
+	LinkOnePassword(ctx context.Context, serviceID, environment, token string) (control.ServiceView, error)
+	UnlinkOnePassword(ctx context.Context, serviceID string) (control.ServiceView, error)
 	CreateDomain(ctx context.Context, serviceID, host string) (store.Domain, bool, error)
 	DeleteDomain(ctx context.Context, id string) (bool, error)
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
@@ -93,10 +95,6 @@ type Control interface {
 
 	Repos(ctx context.Context) ([]github.Repo, error)
 	Branches(ctx context.Context, owner, repo string) ([]string, error)
-
-	OnePassword(ctx context.Context) (control.OnePasswordStatus, error)
-	ConnectOnePassword(ctx context.Context, token string) (control.OnePasswordStatus, error)
-	DisconnectOnePassword(ctx context.Context) error
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -236,9 +234,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/services/{id}/variables", s.putVariables)
 	authed("GET /api/services/{id}/variables/resolved", s.getResolvedVariables)
 	authed("GET /api/services/{id}/variables/onepassword", s.getOnePasswordVariables)
-	authed("GET /api/onepassword", s.getOnePassword)
-	authed("PUT /api/onepassword", s.putOnePassword)
-	authed("DELETE /api/onepassword", s.deleteOnePassword)
+	authed("PUT /api/services/{id}/onepassword", s.putOnePassword)
+	authed("DELETE /api/services/{id}/onepassword", s.deleteOnePassword)
 	authed("POST /api/services/{id}/domains", s.createDomain)
 	authed("DELETE /api/domains/{id}", s.deleteDomain)
 	authed("POST /api/services/{id}/volumes", s.createVolume)

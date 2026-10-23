@@ -19,40 +19,60 @@ type Resolved struct {
 	OnePassword []string
 }
 
-// environments reads 1Password Environments, each at most once. A nil
-// *environments treats every Environment as empty, for callers that must not
-// call 1Password.
+// ErrNoOnePasswordToken is matched by errors for a service whose 1Password
+// link has no service account token, as links made before tokens were per
+// link have none.
+var ErrNoOnePasswordToken = errors.New("deploy: 1Password link has no token")
+
+// noTokenError reports the service whose 1Password link has no token.
+type noTokenError struct{ service string }
+
+func (e noTokenError) Error() string {
+	return "1Password link of service " + e.service + " has no token; add one on its Variables tab"
+}
+
+func (noTokenError) Is(target error) bool { return target == ErrNoOnePasswordToken }
+
+// environments reads 1Password Environments, each at most once per token. A
+// nil *environments treats every Environment as empty, for callers that must
+// not call 1Password.
 type environments struct {
 	client OnePassword
-	read   map[string]map[string]string // by Environment ID
+	read   map[environmentRead]map[string]string
 	logf   func(format string, args ...any)
 }
+
+type environmentRead struct{ environment, token string }
 
 // newEnvironments returns an empty memo of Environment reads. logf, if not
 // nil, reports each read.
 func (d *Deployer) newEnvironments(logf func(format string, args ...any)) *environments {
-	return &environments{client: d.onePassword, read: make(map[string]map[string]string), logf: logf}
+	return &environments{client: d.onePassword, read: make(map[environmentRead]map[string]string), logf: logf}
 }
 
-// variables returns the variables of the Environment id, or none if id is
-// empty.
-func (e *environments) variables(ctx context.Context, id string) (map[string]string, error) {
-	if e == nil || id == "" {
+// variables returns the variables of the Environment that service links, or
+// none if link is nil.
+func (e *environments) variables(ctx context.Context, service string, link *store.OnePasswordLink) (map[string]string, error) {
+	if e == nil || link == nil {
 		return nil, nil
 	}
-	if v, ok := e.read[id]; ok {
+	if link.Token == "" {
+		return nil, noTokenError{service}
+	}
+	key := environmentRead{link.Environment, link.Token}
+	if v, ok := e.read[key]; ok {
 		return v, nil
 	}
-	e.printf("==> Reading 1Password Environment %s", id)
+	e.printf("==> Reading 1Password Environment %s", link.Environment)
 	if e.client == nil {
 		return nil, errors.New("1Password is not available")
 	}
-	v, err := e.client.Variables(ctx, id)
+	v, err := e.client.Variables(ctx, link.Token, link.Environment)
 	if err != nil {
 		return nil, err
 	}
 	e.printf("%d variables", len(v))
-	e.read[id] = v
+	e.read[key] = v
 	return v, nil
 }
 
@@ -74,8 +94,13 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 	if err != nil {
 		return Resolved{}, err
 	}
+	links, err := d.store.OnePasswordLinks(ctx, svc.ProjectID)
+	if err != nil {
+		return Resolved{}, err
+	}
 	type layers struct {
-		environment string
+		name        string
+		link        *store.OnePasswordLink
 		injected    map[string]string
 		own         map[string]string
 		onePassword map[string]string
@@ -96,11 +121,15 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 			commit = sha
 			s.Port = svc.Port
 		}
-		byName[s.Name] = &layers{environment: s.OnePasswordEnvironment, injected: injected(project, s, domains, commit), own: own}
+		l := &layers{name: s.Name, injected: injected(project, s, domains, commit), own: own}
+		if link, ok := links[s.ID]; ok {
+			l.link = &link
+		}
+		byName[s.Name] = l
 	}
 	onePassword := func(l *layers) (map[string]string, error) {
 		if !l.read {
-			v, err := envs.variables(ctx, l.environment)
+			v, err := envs.variables(ctx, l.name, l.link)
 			if err != nil {
 				return nil, err
 			}

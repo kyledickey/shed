@@ -48,6 +48,10 @@ type Store interface {
 	Variables(ctx context.Context, serviceID string) (map[string]string, error)
 	SetVariables(ctx context.Context, serviceID string, vars map[string]string) error
 
+	OnePasswordLink(ctx context.Context, serviceID string) (store.OnePasswordLink, error)
+	SetOnePasswordLink(ctx context.Context, l store.OnePasswordLink) error
+	DeleteOnePasswordLink(ctx context.Context, serviceID string) error
+
 	Domains(ctx context.Context, serviceID string) ([]store.Domain, error)
 	CreateDomain(ctx context.Context, serviceID, host string, generated bool) (store.Domain, error)
 	DeleteDomain(ctx context.Context, id string) error
@@ -152,13 +156,10 @@ type GitHub interface {
 
 var _ GitHub = (*github.Client)(nil)
 
-// OnePassword holds the 1Password service account token and reads
-// Environments with it. *onepassword.Client implements it.
+// OnePassword reads 1Password Environments with a service account token.
+// *onepassword.Client implements it.
 type OnePassword interface {
-	Connected(ctx context.Context) (bool, error)
-	Connect(ctx context.Context, token string) error
-	Disconnect(ctx context.Context) error
-	Variables(ctx context.Context, environmentID string) (map[string]string, error)
+	Variables(ctx context.Context, token, environmentID string) (map[string]string, error)
 }
 
 var _ OnePassword = (*onepassword.Client)(nil)
