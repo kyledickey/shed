@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -96,7 +95,7 @@ func TestOnePasswordVariables(t *testing.T) {
 	if got, err := f.plane.OnePasswordVariables(ctx, svc.ID); err != nil || !maps.Equal(got, op.envs["env1"]) {
 		t.Errorf("linked = %v, %v; want %v", got, err, op.envs["env1"])
 	}
-	op.readErr = errors.New("onepassword: read Environment env1: rate limited")
+	op.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRead)
 	_, err = f.plane.OnePasswordVariables(ctx, svc.ID)
 	wantKind(t, err, ErrUpstream, "rate limited")
 

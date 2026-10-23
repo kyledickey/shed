@@ -17,6 +17,8 @@ var (
 	ErrNotConnected = errors.New("onepassword: 1Password is not connected")
 	// ErrInvalidToken is wrapped by errors for a token 1Password rejects.
 	ErrInvalidToken = errors.New("onepassword: 1Password rejected the token")
+	// ErrRead is wrapped by errors for a failed read of an Environment.
+	ErrRead = errors.New("onepassword: read Environment")
 )
 
 // Tokens persists the service account token. Token returns "" when none is
@@ -116,7 +118,8 @@ func (c *Client) Disconnect(ctx context.Context) error {
 }
 
 // Variables returns the variables of an Environment by name. It returns
-// ErrNotConnected if no token is saved.
+// ErrNotConnected if no token is saved, and an error wrapping ErrRead if
+// 1Password fails the read.
 func (c *Client) Variables(ctx context.Context, environmentID string) (map[string]string, error) {
 	r, err := c.client(ctx)
 	if err != nil {
@@ -129,7 +132,7 @@ func (c *Client) Variables(ctx context.Context, environmentID string) (map[strin
 			c.reader = nil
 		}
 		c.mu.Unlock()
-		return nil, fmt.Errorf("onepassword: read Environment %s: %w", environmentID, err)
+		return nil, fmt.Errorf("%w %s: %w", ErrRead, environmentID, err)
 	}
 	vars := make(map[string]string, len(resp.Variables))
 	for _, v := range resp.Variables {

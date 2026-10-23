@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -86,7 +85,7 @@ func TestOnePasswordVariables(t *testing.T) {
 	if got := f.decode(f.do("GET", target, ""), http.StatusOK); got["API_KEY"] != "k" {
 		t.Errorf("linked = %v, want API_KEY", got)
 	}
-	f.onePassword.readErr = errors.New("onepassword: read Environment env1: rate limited")
+	f.onePassword.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRead)
 	f.decode(f.do("GET", target, ""), http.StatusBadGateway)
 	f.decode(f.do("GET", "/api/services/nope/variables/onepassword", ""), http.StatusNotFound)
 }

@@ -77,6 +77,7 @@ var known = []struct {
 	{backup.ErrNoVolumes, ErrInvalid, "service has no volumes to back up"},
 	{backup.ErrBusy, ErrConflict, "a backup or restore is already in progress"},
 	{onepassword.ErrNotConnected, ErrConflict, "1Password is not connected"},
+	{onepassword.ErrRead, ErrUpstream, ""},
 	{update.ErrUnsupported, ErrConflict, "this build of shed cannot update itself"},
 	{update.ErrNoUpdate, ErrConflict, "there is no newer release"},
 	{update.ErrBusy, ErrConflict, "an update check, download, or install is already in progress"},

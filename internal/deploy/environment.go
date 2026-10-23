@@ -49,7 +49,7 @@ func (e *environments) variables(ctx context.Context, id string) (map[string]str
 	}
 	v, err := e.client.Variables(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("read 1Password Environment %s: %w", id, err)
+		return nil, err
 	}
 	e.printf("%d variables", len(v))
 	e.read[id] = v

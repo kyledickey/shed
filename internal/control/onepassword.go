@@ -62,13 +62,5 @@ func (p *Plane) OnePasswordVariables(ctx context.Context, serviceID string) (map
 	if svc.OnePasswordEnvironment == "" {
 		return map[string]string{}, nil
 	}
-	vars, err := p.onePassword.Variables(ctx, svc.OnePasswordEnvironment)
-	switch {
-	case err == nil:
-		return vars, nil
-	case errors.Is(err, onepassword.ErrNotConnected), ctx.Err() != nil:
-		return nil, err
-	default:
-		return nil, errorf(ErrUpstream, "%s", strings.TrimPrefix(err.Error(), "onepassword: "))
-	}
+	return p.onePassword.Variables(ctx, svc.OnePasswordEnvironment)
 }
