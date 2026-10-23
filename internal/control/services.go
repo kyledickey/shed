@@ -161,6 +161,9 @@ type ServicePatch struct {
 	MemoryLimit     *int64
 	AutoDeploy      *bool
 	WaitForCI       *bool
+	// OnePasswordEnvironment is a 1Password Environment ID, or "" to unlink
+	// the service's Environment.
+	OnePasswordEnvironment *string
 }
 
 // UpdateService saves settings of a service. They apply from its next
@@ -183,6 +186,9 @@ func (p *Plane) UpdateService(ctx context.Context, id string, patch ServicePatch
 	set(&svc.MemoryLimit, patch.MemoryLimit)
 	set(&svc.AutoDeploy, patch.AutoDeploy)
 	set(&svc.WaitForCI, patch.WaitForCI)
+	if patch.OnePasswordEnvironment != nil {
+		svc.OnePasswordEnvironment = strings.TrimSpace(*patch.OnePasswordEnvironment)
+	}
 	if err := validateService(svc); err != nil {
 		return ServiceView{}, err
 	}
@@ -223,6 +229,8 @@ func validateService(svc store.Service) error {
 		return errorf(ErrInvalid, "root directory must be a relative path inside the repository")
 	case !relative(svc.DockerfilePath):
 		return errorf(ErrInvalid, "Dockerfile path must be a relative path inside the root directory")
+	case svc.OnePasswordEnvironment != "" && !environmentID.MatchString(svc.OnePasswordEnvironment):
+		return errorf(ErrInvalid, "1Password Environment ID must be up to 64 lowercase letters and digits")
 	}
 	return nil
 }

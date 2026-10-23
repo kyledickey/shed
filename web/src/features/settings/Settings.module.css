@@ -142,3 +142,23 @@
     align-items: stretch;
   }
 }
+
+.intro {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.docs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}

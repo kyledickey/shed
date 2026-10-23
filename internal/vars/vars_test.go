@@ -1,13 +1,59 @@
 package vars
 
 import (
+	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 )
 
 type vs = map[string]string
+
+// resolve resolves every variable of self, looking values up in all.
+func resolve(self string, all map[string]vs) (map[string]string, error) {
+	return Resolve(self, slices.Collect(maps.Keys(all[self])), func(service, key string) (string, bool, error) {
+		v, ok := all[service][key]
+		return v, ok, nil
+	})
+}
+
+func TestResolveLookupError(t *testing.T) {
+	boom := errors.New("boom")
+	_, err := Resolve("web", []string{"A"}, func(service, key string) (string, bool, error) {
+		if service == "db" {
+			return "", false, boom
+		}
+		return "${{ db.URL }}", true, nil
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("Resolve() error = %v, want %v", err, boom)
+	}
+}
+
+func TestResolveLooksUpOnlyReferences(t *testing.T) {
+	all := map[string]vs{
+		"web":   {"A": "${{ db.URL }}", "B": "b"},
+		"db":    {"URL": "pg://${{ HOST }}", "HOST": "db"},
+		"cache": {"URL": "redis://cache"},
+	}
+	var looked []string
+	got, err := Resolve("web", []string{"B", "A"}, func(service, key string) (string, bool, error) {
+		looked = append(looked, service+"."+key)
+		v, ok := all[service][key]
+		return v, ok, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (vs{"A": "pg://db", "B": "b"}); !maps.Equal(got, want) {
+		t.Errorf("Resolve() = %q, want %q", got, want)
+	}
+	if want := []string{"web.A", "db.URL", "db.HOST", "web.B"}; !slices.Equal(looked, want) {
+		t.Errorf("looked up %q, want %q", looked, want)
+	}
+}
 
 func TestResolve(t *testing.T) {
 	tests := []struct {
@@ -136,7 +182,7 @@ func TestResolve(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Resolve(tt.self, tt.all)
+			got, err := resolve(tt.self, tt.all)
 			if err != nil {
 				t.Fatalf("Resolve() error = %v", err)
 			}
@@ -149,7 +195,7 @@ func TestResolve(t *testing.T) {
 
 func TestResolveDoesNotMutateInput(t *testing.T) {
 	all := map[string]vs{"web": {"A": "x", "B": "${{A}}"}}
-	if _, err := Resolve("web", all); err != nil {
+	if _, err := resolve("web", all); err != nil {
 		t.Fatal(err)
 	}
 	if all["web"]["B"] != "${{A}}" {
@@ -197,7 +243,7 @@ func TestResolveCycle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Resolve(tt.self, tt.all)
+			got, err := resolve(tt.self, tt.all)
 			if err == nil {
 				t.Fatalf("Resolve() = %q, want error", got)
 			}
@@ -236,12 +282,12 @@ func TestResolveLimits(t *testing.T) {
 	}{"total", total})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := Resolve("web", map[string]vs{"web": tt.values}); err == nil {
+			if _, err := resolve("web", map[string]vs{"web": tt.values}); err == nil {
 				t.Fatal("Resolve accepted oversized input")
 			}
 		})
 	}
-	if _, err := Resolve("web", map[string]vs{"web": {"A": strings.Repeat("x", maxValueBytes)}}); err != nil {
+	if _, err := resolve("web", map[string]vs{"web": {"A": strings.Repeat("x", maxValueBytes)}}); err != nil {
 		t.Fatal(err)
 	}
 }

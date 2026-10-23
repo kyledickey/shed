@@ -17,67 +17,10 @@ import (
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
-	"github.com/kyledickey/shed/internal/vars"
 )
 
 // keepImages is how many built images are kept per service.
 const keepImages = 5
-
-// environment returns the resolved variables of svc: its own variables over
-// the ones shed injects, with references to other services of the project
-// expanded. sha is the commit being deployed. PORT comes from svc.Port.
-func (d *Deployer) environment(ctx context.Context, svc store.Service, project store.Project, sha string) (map[string]string, error) {
-	services, err := d.store.Services(ctx, svc.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	all := make(map[string]map[string]string, len(services))
-	for _, s := range services {
-		own, err := d.store.Variables(ctx, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		domains, err := d.store.Domains(ctx, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		commit := ""
-		if s.ID == svc.ID {
-			commit = sha
-			s.Port = svc.Port
-		}
-		merged := injected(project, s, domains, commit)
-		maps.Copy(merged, own)
-		all[s.Name] = merged
-	}
-	env, err := vars.Resolve(svc.Name, all)
-	if err != nil {
-		return nil, fmt.Errorf("deploy: resolve variables: %w", err)
-	}
-	return env, nil
-}
-
-// ResolveVariables returns the variables of a service with references
-// expanded, as its next deployment would see them. SHED_GIT_COMMIT_SHA is the
-// commit of the active deployment, if any.
-func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error) {
-	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil {
-		return nil, err
-	}
-	project, err := d.store.Project(ctx, svc.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	sha := ""
-	switch dep, err := d.store.ActiveDeployment(ctx, serviceID); {
-	case err == nil:
-		sha = dep.CommitSHA
-	case !errors.Is(err, store.ErrNotFound):
-		return nil, err
-	}
-	return d.environment(ctx, svc, project, sha)
-}
 
 // injected returns the variables shed provides to every service.
 func injected(project store.Project, svc store.Service, domains []store.Domain, sha string) map[string]string {
@@ -564,15 +507,15 @@ func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep s
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+		r, err := d.environment(ctx, svc, project, dep.CommitSHA, nil)
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		keys, err := d.secretKeys(ctx, svc, env)
+		keys, err := d.secretKeys(ctx, svc, r)
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		return runtimeOf(svc, env, keys, vols), nil
+		return runtimeOf(svc, r.Env, keys, vols), nil
 	}
 	rt := *dep.Runtime
 	rt.Volumes = nil

@@ -99,7 +99,7 @@ func (s *Server) addTools() {
 		"Summarizes the server's CPU, memory, disk use, network, and disk I/O over a time range: the latest, average, and maximum of each, and its capacity. CPU is in percent of one core, memory and disk use in bytes, and the rest in bytes per second.",
 		s.hostMetrics, rangeEnum)
 	add(s, "list_variables", "List variable names",
-		"Lists the names of the variables a service's next deployment would get: its own, marked reference when they use ${{ }} references, and the ones shed injects, marked injected. Values are never returned.",
+		"Lists the names of the variables a service's next deployment would get: its own, marked reference when they use ${{ }} references; the ones from its linked 1Password Environment, marked onepassword; and the ones shed injects, marked injected. Own variables override 1Password ones, which override injected ones. Values are never returned.",
 		s.listVariables)
 	add(s, "list_backups", "List backups",
 		"Returns a service's backup policy (schedule, retention, next run), its newest backups with status and errors, and its latest restore.",

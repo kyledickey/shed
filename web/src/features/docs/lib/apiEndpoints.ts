@@ -122,7 +122,14 @@ export const endpointGroups: EndpointGroup[] = [
         method: "GET",
         path: "/api/services/{id}/variables/resolved",
         response: "Record<string,string>",
-        notes: "References expanded, injected variables included.",
+        notes: "References expanded, injected and 1Password variables included.",
+      },
+      {
+        method: "GET",
+        path: "/api/services/{id}/variables/onepassword",
+        response: "Record<string,string>",
+        notes:
+          "The linked 1Password Environment. {} if none; 409 if not connected; 502 if 1Password fails.",
       },
       {
         method: "POST",
@@ -269,6 +276,20 @@ export const endpointGroups: EndpointGroup[] = [
         response: "{ identity }",
         notes: "The age secret key. 404 if none.",
       },
+    ],
+  },
+  {
+    title: "1Password",
+    endpoints: [
+      { method: "GET", path: "/api/onepassword", response: "OnePassword" },
+      {
+        method: "PUT",
+        path: "/api/onepassword",
+        body: "{token}",
+        response: "OnePassword",
+        notes: "Checks the token with 1Password first. 400 if rejected; nothing is saved.",
+      },
+      { method: "DELETE", path: "/api/onepassword", response: "204", notes: "Forgets the token." },
     ],
   },
   {

@@ -84,6 +84,12 @@ export const docTopics = {
     section: "injected-variables",
     summary: "PORT and SHED_* variables are injected into every deployment.",
   },
+  onePassword: {
+    page: "onepassword",
+    section: "how-it-works",
+    summary:
+      "Link a 1Password Environment to a service; its variables are read when a deployment starts.",
+  },
   volumes: {
     page: "resources",
     section: "volumes",

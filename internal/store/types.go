@@ -52,8 +52,11 @@ type Service struct {
 	// Stopped reports whether the user stopped the service. Its active
 	// deployment is kept, but its container is not run until it is started or
 	// a new deployment goes live.
-	Stopped   bool
-	CreatedAt time.Time
+	Stopped bool
+	// OnePasswordEnvironment is the ID of the 1Password Environment the
+	// service reads variables from; empty means none.
+	OnePasswordEnvironment string
+	CreatedAt              time.Time
 }
 
 // Volume is persistent storage mounted into a service's container.

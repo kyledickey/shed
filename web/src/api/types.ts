@@ -55,6 +55,8 @@ export type Service = {
   memoryLimit: number;
   autoDeploy: boolean;
   waitForCi: boolean;
+  /** Linked 1Password Environment ID; "" = none. */
+  onePasswordEnvironment: string;
   status: ServiceStatus;
   privateHost: string;
   domains: Domain[];
@@ -99,6 +101,7 @@ export type ServicePatch = Partial<
     | "memoryLimit"
     | "autoDeploy"
     | "waitForCi"
+    | "onePasswordEnvironment"
   >
 >;
 
@@ -124,6 +127,7 @@ export type Deployment = {
 export type Domain = { id: string; host: string; generated: boolean; url: string };
 export type Volume = { id: string; mountPath: string; createdAt: string };
 export type Repo = { fullName: string; defaultBranch: string; private: boolean };
+export type OnePassword = { connected: boolean };
 
 export type Variables = Record<string, string>;
 

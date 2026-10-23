@@ -53,6 +53,24 @@ shed adds these to every service. A stored variable with the same name wins.
 
 `${{ web.SHED_GIT_COMMIT_SHA }}` used from another service expands to nothing.
 
+## 1Password Environments
+
+A service can link one 1Password Environment (`onePasswordEnvironment` on the
+service). Its variables sit between the injected ones and the service's own:
+injected < 1Password < stored, later winning. References reach 1Password keys
+too, including `${{ api.KEY }}` from another service. `list_variables` marks
+names that come from 1Password with `onepassword`.
+
+1Password is read when a deployment starts (including redeploys and
+rollbacks), never on restart or crash recovery. A change in 1Password reaches
+the container only with the next deployment, so a rotated secret needs a
+redeploy. A failed read (no token connected, revoked token, no access to the
+Environment, rate limit) fails the deployment with the 1Password error in the
+build log and on the deployment; the old container keeps serving. Fixing it is
+a dashboard action: connect a token in Settings, or grant the service account
+read access to the Environment in 1Password. Values from 1Password are masked
+in logs like stored ones.
+
 ## Database variables
 
 Creating a database writes its variables. Passwords are 24 random

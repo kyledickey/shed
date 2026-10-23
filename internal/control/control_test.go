@@ -32,7 +32,7 @@ type fakeDeployer struct {
 	onDelete   func(id string) // called by them with "delete <id>"
 	available  map[string]bool // returned by AvailableImages
 	imagesErr  error           // returned by AvailableImages
-	resolved   map[string]string
+	resolved   deploy.Resolved
 	resolveErr error
 	runtimeLog string // written by RuntimeLogs
 	follow     []bool // the follow argument of each RuntimeLogs call
@@ -143,7 +143,7 @@ func (f *fakeDeployer) RuntimeLogs(_ context.Context, _ string, _ int, follow bo
 	return err
 }
 
-func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
+func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
 	return f.resolved, f.resolveErr
 }
 

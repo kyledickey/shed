@@ -205,7 +205,7 @@ func TestVariableNames(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	f.deployer.resolved = map[string]string{
+	f.deployer.resolved.Env = map[string]string{
 		"API_KEY": "secret-value", "DATABASE_URL": "postgres://u:p@db/x", "PORT": "3000",
 		"SHED_SERVICE_NAME": "web", "SHED_PRIVATE_DOMAIN": "web",
 	}
@@ -224,7 +224,7 @@ func TestVariableNames(t *testing.T) {
 		t.Errorf("VariableNames() = %+v, want %+v", got, want)
 	}
 
-	f.deployer.resolved, f.deployer.resolveErr = nil, errors.New("vars: reference cycle: web.A -> web.A")
+	f.deployer.resolved, f.deployer.resolveErr = deploy.Resolved{}, errors.New("vars: reference cycle: web.A -> web.A")
 	got, err = f.plane.VariableNames(ctx, svc.ID)
 	if err != nil {
 		t.Fatal(err)

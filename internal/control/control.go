@@ -25,6 +25,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 )
@@ -88,7 +89,7 @@ type Deployer interface {
 	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
 	BuildLog(ctx context.Context, deploymentID string, n int) ([]string, error)
 	RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error
-	ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error)
+	ResolveVariables(ctx context.Context, serviceID string) (deploy.Resolved, error)
 }
 
 var _ Deployer = (*deploy.Deployer)(nil)
@@ -151,6 +152,17 @@ type GitHub interface {
 
 var _ GitHub = (*github.Client)(nil)
 
+// OnePassword holds the 1Password service account token and reads
+// Environments with it. *onepassword.Client implements it.
+type OnePassword interface {
+	Connected(ctx context.Context) (bool, error)
+	Connect(ctx context.Context, token string) error
+	Disconnect(ctx context.Context) error
+	Variables(ctx context.Context, environmentID string) (map[string]string, error)
+}
+
+var _ OnePassword = (*onepassword.Client)(nil)
+
 // Config configures a Plane.
 type Config struct {
 	Store    Store
@@ -161,7 +173,8 @@ type Config struct {
 	Updates  Updates
 	// GitHub returns the GitHub client, or false until the GitHub App is
 	// configured.
-	GitHub func() (GitHub, bool)
+	GitHub      func() (GitHub, bool)
+	OnePassword OnePassword
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -181,6 +194,7 @@ type Plane struct {
 	logs          Logs
 	updates       Updates
 	github        func() (GitHub, bool)
+	onePassword   OnePassword
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -195,18 +209,19 @@ type Plane struct {
 // New returns a Plane.
 func New(cfg Config) *Plane {
 	p := &Plane{
-		store:      cfg.Store,
-		deployer:   cfg.Deployer,
-		backups:    cfg.Backups,
-		metrics:    cfg.Metrics,
-		logs:       cfg.Logs,
-		updates:    cfg.Updates,
-		github:     cfg.GitHub,
-		baseDomain: strings.ToLower(cfg.BaseDomain),
-		log:        cfg.Log,
-		routes:     newRouteState(),
-		pushRetry:  pushRetryInterval,
-		pushErrs:   make(map[string]string),
+		store:       cfg.Store,
+		deployer:    cfg.Deployer,
+		backups:     cfg.Backups,
+		metrics:     cfg.Metrics,
+		logs:        cfg.Logs,
+		updates:     cfg.Updates,
+		github:      cfg.GitHub,
+		onePassword: cfg.OnePassword,
+		baseDomain:  strings.ToLower(cfg.BaseDomain),
+		log:         cfg.Log,
+		routes:      newRouteState(),
+		pushRetry:   pushRetryInterval,
+		pushErrs:    make(map[string]string),
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil {
 		p.dashboardHost = strings.TrimSuffix(u.Hostname(), ".")

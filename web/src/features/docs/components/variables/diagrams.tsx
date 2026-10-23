@@ -72,18 +72,19 @@ export function MergeDiagram() {
     <Diagram
       width={800}
       height={96}
-      label="Injected variables, stored variables, resolution, container environment"
+      label="Injected variables, 1Password Environment, stored variables, resolution, container environment"
     >
-      <Node x={0} y={20} w={170} title="Injected by shed" sub="SHED_*, PORT" tone="accent" />
-      <Node x={210} y={20} w={170} title="Your variables" sub="win on the same key" />
-      <Node x={420} y={20} w={170} title="Resolve references" sub="per owning service" emphasis />
-      <Node x={630} y={20} w={170} title="Container env" sub="KEY=value, sorted" tone="grape" />
-      {[170, 380, 590].map((x) => (
+      <Node x={0} y={20} w={136} title="Injected by shed" sub="SHED_*, PORT" tone="accent" />
+      <Node x={166} y={20} w={136} title="1Password" sub="if linked" />
+      <Node x={332} y={20} w={136} title="Your variables" sub="win on the same key" />
+      <Node x={498} y={20} w={136} title="Resolve references" sub="per owning service" emphasis />
+      <Node x={664} y={20} w={136} title="Container env" sub="KEY=value, sorted" tone="grape" />
+      {[136, 302, 468, 634].map((x) => (
         <Edge
           key={x}
           points={[
             [x, 46],
-            [x + 40, 46],
+            [x + 30, 46],
           ]}
         />
       ))}

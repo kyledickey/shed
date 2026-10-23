@@ -74,6 +74,11 @@
   margin-left: auto;
 }
 
+/* Read-only rows keep reveal and copy in line with the editable rows above. */
+.actions[data-readonly] {
+  padding-right: calc(2 * var(--control-h-sm));
+}
+
 .errors {
   margin: 0;
   padding: var(--space-3) var(--space-4);
@@ -130,4 +135,28 @@
   border-top: 1px solid var(--line-soft);
   color: var(--ink-3);
   font-size: var(--text-xs);
+}
+
+.link {
+  color: var(--accent-ink);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.mark {
+  display: inline-flex;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
+.status {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+
+  &[data-tone="danger"] {
+    color: var(--danger-ink);
+  }
 }

@@ -117,8 +117,8 @@ func (f *fakeDeployer) ApplyRoutes(context.Context) error {
 func (f *fakeDeployer) DeleteService(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteProject(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { return nil }
-func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
+	return deploy.Resolved{Env: map[string]string{}}, nil
 }
 func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, bool, io.Writer) error {
 	return deploy.ErrNoContainer
@@ -175,17 +175,18 @@ func (fakeLogs) Follow(_ context.Context, emit func(string)) {
 }
 
 type fixture struct {
-	t        *testing.T
-	st       *store.Store
-	deployer *fakeDeployer
-	backups  *fakeBackups
-	metrics  *fakeMetrics
-	updates  *fakeUpdates
-	restarts int
-	github   *GitHubHolder
-	server   *Server
-	handler  http.Handler
-	cookie   *http.Cookie
+	t           *testing.T
+	st          *store.Store
+	deployer    *fakeDeployer
+	backups     *fakeBackups
+	metrics     *fakeMetrics
+	updates     *fakeUpdates
+	onePassword *fakeOnePassword
+	restarts    int
+	github      *GitHubHolder
+	server      *Server
+	handler     http.Handler
+	cookie      *http.Cookie
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -200,13 +201,15 @@ func newFixture(t *testing.T) *fixture {
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
+	f.onePassword = &fakeOnePassword{}
 	plane := control.New(control.Config{
-		Store:    st,
-		Deployer: f.deployer,
-		Backups:  f.backups,
-		Metrics:  f.metrics,
-		Logs:     fakeLogs{},
-		Updates:  f.updates,
+		Store:       st,
+		Deployer:    f.deployer,
+		Backups:     f.backups,
+		Metrics:     f.metrics,
+		Logs:        fakeLogs{},
+		Updates:     f.updates,
+		OnePassword: f.onePassword,
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true

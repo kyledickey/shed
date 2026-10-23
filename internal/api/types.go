@@ -64,6 +64,8 @@ type serviceJSON struct {
 	LatestDeployment *deploymentJSON      `json:"latestDeployment"`
 	RestoreFence     *restoreFenceJSON    `json:"restoreFence"`
 	CreatedAt        time.Time            `json:"createdAt"`
+
+	OnePasswordEnvironment string `json:"onePasswordEnvironment"`
 }
 
 // restoreFenceJSON is the fence a failed restore left on a service.
@@ -141,6 +143,8 @@ func toService(v control.ServiceView) serviceJSON {
 		Domains:         make([]domainJSON, 0, len(v.Domains)),
 		Volumes:         make([]volumeJSON, 0, len(v.Volumes)),
 		CreatedAt:       v.CreatedAt,
+
+		OnePasswordEnvironment: v.OnePasswordEnvironment,
 	}
 	for _, d := range v.Domains {
 		out.Domains = append(out.Domains, toDomain(d))

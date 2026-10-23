@@ -56,6 +56,8 @@ type serviceOut struct {
 	MemoryLimit     int64   `json:"memoryLimit,omitempty" jsonschema:"memory limit in bytes; absent for unlimited"`
 	AutoDeploy      bool    `json:"autoDeploy,omitempty" jsonschema:"whether pushes to the branch deploy"`
 	WaitForCI       bool    `json:"waitForCi,omitempty" jsonschema:"whether push deployments wait for GitHub checks to pass"`
+
+	OnePasswordEnvironment string `json:"onePasswordEnvironment,omitempty" jsonschema:"ID of the 1Password Environment the service reads variables from; absent for none"`
 	// Stopped is the user's choice; Status says whether the container runs.
 	Stopped          bool             `json:"stopped,omitempty" jsonschema:"whether the user stopped the service"`
 	Domains          []domainOut      `json:"domains,omitempty"`
@@ -104,13 +106,14 @@ type deploymentOut struct {
 
 type variablesOut struct {
 	Variables    []variableOut `json:"variables"`
-	ResolveError string        `json:"resolveError,omitempty" jsonschema:"why the variables do not resolve; injected names are then missing"`
+	ResolveError string        `json:"resolveError,omitempty" jsonschema:"why the variables do not resolve; injected and 1Password names are then missing"`
 }
 
 type variableOut struct {
-	Name      string `json:"name"`
-	Injected  bool   `json:"injected,omitempty" jsonschema:"provided by shed rather than set by the user"`
-	Reference bool   `json:"reference,omitempty" jsonschema:"the value refers to other variables with ${{ }}"`
+	Name        string `json:"name"`
+	Injected    bool   `json:"injected,omitempty" jsonschema:"provided by shed rather than set by the user"`
+	Reference   bool   `json:"reference,omitempty" jsonschema:"the value refers to other variables with ${{ }}"`
+	OnePassword bool   `json:"onepassword,omitempty" jsonschema:"from the service's 1Password Environment, not overridden by its own variables"`
 }
 
 type backupsOut struct {
@@ -269,6 +272,8 @@ func toService(v control.ServiceView) serviceOut {
 		WaitForCI:       v.WaitForCI,
 		Stopped:         v.Stopped,
 		CreatedAt:       v.CreatedAt,
+
+		OnePasswordEnvironment: v.OnePasswordEnvironment,
 	}
 	for _, d := range v.Domains {
 		out.Domains = append(out.Domains, domainOut{Host: d.Host, Generated: d.Generated})
@@ -307,7 +312,7 @@ func toDeployment(d control.DeploymentView) deploymentOut {
 func toVariables(v control.VariableNames) variablesOut {
 	out := variablesOut{Variables: make([]variableOut, 0, len(v.Variables)), ResolveError: v.ResolveError}
 	for _, n := range v.Variables {
-		out.Variables = append(out.Variables, variableOut{Name: n.Name, Injected: n.Injected, Reference: n.Reference})
+		out.Variables = append(out.Variables, variableOut{Name: n.Name, Injected: n.Injected, Reference: n.Reference, OnePassword: n.OnePassword})
 	}
 	return out
 }
