@@ -3,7 +3,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { onePasswordQuery } from "../../../../../../api/onepassword";
 import { serviceQuery, variablesQuery } from "../../../../../../api/services";
 import { Stack } from "../../../../../../components/Layout";
-import { OnePasswordVars } from "../../../../../../features/variables/OnePasswordVars";
 import { ProvidedVars } from "../../../../../../features/variables/ProvidedVars";
 import { VariablesEditor } from "../../../../../../features/variables/VariablesEditor";
 
@@ -23,8 +22,12 @@ function VariablesPage() {
   const { data: onePassword } = useSuspenseQuery(onePasswordQuery);
   return (
     <Stack gap={4}>
-      <VariablesEditor key={serviceId} serviceId={serviceId} variables={variables} />
-      <OnePasswordVars service={service} variables={variables} connected={onePassword.connected} />
+      <VariablesEditor
+        key={serviceId}
+        service={service}
+        variables={variables}
+        connected={onePassword.connected}
+      />
       <ProvidedVars service={service} />
     </Stack>
   );
