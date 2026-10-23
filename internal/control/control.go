@@ -159,7 +159,7 @@ var _ GitHub = (*github.Client)(nil)
 // OnePassword reads 1Password Environments with a service account token.
 // *onepassword.Client implements it.
 type OnePassword interface {
-	Variables(ctx context.Context, token, environmentID string) (map[string]string, error)
+	EnvironmentVariables(ctx context.Context, token, environmentID string) (map[string]string, error)
 }
 
 var _ OnePassword = (*onepassword.Client)(nil)

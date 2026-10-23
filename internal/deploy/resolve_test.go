@@ -61,7 +61,7 @@ type fakeOnePassword struct {
 	err   error
 }
 
-func (f *fakeOnePassword) Variables(_ context.Context, token, id string) (map[string]string, error) {
+func (f *fakeOnePassword) EnvironmentVariables(_ context.Context, token, id string) (map[string]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads[id]++

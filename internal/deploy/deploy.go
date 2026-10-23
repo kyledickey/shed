@@ -74,7 +74,7 @@ type GitHub interface {
 // OnePassword reads 1Password Environments, each with the service account
 // token of the link that names it. *onepassword.Client implements it.
 type OnePassword interface {
-	Variables(ctx context.Context, token, environmentID string) (map[string]string, error)
+	EnvironmentVariables(ctx context.Context, token, environmentID string) (map[string]string, error)
 }
 
 // Config configures a Deployer.

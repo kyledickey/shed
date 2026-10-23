@@ -44,7 +44,7 @@ func (p *Plane) LinkOnePassword(ctx context.Context, serviceID, environment, tok
 	if token == "" {
 		return ServiceView{}, errorf(ErrInvalid, "a service account token is required")
 	}
-	if _, err := p.onePassword.Variables(ctx, token, environment); err != nil {
+	if _, err := p.onePassword.EnvironmentVariables(ctx, token, environment); err != nil {
 		if ctx.Err() != nil {
 			return ServiceView{}, ctx.Err()
 		}
@@ -84,7 +84,7 @@ func (p *Plane) OnePasswordVariables(ctx context.Context, serviceID string) (map
 	case link.Token == "":
 		return nil, errorf(ErrConflict, "this service's 1Password link has no service account token; add one on its Variables tab")
 	}
-	return p.onePassword.Variables(ctx, link.Token, link.Environment)
+	return p.onePassword.EnvironmentVariables(ctx, link.Token, link.Environment)
 }
 
 // onePasswordLink returns the 1Password link of a service, or nil if it has

@@ -67,7 +67,7 @@ func (e *environments) variables(ctx context.Context, service string, link *stor
 	if e.client == nil {
 		return nil, errors.New("1Password is not available")
 	}
-	v, err := e.client.Variables(ctx, link.Token, link.Environment)
+	v, err := e.client.EnvironmentVariables(ctx, link.Token, link.Environment)
 	if err != nil {
 		return nil, err
 	}

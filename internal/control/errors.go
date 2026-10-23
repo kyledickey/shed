@@ -78,7 +78,7 @@ var known = []struct {
 	{backup.ErrBusy, ErrConflict, "a backup or restore is already in progress"},
 	{deploy.ErrNoOnePasswordToken, ErrConflict, ""},
 	{onepassword.ErrInvalidToken, ErrUpstream, ""},
-	{onepassword.ErrRead, ErrUpstream, ""},
+	{onepassword.ErrRequest, ErrUpstream, ""},
 	{update.ErrUnsupported, ErrConflict, "this build of shed cannot update itself"},
 	{update.ErrNoUpdate, ErrConflict, "there is no newer release"},
 	{update.ErrBusy, ErrConflict, "an update check, download, or install is already in progress"},

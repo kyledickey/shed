@@ -21,7 +21,7 @@ type fakeOnePassword struct {
 	readErr error
 }
 
-func (f *fakeOnePassword) Variables(_ context.Context, token, id string) (map[string]string, error) {
+func (f *fakeOnePassword) EnvironmentVariables(_ context.Context, token, id string) (map[string]string, error) {
 	f.reads++
 	if f.readErr != nil {
 		return nil, f.readErr
@@ -30,7 +30,7 @@ func (f *fakeOnePassword) Variables(_ context.Context, token, id string) (map[st
 		return nil, fmt.Errorf("%w: invalid service account token", onepassword.ErrInvalidToken)
 	}
 	if token != id+"-token" {
-		return nil, fmt.Errorf("%w %s: 403 forbidden", onepassword.ErrRead, id)
+		return nil, fmt.Errorf("%w: read Environment %s: 403 forbidden", onepassword.ErrRequest, id)
 	}
 	return f.envs[id], nil
 }
@@ -60,7 +60,7 @@ func TestLinkOnePassword(t *testing.T) {
 		{strings.Repeat("a", 65), "env1-token", "1Password Environment ID"},
 		{"env1", "  ", "a service account token is required"},
 		{"env1", "bad", "1Password rejected the token: invalid service account token"},
-		{"env1", "env2-token", "1Password could not read Environment env1: 403 forbidden"},
+		{"env1", "env2-token", "read Environment env1: 403 forbidden"},
 	} {
 		_, err := f.plane.LinkOnePassword(ctx, svc.ID, tt.env, tt.token)
 		wantKind(t, err, ErrInvalid, tt.want)
@@ -78,7 +78,7 @@ func TestLinkOnePassword(t *testing.T) {
 	// A blank token keeps the saved one, which is checked against the new
 	// Environment.
 	_, err = f.plane.LinkOnePassword(ctx, svc.ID, "env2", "")
-	wantKind(t, err, ErrInvalid, "could not read Environment env2")
+	wantKind(t, err, ErrInvalid, "read Environment env2")
 	if l, _ := f.st.OnePasswordLink(ctx, svc.ID); l.Environment != "env1" || l.Token != "env1-token" {
 		t.Errorf("link after a failed relink = %+v, want env1 unchanged", l)
 	}
@@ -141,7 +141,7 @@ func TestOnePasswordVariables(t *testing.T) {
 	if got, err := f.plane.OnePasswordVariables(ctx, svc.ID); err != nil || !maps.Equal(got, op.envs["env1"]) {
 		t.Errorf("linked = %v, %v; want %v", got, err, op.envs["env1"])
 	}
-	op.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRead)
+	op.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRequest)
 	_, err = f.plane.OnePasswordVariables(ctx, svc.ID)
 	wantKind(t, err, ErrUpstream, "rate limited")
 	op.readErr = fmt.Errorf("%w: revoked", onepassword.ErrInvalidToken)

@@ -16,7 +16,7 @@ type fakeOnePassword struct {
 	readErr error
 }
 
-func (f *fakeOnePassword) Variables(_ context.Context, token, id string) (map[string]string, error) {
+func (f *fakeOnePassword) EnvironmentVariables(_ context.Context, token, id string) (map[string]string, error) {
 	if f.readErr != nil {
 		return nil, f.readErr
 	}
@@ -80,7 +80,7 @@ func TestOnePasswordVariables(t *testing.T) {
 	if got := f.decode(f.do("GET", target, ""), http.StatusOK); got["API_KEY"] != "k" {
 		t.Errorf("linked = %v, want API_KEY", got)
 	}
-	f.onePassword.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRead)
+	f.onePassword.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRequest)
 	f.decode(f.do("GET", target, ""), http.StatusBadGateway)
 	f.decode(f.do("GET", "/api/services/nope/variables/onepassword", ""), http.StatusNotFound)
 }
