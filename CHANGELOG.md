@@ -3,6 +3,20 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.5 - 2026-10-23
+
+- Each service's 1Password link has its own service account token, so a
+  token can read only that service's Environment. 1Password can't change a
+  service account's access after it's created, so create one per
+  Environment and paste its token with the Environment ID from the
+  1Password button on the Variables tab. shed reads the Environment before
+  saving the link, so a wrong ID or token fails right away. The 1Password
+  card in Settings is gone.
+- Services linked in v0.2.4 keep their Environment but lose the shared
+  token. Their deploys fail until you add a token on the Variables tab.
+- Fixed deploys failing with "invalid client id" a while after 1Password
+  was connected.
+
 ## v0.2.4 - 2026-10-23
 
 - Services can load variables from a 1Password Environment. Connect a
