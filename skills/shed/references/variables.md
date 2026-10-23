@@ -55,22 +55,22 @@ shed adds these to every service. A stored variable with the same name wins.
 
 ## 1Password
 
-shed can keep every service's variables in a 1Password vault named `shed`
-instead of its database, connected once in the dashboard's settings with a
-service account token. Each service has one item, titled
-`<project> / <service>`, whose concealed fields in the `Variables` section are
-its variables. Nothing else changes: references, injected variables, and
-`list_variables` work the same.
+When 1Password is connected (Settings > 1Password in the dashboard), every
+service's variables live in a vault named `shed` in the user's 1Password
+account instead of on the server: one item per service, titled
+`<project> / <service>`, with each variable a field in its Variables section.
+They are edited on the Variables tab or in the 1Password app, and they resolve
+and are masked in logs like any other variable.
 
-The items are read when a deployment starts (including redeploys and
-rollbacks): the deploying service's, and another service's only when a
-reference needs it. Restarts and crash recovery never read 1Password. An edit
-made in the 1Password app reaches the container only with the next deployment,
-so a rotated secret needs a redeploy. A failed read (revoked token, rate limit,
-a deleted item) fails the deployment with the 1Password error in the build log
-and on the deployment; the old container keeps serving. A deleted item is
-fixed by saving the service's variables in the dashboard, which creates a new
-one. Values from 1Password are masked in logs like stored ones.
+1Password is read when a deployment starts (including redeploys and
+rollbacks), never on restart or crash recovery. An edit made in the 1Password
+app reaches the container only with the next deployment, so a rotated secret
+needs a redeploy. A failed read (revoked token, rate limit, network error)
+fails the deployment with the 1Password error in the build log and on the
+deployment; the old container keeps serving. A service whose item was deleted
+or moved in 1Password fails with "the 1Password item of service <name> is
+missing"; fixing it is a dashboard action: on the service's Variables tab,
+click Create item, then add the variables again.
 
 ## Database variables
 

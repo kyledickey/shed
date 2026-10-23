@@ -89,7 +89,7 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `runtime_logs(service_id, lines?)`     | A snapshot of the active container's [runtime log](/docs/logs#runtime-logs). Default 200 lines, at most 2000. Not a stream. |
 | `service_metrics(service_id, range?)`  | CPU, memory, network, and disk I/O for a service. Range `1h`, `6h`, `24h`, or `7d`. See [metrics](/docs/metrics).           |
 | `host_metrics(range?)`                 | The same for the whole server, with disk usage and totals.                                                                  |
-| `list_variables(service_id)`           | Variable **names** only, including injected ones and those from 1Password. Never values.                                    |
+| `list_variables(service_id)`           | Variable **names** only, including injected ones. Never values.                                                             |
 | `list_backups(service_id)`             | The service's backups and its backup policy.                                                                                |
 | `shed_log(lines?)`                     | The tail of shed's own [application log](/docs/logs#sheds-own-log).                                                         |
 | `update_status`                        | The running version and whether a newer release exists.                                                                     |

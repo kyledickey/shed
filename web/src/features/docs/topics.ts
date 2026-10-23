@@ -87,8 +87,7 @@ export const docTopics = {
   onePassword: {
     page: "onepassword",
     section: "how-it-works",
-    summary:
-      "Link a 1Password Environment to a service; its variables are read when a deployment starts.",
+    summary: "Keep every service's variables in a 1Password vault instead of on this server.",
   },
   volumes: {
     page: "resources",

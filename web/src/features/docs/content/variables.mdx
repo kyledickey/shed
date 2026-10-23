@@ -14,7 +14,7 @@ Write a reference inside any value and shed replaces it with the value it points
 
 | You write                        | It expands to                                                                                                                           |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `${{ KEY }}`                     | Variable KEY of the same service: stored, from 1Password, or injected.                                                                  |
+| `${{ KEY }}`                     | Variable KEY of the same service, stored or injected.                                                                                   |
 | `${{ db.KEY }}`                  | Variable KEY of the service named db in the same project. The reference is split at the first dot, so db.a.b means service db, key a.b. |
 | `${{KEY}}`                       | The same. Whitespace inside the braces is optional.                                                                                     |
 | `${{ NOPE }}`                    | An empty string. A missing variable or service is not an error.                                                                         |
@@ -50,7 +50,9 @@ shed adds a few variables to every service. You can reference them like any othe
 | `SHED_GIT_COMMIT_SHA` | the commit being deployed            | a commit is known, and only for the service being deployed |
 | `SHED_GIT_BRANCH`     | the service's branch                 | the service has a branch                                   |
 
-Your own variables win. If you store a variable with the same name as an injected one, yours replaces it. A service linked to a [1Password Environment](/docs/onepassword) gets that Environment's variables in between: they replace injected ones and your own replace them. The merged set is then resolved, and the container receives it sorted by key.
+Your own variables win. If you store a variable with the same name as an injected one, yours replaces it. The merged set is then resolved, and the container receives it sorted by key.
+
+Stored variables live in shed.db, encrypted, or in your 1Password account when [1Password](/docs/onepassword) is connected. Either way they are edited on the Variables tab and resolve the same way.
 
 <Figure caption="How one service's environment is assembled at deploy time.">
   <MergeDiagram />
@@ -105,7 +107,7 @@ shed expands each of the service's variables depth first, remembering finished v
 
 The first error fails the whole set, and therefore the deployment, with `deploy: resolve variables: ...` in the build log. Only the variables of the service being deployed are walked: another service's broken value does not matter unless something you deploy references it.
 
-After resolution, the values of your _stored_ variables and of every variable from 1Password become literal secrets that shed masks in build and runtime logs. Injected values like `PORT` are not masked. See [secret redaction](/docs/logs#secret-redaction).
+After resolution, the values of your _stored_ variables become literal secrets that shed masks in build and runtime logs. Injected values like `PORT` are not masked. See [secret redaction](/docs/logs#secret-redaction).
 
 ## Limits
 
