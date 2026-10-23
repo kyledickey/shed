@@ -12,6 +12,9 @@ export const keys = {
   systemBackups: ["backups", "system"] as const,
   backupSettings: ["backups", "settings"] as const,
   update: ["update"] as const,
+  onePassword: ["onepassword"] as const,
+  onePasswordVariables: (serviceId: string, environment: string) =>
+    ["onepassword", "variables", serviceId, environment] as const,
   repos: ["github", "repos"] as const,
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
   oauthRequest: (id: string) => ["oauth", "requests", id] as const,
