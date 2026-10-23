@@ -175,17 +175,18 @@ func (fakeLogs) Follow(_ context.Context, emit func(string)) {
 }
 
 type fixture struct {
-	t        *testing.T
-	st       *store.Store
-	deployer *fakeDeployer
-	backups  *fakeBackups
-	metrics  *fakeMetrics
-	updates  *fakeUpdates
-	restarts int
-	github   *GitHubHolder
-	server   *Server
-	handler  http.Handler
-	cookie   *http.Cookie
+	t           *testing.T
+	st          *store.Store
+	deployer    *fakeDeployer
+	backups     *fakeBackups
+	metrics     *fakeMetrics
+	updates     *fakeUpdates
+	onePassword *fakeOnePassword
+	restarts    int
+	github      *GitHubHolder
+	server      *Server
+	handler     http.Handler
+	cookie      *http.Cookie
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -200,13 +201,15 @@ func newFixture(t *testing.T) *fixture {
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
+	f.onePassword = &fakeOnePassword{}
 	plane := control.New(control.Config{
-		Store:    st,
-		Deployer: f.deployer,
-		Backups:  f.backups,
-		Metrics:  f.metrics,
-		Logs:     fakeLogs{},
-		Updates:  f.updates,
+		Store:       st,
+		Deployer:    f.deployer,
+		Backups:     f.backups,
+		Metrics:     f.metrics,
+		Logs:        fakeLogs{},
+		Updates:     f.updates,
+		OnePassword: f.onePassword,
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true
