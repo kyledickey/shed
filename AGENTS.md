@@ -28,7 +28,7 @@ internal/github    GitHub App: manifest, tokens, repos, CI status, OAuth, webhoo
 internal/vars      ${{ KEY }} / ${{ service.KEY }} reference resolution
 internal/catalog   database templates
 internal/s3        S3-compatible object storage client
-internal/hark      push notifications through a Hark webhook
+internal/notify    notifications: types, provider registry, adapters (hark push)
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
 internal/host      host resource usage from procfs, sysfs, and statfs
 internal/logtail   in-memory tail of shed's own log
@@ -50,8 +50,8 @@ Each package under `internal/` should work as a self-contained piece that
 can be understood, tested, and replaced on its own.
 
 - Leaf packages (`config`, `store`, `docker`, `build`, `proxy`, `github`,
-  `vars`, `catalog`, `host`, `logtail`, `s3`, `hark`, `update`) import nothing
-  from `internal/`. Keep it that way.
+  `vars`, `catalog`, `host`, `logtail`, `s3`, `update`) import nothing from
+  `internal/`. Keep it that way.
 - Interfaces belong to the consumer. A package that needs another's behavior
   declares the small interface it uses (`deploy.Docker`, `auth.Store`, …)
   instead of importing a concrete type. `cmd/shed` wires real
