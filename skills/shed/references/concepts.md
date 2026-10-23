@@ -26,7 +26,7 @@ hyphens) and cannot change, because it is also the private hostname.
 | `cpuLimit`, `memoryLimit` | 1 core and 1 GiB by default. 0 is unlimited. |
 | `autoDeploy` | On by default. Deploy on every push to the branch. |
 | `waitForCi` | Off by default. Hold each deployment until the commit's CI passes. |
-| `onePasswordEnvironment` | A linked 1Password Environment, read on each deployment. Its variables override injected ones; the service's own override both. |
+| `onePasswordEnvironment` | Empty by default. A linked 1Password Environment ID; its variables are read when a deployment starts. |
 
 ## Kinds
 
