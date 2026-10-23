@@ -554,7 +554,8 @@ A missing container is recreated from this snapshot, including during boot,
 start, or release of a hold. Saved settings wait for a new deployment. Volumes
 deleted since are not mounted and their Docker volumes are removed; newly added
 volumes wait for deployment. Deployments activated before migration 011 have no
-snapshot and fall back to current settings with a warning when recreated.
+snapshot and fall back to current settings with a warning when recreated;
+that fallback resolves variables without 1Password Environments.
 
 ### Stopping a service
 
@@ -1180,11 +1181,11 @@ POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed rest
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
-GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected and 1Password; commit of active deployment)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected and 1Password; commit of active deployment; 409 if a linked Environment needs 1Password and it is not connected; 502 if 1Password fails)
 GET    /api/services/{id}/variables/onepassword → Record<string,string>  (the linked Environment's variables; {} if none linked; 409 if 1Password is not connected; 502 if 1Password fails)
 
 GET    /api/onepassword                         → OnePassword
-PUT    /api/onepassword          {token}        → OnePassword  (authenticates first; 400 {error} if 1Password rejects it, nothing saved)
+PUT    /api/onepassword          {token}        → OnePassword  (signs in first; 400 {error} if signing in fails, nothing saved)
 DELETE /api/onepassword                         204  (forgets the token)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
@@ -1299,7 +1300,8 @@ Secrets: no tool returns a variable value, the resolved variables, the age
 key, S3 credentials, or a backup archive, and none changes anything. Log
 text is masked before it reaches the tools: `BuildLog` masks the values the
 deployment's container was started with, the saved values of every service in
-its project, and the service's variables as they resolve now;
+its project, and the service's variables as they resolve now (without
+1Password; its values are covered by the container's);
 `RuntimeLogs` masks the values the running container was started with;
 `ShedLog` masks the saved values of every service's variables (references
 unexpanded, so a database password is masked wherever it appears, including
@@ -1526,7 +1528,8 @@ Log snapshots for agents (`control.Plane.BuildLog`, `RuntimeLogs`, `ShedLog`)
 return at most 2000 lines and never follow. A build log snapshot is masked
 again when read, with the values its container started with, the saved values
 of every variable of every service in the project, and the service's own
-variables as they resolve now, so values saved after the build are masked too.
+variables as they resolve now (without reading 1Password), so values saved
+after the build are masked too.
 A runtime snapshot masks like the runtime stream. A snapshot of shed's own log
 masks the saved values of every service's variables.
 
