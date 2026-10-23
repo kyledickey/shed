@@ -34,6 +34,7 @@ import (
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
@@ -152,6 +153,9 @@ func run() error {
 		routes = px
 	}
 
+	onePassword := onepassword.New(onePasswordTokens{st}, version, log)
+	onePassword.Preload(ctx)
+
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
 		Store:  st,
@@ -170,6 +174,7 @@ func run() error {
 			}
 			return nil, false
 		},
+		OnePassword:     onePassword,
 		LogDir:          logDir,
 		LogLimit:        int64(cfg.Deployments.LogMaxMB) << 20,
 		KeepDeployments: cfg.Deployments.Keep,
@@ -234,9 +239,10 @@ func run() error {
 			}
 			return nil, false
 		},
-		BaseURL:    cfg.Server.URL,
-		BaseDomain: cfg.Proxy.BaseDomain,
-		Log:        log,
+		OnePassword: onePassword,
+		BaseURL:     cfg.Server.URL,
+		BaseDomain:  cfg.Proxy.BaseDomain,
+		Log:         log,
 	})
 
 	server, err := api.New(ctx, api.Config{
@@ -314,6 +320,26 @@ func (s updateSettings) Setting(ctx context.Context, key string) (string, bool, 
 
 func (s updateSettings) SetSetting(ctx context.Context, key, value string) error {
 	return s.st.SetSetting(ctx, key, value)
+}
+
+// onePasswordTokens adapts the store to onepassword.Tokens.
+type onePasswordTokens struct{ st *store.Store }
+
+const onePasswordTokenKey = "onepassword.token"
+
+func (t onePasswordTokens) Token(ctx context.Context) (string, error) {
+	v, err := t.st.Setting(ctx, onePasswordTokenKey)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	return v, err
+}
+
+func (t onePasswordTokens) SetToken(ctx context.Context, token string) error {
+	if token == "" {
+		return t.st.DeleteSetting(ctx, onePasswordTokenKey)
+	}
+	return t.st.SetSetting(ctx, onePasswordTokenKey, token)
 }
 
 // backupServices adapts the deployer to backup.Services.
