@@ -26,6 +26,15 @@ var (
 	ErrRequest = errors.New("onepassword: 1Password request failed")
 )
 
+// MissingItemError reports an item that is not in its vault. It matches
+// ErrItemMissing.
+type MissingItemError struct{ ItemID string }
+
+func (e *MissingItemError) Error() string { return ErrItemMissing.Error() + ": " + e.ItemID }
+
+// Is reports whether target is ErrItemMissing.
+func (e *MissingItemError) Is(target error) bool { return target == ErrItemMissing }
+
 // SectionTitle is the title of the item section that holds the variables.
 const SectionTitle = "Variables"
 
@@ -180,8 +189,8 @@ func (c *Client) CreateItem(ctx context.Context, token, vaultID string, item Ite
 }
 
 // Variables returns the variables of items in a vault by item ID: every
-// field whose title is a variable name. It returns an error wrapping
-// ErrItemMissing if an item is not in the vault.
+// field whose title is a variable name. If an item is not in the vault, the
+// error is a *MissingItemError.
 func (c *Client) Variables(ctx context.Context, token, vaultID string, itemIDs []string) (map[string]map[string]string, error) {
 	a, err := c.client(ctx, token)
 	if err != nil {
@@ -305,7 +314,7 @@ func (c *Client) items(ctx context.Context, token string, a api, vaultID string,
 	for i, r := range resp.IndividualResponses {
 		switch {
 		case r.Error != nil && r.Error.Type == sdk.ItemsGetAllErrorTypeVariantItemNotFound:
-			return nil, fmt.Errorf("%w: %s", ErrItemMissing, itemIDs[i])
+			return nil, &MissingItemError{itemIDs[i]}
 		case r.Error != nil:
 			return nil, fmt.Errorf("%w: read item %s: %s", ErrRequest, itemIDs[i], r.Error.Type)
 		case r.Content == nil:
