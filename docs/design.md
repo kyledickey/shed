@@ -113,6 +113,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
+| `internal/onepassword` | 1Password service account token and Environment reads (official Go SDK) | — |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
@@ -174,6 +175,7 @@ CREATE TABLE services (
   auto_deploy INTEGER NOT NULL DEFAULT 1,
   wait_for_ci INTEGER NOT NULL DEFAULT 0,
   stopped INTEGER NOT NULL DEFAULT 0,    -- stopped by the user; see "Stopping a service"
+  onepassword_environment TEXT NOT NULL DEFAULT '', -- linked 1Password Environment ID ('' = none)
   created_at TEXT NOT NULL,
   UNIQUE (project_id, name)
 );
@@ -450,6 +452,36 @@ Database templates create variables on service creation, e.g. postgres:
 `DATABASE_URL=postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{SHED_PRIVATE_DOMAIN}}:5432/${{POSTGRES_DB}}`.
 An app then sets `DATABASE_URL=${{ postgres.DATABASE_URL }}`.
 
+### 1Password Environments
+
+A service may link one 1Password Environment by ID
+(`services.onepassword_environment`). shed reads it with one service account
+token, saved in `settings` as `onepassword.token` (encrypted like every
+setting). `internal/onepassword` wraps the official Go SDK, which runs a
+WebAssembly core in-process: loading it takes about a second and about 110 MB
+of memory that stays for the life of the process. shed loads it in the
+background at boot when a token is saved, and when a token is connected.
+Disconnecting forgets the token; the memory returns on the next restart.
+
+Each service's variables are layered, later winning:
+injected `SHED_*`/`PORT` < its 1Password Environment < its own variables.
+References see the same layers, so `${{ KEY }}` and `${{ api.KEY }}` reach
+1Password keys. Resolution reads the deploying service's Environment, and
+another service's Environment only when a reference looks up a key that service
+does not define itself. Each Environment is read at most once per deployment.
+
+1Password is read only when a deployment starts (including redeploys and
+rollbacks), by `GET /api/services/{id}/variables/resolved`, by
+`GET /api/services/{id}/variables/onepassword`, and by MCP `list_variables`.
+Restarts, crash recovery, boot reconcile, and log masking use the active
+deployment's recorded runtime and never call 1Password. A read that fails
+(no token, rejected token, rate limit, network) fails the deployment with the
+1Password error; the running deployment keeps serving. Every value that came
+from 1Password is masked in logs, whatever its masked flag says.
+
+shed never writes to 1Password. 1Password has no change notifications, so
+a change in 1Password applies on the service's next deployment.
+
 ### Deploy pipeline
 
 One worker per service; a new deployment cancels older non-terminal ones for
@@ -471,7 +503,7 @@ the same service.
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
-3. **Start**: resolve variables, record the service's port and container
+3. **Start**: resolve variables (reading linked 1Password Environments), record the service's port and container
    configuration on the deployment (persisted on activation), and create and start the new container, without the service's network
    alias. Services with volumes or a public port stop the old container first
    if it is running (volumes can't be shared safely, e.g. database data dirs);
@@ -1148,7 +1180,12 @@ POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed rest
 
 GET    /api/services/{id}/variables             → Record<string,string>
 PUT    /api/services/{id}/variables  Record     → Record  (replace all)
-GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected and 1Password; commit of active deployment)
+GET    /api/services/{id}/variables/onepassword → Record<string,string>  (the linked Environment's variables; {} if none linked; 409 if 1Password is not connected; 502 if 1Password fails)
+
+GET    /api/onepassword                         → OnePassword
+PUT    /api/onepassword          {token}        → OnePassword  (authenticates first; 400 {error} if 1Password rejects it, nothing saved)
+DELETE /api/onepassword                         204  (forgets the token)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
@@ -1247,7 +1284,7 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `runtime_logs` | `service_id`, `lines?` | text: snapshot of the active container's output (`RuntimeLogs`, not followed) |
 | `service_metrics` | `service_id`, `range?` (1h, 6h, 24h, 7d) | `{range, from, stepSeconds, cpuLimit, memoryLimit, cpuPercent, memoryBytes, netRxBytesPerSecond, netTxBytesPerSecond, diskReadBytesPerSecond, diskWriteBytesPerSecond}`; each metric is `{latest, avg, max}` over the sampled buckets, null if none |
 | `host_metrics` | `range?` | the same with `cpus`, `memoryTotalBytes`, `diskTotalBytes`, and `diskUsedBytes` |
-| `list_variables` | `service_id` | `{variables: [{name, injected?, reference?}], resolveError?}` (`VariableNames`): names only |
+| `list_variables` | `service_id` | `{variables: [{name, injected?, reference?, onepassword?}], resolveError?}` (`VariableNames`): names only |
 | `list_backups` | `service_id` | `{policy, backups (newest 20), omitted?, restore?}` |
 | `shed_log` | `lines?` | text: last lines of shed's own log (`ShedLog`) |
 | `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
@@ -1304,6 +1341,7 @@ type Service = {
   cpuLimit: number;                    // cores, 0 = unlimited
   memoryLimit: number;                 // bytes, 0 = unlimited
   autoDeploy: boolean; waitForCi: boolean;
+  onePasswordEnvironment: string;      // linked 1Password Environment ID, "" = none
   status: ServiceStatus;
   privateHost: string;                 // "<name>"
   domains: Domain[];
@@ -1324,7 +1362,7 @@ type NewService = { name: string; kind: ServiceKind; repo?: string; branch?: str
 type ServicePatch = Partial<Pick<Service,
   "repo" | "branch" | "rootDir" | "image" | "dockerfilePath" | "startCommand" |
   "port" | "healthcheckPath" | "publicPort" | "cpuLimit" | "memoryLimit" |
-  "autoDeploy" | "waitForCi">>;
+  "autoDeploy" | "waitForCi" | "onePasswordEnvironment">>;
 
 type Deployment = {
   id: string; serviceId: string; status: DeploymentStatus;
@@ -1338,6 +1376,7 @@ type Deployment = {
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
+type OnePassword = { connected: boolean };
 
 // Container resource usage. Sample i is at start + i*step seconds; series
 // are the same length, oldest first, null where nothing was running.
