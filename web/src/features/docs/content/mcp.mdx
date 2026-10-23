@@ -104,7 +104,7 @@ The server also sends the agent a short description of how shed works (projects,
 
 - **Read-only.** There are no write tools in this version. Nothing an agent does can deploy, stop, delete, or change a setting.
 - **Variable values are never exposed.** `list_variables` returns names. The resolved variables, which include database passwords and connection strings, are not available to agents at all.
-- **Never exposed.** Variable values, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
+- **Never exposed.** Variable values, 1Password tokens, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
 - **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. shed's own log has the saved values of every service's variables replaced. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.
 - **shed's own tokens.** GitHub is only used to prove who you are. shed issues its own opaque tokens and never hands a GitHub token to a client. Tokens are random, stored only as hashes, and bound to one client, one user, the `read` scope, and the MCP resource, so a token for one shed cannot be used on another.
 - **Lifetimes.** An access token lasts 1 hour. A refresh token lasts 30 days and rotates on every use. Using an old refresh token again revokes the whole grant, which cuts off a client whose token was stolen as well as the thief.

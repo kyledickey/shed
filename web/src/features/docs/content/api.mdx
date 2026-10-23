@@ -136,7 +136,7 @@ type Service = {
   cpuLimit: number;                    // cores, 0 = unlimited
   memoryLimit: number;                 // bytes, 0 = unlimited
   autoDeploy: boolean; waitForCi: boolean;
-  onePasswordEnvironment: string;      // linked 1Password Environment ID, "" = none
+  onePassword: OnePasswordLink | null; // linked 1Password Environment
   status: ServiceStatus;
   privateHost: string;                 // "<name>"
   domains: Domain[];
@@ -157,12 +157,14 @@ type NewService = { name: string; kind: ServiceKind; repo?: string; branch?: str
 type ServicePatch = Partial<Pick<Service,
   "repo" | "branch" | "rootDir" | "image" | "dockerfilePath" | "startCommand" |
   "port" | "healthcheckPath" | "publicPort" | "cpuLimit" | "memoryLimit" |
-  "autoDeploy" | "waitForCi" | "onePasswordEnvironment">>;
+  "autoDeploy" | "waitForCi">>;
 
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
-type OnePassword = { connected: boolean };
+// The token is write-only: PUT /api/services/{id}/onepassword takes it, and
+// responses say only whether one is saved.
+type OnePasswordLink = { environment: string; hasToken: boolean };
 ```
 
 ### Deployments

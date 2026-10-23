@@ -129,7 +129,21 @@ export const endpointGroups: EndpointGroup[] = [
         path: "/api/services/{id}/variables/onepassword",
         response: "Record<string,string>",
         notes:
-          "The linked 1Password Environment. {} if none; 409 if not connected; 502 if 1Password fails.",
+          "The linked 1Password Environment. {} if none; 409 if the link has no token; 502 if 1Password fails.",
+      },
+      {
+        method: "PUT",
+        path: "/api/services/{id}/onepassword",
+        body: "{environment, token?}",
+        response: "Service",
+        notes:
+          "Links a 1Password Environment. Reads it with the token first: 400 with 1Password's error if that fails, and nothing is saved. No token keeps the saved one.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/services/{id}/onepassword",
+        response: "Service",
+        notes: "Unlinks the Environment and forgets its token.",
       },
       {
         method: "POST",
@@ -276,20 +290,6 @@ export const endpointGroups: EndpointGroup[] = [
         response: "{ identity }",
         notes: "The age secret key. 404 if none.",
       },
-    ],
-  },
-  {
-    title: "1Password",
-    endpoints: [
-      { method: "GET", path: "/api/onepassword", response: "OnePassword" },
-      {
-        method: "PUT",
-        path: "/api/onepassword",
-        body: "{token}",
-        response: "OnePassword",
-        notes: "Checks the token with 1Password first. 400 if rejected; nothing is saved.",
-      },
-      { method: "DELETE", path: "/api/onepassword", response: "204", notes: "Forgets the token." },
     ],
   },
   {
