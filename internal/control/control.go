@@ -88,7 +88,7 @@ type Deployer interface {
 	FollowLog(ctx context.Context, deploymentID string, line func(string), status func(store.DeploymentStatus)) error
 	BuildLog(ctx context.Context, deploymentID string, n int) ([]string, error)
 	RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error
-	ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error)
+	ResolveVariables(ctx context.Context, serviceID string) (deploy.Resolved, error)
 }
 
 var _ Deployer = (*deploy.Deployer)(nil)

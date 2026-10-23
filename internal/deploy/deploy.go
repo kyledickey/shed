@@ -71,6 +71,12 @@ type GitHub interface {
 	CIStatus(ctx context.Context, repo, sha string) (github.CIState, error)
 }
 
+// OnePassword reads 1Password Environments. *onepassword.Client implements
+// it.
+type OnePassword interface {
+	Variables(ctx context.Context, environmentID string) (map[string]string, error)
+}
+
 // Config configures a Deployer.
 type Config struct {
 	Store   *store.Store
@@ -81,6 +87,9 @@ type Config struct {
 	// GitHub returns the GitHub client, or false while the GitHub App is not
 	// configured.
 	GitHub func() (GitHub, bool)
+	// OnePassword reads the 1Password Environments services link. Nil fails
+	// deployments of services that link one.
+	OnePassword OnePassword
 	// LogDir holds the build logs, one <deploymentID>.log per deployment.
 	LogDir string
 	// LogLimit caps each build log, in bytes. Output beyond it is replaced
@@ -143,16 +152,17 @@ var (
 
 // Deployer runs deployments. It is safe for concurrent use.
 type Deployer struct {
-	store     *store.Store
-	docker    Docker
-	builder   Builder
-	proxy     Proxy
-	github    func() (GitHub, bool)
-	logDir    string
-	logLimit  int64
-	keep      int // deployments kept per service; 0 keeps all
-	dashboard proxy.Route
-	log       *slog.Logger
+	store       *store.Store
+	docker      Docker
+	builder     Builder
+	proxy       Proxy
+	github      func() (GitHub, bool)
+	onePassword OnePassword
+	logDir      string
+	logLimit    int64
+	keep        int // deployments kept per service; 0 keeps all
+	dashboard   proxy.Route
+	log         *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
 	ciInterval     time.Duration
@@ -202,6 +212,7 @@ func New(cfg Config) *Deployer {
 		builder:          cfg.Builder,
 		proxy:            cfg.Proxy,
 		github:           cfg.GitHub,
+		onePassword:      cfg.OnePassword,
 		logDir:           cfg.LogDir,
 		logLimit:         cfg.LogLimit,
 		keep:             cfg.KeepDeployments,

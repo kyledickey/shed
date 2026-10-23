@@ -117,8 +117,8 @@ func (f *fakeDeployer) ApplyRoutes(context.Context) error {
 func (f *fakeDeployer) DeleteService(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteProject(_ context.Context, id string) error { return f.delete(id) }
 func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { return nil }
-func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
-	return map[string]string{}, nil
+func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
+	return deploy.Resolved{Env: map[string]string{}}, nil
 }
 func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, bool, io.Writer) error {
 	return deploy.ErrNoContainer

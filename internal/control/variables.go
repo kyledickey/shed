@@ -39,7 +39,11 @@ func (p *Plane) SetVariables(ctx context.Context, serviceID string, vars map[str
 // ResolvedVariables returns the variables of a service's next deployment,
 // injected ones included, with references expanded.
 func (p *Plane) ResolvedVariables(ctx context.Context, serviceID string) (map[string]string, error) {
-	return p.deployer.ResolveVariables(ctx, serviceID)
+	r, err := p.deployer.ResolveVariables(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return r.Env, nil
 }
 
 // VariableNames returns the names of the variables a service's next
@@ -61,7 +65,7 @@ func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNa
 	if err != nil {
 		out.ResolveError = err.Error()
 	}
-	for name := range resolved {
+	for name := range resolved.Env {
 		if _, ok := own[name]; !ok {
 			out.Variables = append(out.Variables, VariableName{Name: name, Injected: true})
 		}
