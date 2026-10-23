@@ -3,6 +3,16 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.4 - 2026-10-23
+
+- Services can load variables from a 1Password Environment. Connect a
+  1Password service account in Settings → 1Password, then link an
+  Environment with the 1Password button on a service's Variables tab. shed
+  reads the Environment each time the service deploys and shows its
+  variables in the Variables tab; variables you set in shed take priority.
+  1Password doesn't announce changes, so redeploy after you change a value.
+  While connected, 1Password uses about 110 MB of shed's memory.
+
 ## v0.2.3 - 2026-10-06
 
 - shed is licensed under the Apache License 2.0.
