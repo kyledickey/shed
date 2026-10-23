@@ -18,6 +18,7 @@ import { formatDate, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
 import { useBeginRestart } from "../update/restart";
 import { ConfirmDialog } from "./ConfirmDialog";
+import settings from "./Settings.module.css";
 import styles from "./UpdatesCard.module.css";
 
 /** UpdatesCard shows the running and latest shed versions and drives download and install. */
@@ -119,7 +120,7 @@ export function UpdatesCardView({
       }
     >
       <div className={styles.body}>
-        <dl className={styles.facts}>
+        <dl className={settings.facts}>
           <div>
             <dt>Running</dt>
             <dd className={styles.mono}>{status.current}</dd>
