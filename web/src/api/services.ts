@@ -14,6 +14,9 @@ export const variablesQuery = (serviceId: string) =>
   queryOptions({
     queryKey: keys.variables(serviceId),
     queryFn: () => api.get<Variables>(`/services/${serviceId}/variables`),
+    // With 1Password connected each fetch is a read against its rate limit,
+    // and a failure is shown rather than retried.
+    retry: false,
   });
 
 /** resolveVariables fetches a service's variables with references expanded. */

@@ -1,12 +1,24 @@
-import { Check, Eye, EyeOff, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import {
+  Check,
+  TriangleAlert,
+  CircleX,
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  Trash2,
+  KeyRound,
+} from "lucide-react";
 import { useRef, useState } from "react";
+import { onePasswordQuery } from "../../api/onepassword";
 import { resolveVariables, useSaveVariables } from "../../api/services";
-import { errorMessage } from "../../api/client";
+import { errorMessage, isApiError } from "../../api/client";
 import type { Variables } from "../../api/types";
 import { Button } from "../../components/Button";
 import { LayerCard } from "../../components/Card";
 import { Input, Segmented, Textarea } from "../../components/Form";
-import { CopyButton, EmptyState } from "../../components/Misc";
+import { Callout, CopyButton, EmptyState, OnePasswordIcon } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { isValidKey, parseEnv, serializeEnv } from "../../lib/env";
 import { useRedeployHint } from "../services/redeploy";
@@ -41,6 +53,67 @@ function rowsToVars(rows: Row[]): { vars: Variables; errors: string[] } {
     }
   }
   return { vars, errors };
+}
+
+const title = (
+  <>
+    Variables <HelpTip topic="variables" />
+  </>
+);
+
+/** Meta says where the variables are stored when that is 1Password. */
+function Meta() {
+  const { data } = useSuspenseQuery(onePasswordQuery);
+  if (!data.connected) return "References resolve at deploy time.";
+  return (
+    <>
+      <span className={styles.mark}>
+        <OnePasswordIcon size={12} />
+      </span>
+      Stored in 1Password. References resolve at deploy time.
+    </>
+  );
+}
+
+/**
+ * VariablesUnavailable stands in for the editor when the variables can't be
+ * read from 1Password. A missing item is replaced by saving an empty set.
+ */
+export function VariablesUnavailable({ serviceId, error }: { serviceId: string; error: Error }) {
+  const save = useSaveVariables(serviceId);
+  const toast = useToast();
+  return (
+    <LayerCard title={title} meta={<Meta />} padded>
+      {isApiError(error, 409) ? (
+        <Callout
+          tone="sunflower"
+          icon={<TriangleAlert size={16} />}
+          title="This service's 1Password item is missing"
+          actions={
+            <Button
+              size="sm"
+              loading={save.isPending}
+              onClick={() =>
+                save.mutate(
+                  {},
+                  { onSuccess: () => toast.add({ type: "success", title: "Item created" }) },
+                )
+              }
+            >
+              Create item
+            </Button>
+          }
+        >
+          It was deleted or moved in 1Password. Saving variables creates a new, empty item.
+          {save.error && <p className={styles.error}>{errorMessage(save.error)}</p>}
+        </Callout>
+      ) : (
+        <Callout tone="tomato" icon={<CircleX size={16} />} title="Could not load variables">
+          {errorMessage(error)}
+        </Callout>
+      )}
+    </LayerCard>
+  );
 }
 
 /** VariablesEditor edits a service's variables as a table or raw .env text. */
@@ -154,12 +227,8 @@ export function VariablesEditor({
 
   return (
     <LayerCard
-      title={
-        <>
-          Variables <HelpTip topic="variables" />
-        </>
-      }
-      meta="References resolve at deploy time."
+      title={title}
+      meta={<Meta />}
       actions={
         <>
           {mode === "table" && rows.length > 0 && (

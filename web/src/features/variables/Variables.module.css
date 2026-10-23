@@ -131,3 +131,9 @@
   color: var(--ink-3);
   font-size: var(--text-xs);
 }
+
+.mark {
+  display: inline-flex;
+  margin-right: 5px;
+  vertical-align: -2px;
+}
