@@ -62,10 +62,10 @@ export function AgentsCard() {
       meta="Connect AI agents over MCP."
     >
       <div className={settings.section}>
-        <p className={styles.intro}>
+        <p className={settings.intro}>
           Agents can read your projects, deployments, logs, and metrics, never variable values. Each
           signs in through your browser with GitHub.{" "}
-          <Link to="/docs/$slug" params={{ slug: "mcp" }} className={styles.docs}>
+          <Link to="/docs/$slug" params={{ slug: "mcp" }} className={settings.docs}>
             Docs <ArrowRight size={12} />
           </Link>
         </p>
