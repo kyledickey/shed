@@ -2,38 +2,55 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
 // The settings of the 1Password connection.
 const (
-	onePasswordToken = "onepassword.token"
-	onePasswordVault = "onepassword.vault"
+	onePasswordToken     = "onepassword.token"
+	onePasswordVault     = "onepassword.vault"
+	onePasswordVaultName = "onepassword.vault_name"
 )
 
-// OnePassword returns the service account token and vault ID of the
-// 1Password connection, or ErrNotFound while 1Password is not connected.
-func (s *Store) OnePassword(ctx context.Context) (token, vaultID string, err error) {
-	if token, err = s.Setting(ctx, onePasswordToken); err != nil {
-		return "", "", err
+// OnePasswordConnection is a 1Password connection: a service account token
+// and the vault that holds the items.
+type OnePasswordConnection struct {
+	Token     string
+	VaultID   string
+	VaultName string
+}
+
+// OnePassword returns the 1Password connection, or ErrNotFound while
+// 1Password is not connected. VaultName is empty for a connection saved
+// before shed kept it.
+func (s *Store) OnePassword(ctx context.Context) (OnePasswordConnection, error) {
+	var c OnePasswordConnection
+	var err error
+	if c.Token, err = s.Setting(ctx, onePasswordToken); err != nil {
+		return OnePasswordConnection{}, err
 	}
-	if vaultID, err = s.Setting(ctx, onePasswordVault); err != nil {
-		return "", "", err
+	if c.VaultID, err = s.Setting(ctx, onePasswordVault); err != nil {
+		return OnePasswordConnection{}, err
 	}
-	return token, vaultID, nil
+	c.VaultName, err = s.Setting(ctx, onePasswordVaultName)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return OnePasswordConnection{}, err
+	}
+	return c, nil
 }
 
 // ConnectOnePassword deletes the variables of every service, whose values
-// now live in 1Password, and saves the connection's vault ID and then its
+// now live in 1Password, and saves the connection's vault and then its
 // token, in one transaction.
-func (s *Store) ConnectOnePassword(ctx context.Context, token, vaultID string) error {
-	if err := s.connectOnePassword(ctx, token, vaultID); err != nil {
+func (s *Store) ConnectOnePassword(ctx context.Context, c OnePasswordConnection) error {
+	if err := s.connectOnePassword(ctx, c); err != nil {
 		return fmt.Errorf("store: connect 1Password: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) connectOnePassword(ctx context.Context, token, vaultID string) error {
+func (s *Store) connectOnePassword(ctx context.Context, c OnePasswordConnection) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -42,7 +59,9 @@ func (s *Store) connectOnePassword(ctx context.Context, token, vaultID string) e
 	if _, err := tx.ExecContext(ctx, `DELETE FROM variables`); err != nil {
 		return err
 	}
-	for _, kv := range [][2]string{{onePasswordVault, vaultID}, {onePasswordToken, token}} {
+	for _, kv := range [][2]string{
+		{onePasswordVault, c.VaultID}, {onePasswordVaultName, c.VaultName}, {onePasswordToken, c.Token},
+	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
 			ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 			kv[0], s.crypt.seal(kv[1], settingAD(kv[0]))); err != nil {
@@ -81,7 +100,7 @@ func (s *Store) disconnectOnePassword(ctx context.Context, vars map[string]map[s
 		}
 	}
 	for _, q := range []string{
-		`DELETE FROM settings WHERE key IN ('` + onePasswordToken + `', '` + onePasswordVault + `')`,
+		`DELETE FROM settings WHERE key IN ('` + onePasswordToken + `', '` + onePasswordVault + `', '` + onePasswordVaultName + `')`,
 		`DELETE FROM onepassword_items`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {

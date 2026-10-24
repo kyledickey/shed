@@ -49,15 +49,6 @@ func (a fakeAPI) ListVaults(context.Context) ([]sdk.VaultOverview, error) {
 	return a.f.vaults, a.f.err
 }
 
-func (a fakeAPI) CreateVault(_ context.Context, title string) (sdk.Vault, error) {
-	if a.f.err != nil {
-		return sdk.Vault{}, a.f.err
-	}
-	v := sdk.Vault{ID: a.f.id(), Title: title}
-	a.f.vaults = append(a.f.vaults, sdk.VaultOverview{ID: v.ID, Title: title})
-	return v, nil
-}
-
 func (a fakeAPI) CreateItem(_ context.Context, p sdk.ItemCreateParams) (sdk.Item, error) {
 	if a.f.err != nil {
 		return sdk.Item{}, a.f.err
@@ -125,30 +116,22 @@ func TestSignIn(t *testing.T) {
 	}
 }
 
-func TestVaultFindsOrCreates(t *testing.T) {
-	ctx := context.Background()
+func TestVaultsSortedByName(t *testing.T) {
 	c, fake := newClient()
-	fake.vaults = []sdk.VaultOverview{{ID: "other", Title: "Private"}}
-	id, err := c.Vault(ctx, "tok", "shed")
+	fake.vaults = []sdk.VaultOverview{{ID: "v2", Title: "shed"}, {ID: "v1", Title: "Infra"}}
+	got, err := c.Vaults(context.Background(), "tok")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := c.Vault(ctx, "tok", "shed")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id == "other" || again != id || len(fake.vaults) != 2 {
-		t.Errorf("Vault = %q then %q with vaults %v; want one shed vault created and then found", id, again, fake.vaults)
+	if want := []Vault{{"v1", "Infra"}, {"v2", "shed"}}; !slices.Equal(got, want) {
+		t.Errorf("Vaults() = %v, want %v", got, want)
 	}
 }
 
 func TestItemRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c, fake := newClient()
-	vault, err := c.Vault(ctx, "tok", "shed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	vault := "vault1"
 	id, err := c.CreateItem(ctx, "tok", vault, Item{
 		Title: "app / web", Tags: []string{"shed/app"},
 		Variables: map[string]string{"B": "2", "A": "1"},
@@ -247,11 +230,11 @@ func TestFailedRequestRebuildsClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake.err = errors.New("network down")
-	if _, err := c.Vault(ctx, "tok", "shed"); !errors.Is(err, ErrRequest) || errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("Vault on a failed request = %v, want ErrRequest", err)
+	if _, err := c.Vaults(ctx, "tok"); !errors.Is(err, ErrRequest) || errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("Vaults on a failed request = %v, want ErrRequest", err)
 	}
 	fake.err = nil
-	if _, err := c.Vault(ctx, "tok", "shed"); err != nil {
+	if _, err := c.Vaults(ctx, "tok"); err != nil {
 		t.Fatal(err)
 	}
 	if fake.opens["tok"] != 2 {

@@ -1,7 +1,7 @@
 // Package variables keeps the variables of services where they live: in
-// shed.db, or, while 1Password is connected, in one item per service in the
-// shed vault. Callers read and write variables through a [Keeper] and never
-// ask which.
+// shed.db, or, while 1Password is connected, in one item per service in a
+// vault of the operator's. Callers read and write variables through a
+// [Keeper] and never ask which.
 package variables
 
 import (
@@ -14,11 +14,13 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// VaultName is the name of the vault that holds the items.
-const VaultName = "shed"
-
-// ErrConnected is returned when connecting while 1Password is connected.
-var ErrConnected = errors.New("variables: 1Password is already connected")
+var (
+	// ErrConnected is returned when connecting while 1Password is connected.
+	ErrConnected = errors.New("variables: 1Password is already connected")
+	// ErrVault is wrapped by errors for a vault the token cannot connect to:
+	// one it cannot access, or none or one of several when none was chosen.
+	ErrVault = errors.New("variables: no vault to connect to")
+)
 
 // Store holds the variables while 1Password is not connected, the
 // connection, and the item of each service. *store.Store implements it.
@@ -29,12 +31,12 @@ type Store interface {
 	Variables(ctx context.Context, serviceID string) (map[string]string, error)
 	SetVariables(ctx context.Context, serviceID string, vars map[string]string) error
 
-	// OnePassword returns the connection's token and vault ID, or
-	// store.ErrNotFound while 1Password is not connected.
-	OnePassword(ctx context.Context) (token, vaultID string, err error)
+	// OnePassword returns the connection, or store.ErrNotFound while
+	// 1Password is not connected.
+	OnePassword(ctx context.Context) (store.OnePasswordConnection, error)
 	// ConnectOnePassword deletes every service's variables and saves the
 	// connection, atomically.
-	ConnectOnePassword(ctx context.Context, token, vaultID string) error
+	ConnectOnePassword(ctx context.Context, c store.OnePasswordConnection) error
 	// DisconnectOnePassword saves the variables of services by service ID
 	// and deletes the connection and every service's item, atomically.
 	DisconnectOnePassword(ctx context.Context, vars map[string]map[string]string) error
@@ -51,7 +53,7 @@ type Store interface {
 type OnePassword interface {
 	Preload(ctx context.Context, token string)
 	SignIn(ctx context.Context, token string) error
-	Vault(ctx context.Context, token, name string) (string, error)
+	Vaults(ctx context.Context, token string) ([]onepassword.Vault, error)
 	CreateItem(ctx context.Context, token, vaultID string, item onepassword.Item) (string, error)
 	Variables(ctx context.Context, token, vaultID string, itemIDs []string) (map[string]map[string]string, error)
 	SetVariables(ctx context.Context, token, vaultID, itemID string, vars map[string]string) error
@@ -101,17 +103,17 @@ func New(st Store, op OnePassword) *Keeper {
 }
 
 // connection is a 1Password connection; the zero value is none.
-type connection struct{ token, vault string }
+type connection struct{ token, vault, vaultName string }
 
 func (k *Keeper) connection(ctx context.Context) (connection, bool, error) {
-	token, vault, err := k.store.OnePassword(ctx)
+	c, err := k.store.OnePassword(ctx)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return connection{}, false, nil
 	case err != nil:
 		return connection{}, false, err
 	}
-	return connection{token, vault}, true, nil
+	return connection{c.Token, c.VaultID, c.VaultName}, true, nil
 }
 
 // Preload loads 1Password in the background if it is connected, so that the
@@ -127,7 +129,7 @@ func (k *Keeper) Preload(ctx context.Context) error {
 
 // Status reports the 1Password connection without calling 1Password.
 func (k *Keeper) Status(ctx context.Context) (Status, error) {
-	_, ok, err := k.connection(ctx)
+	c, ok, err := k.connection(ctx)
 	if err != nil || !ok {
 		return Status{}, err
 	}
@@ -135,7 +137,7 @@ func (k *Keeper) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{Connected: true, Vault: VaultName, Items: len(items)}, nil
+	return Status{Connected: true, Vault: c.vaultName, Items: len(items)}, nil
 }
 
 // Get returns a service's variables, with references unexpanded. While
@@ -259,14 +261,21 @@ func (k *Keeper) Archive(ctx context.Context, svc store.Service) error {
 	return k.op.Archive(ctx, c.token, c.vault, item)
 }
 
-// Connect moves every service's variables from shed.db to items in the shed
-// vault, which it creates if token cannot access one, and keeps variables
-// there from then on. Items are recorded as they are created, and a service
+// Vaults returns the vaults token can access, sorted by name. An error
+// matching onepassword.ErrInvalidToken means 1Password rejected the token.
+func (k *Keeper) Vaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	return k.op.Vaults(ctx, token)
+}
+
+// Connect moves every service's variables from shed.db to items in the vault
+// with ID vaultID, or, if vaultID is empty, the only vault token can access,
+// and keeps variables there from then on. An error matching ErrVault means
+// there is no such vault. Items are recorded as they are created, and a service
 // that has one from an earlier attempt gets its fields replaced, so after a
 // failure Connect can be retried; until it succeeds, shed.db keeps the
 // variables. An error matching onepassword.ErrInvalidToken means 1Password
 // rejected the token. Connecting while connected returns ErrConnected.
-func (k *Keeper) Connect(ctx context.Context, token string) error {
+func (k *Keeper) Connect(ctx context.Context, token, vaultID string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if _, ok, err := k.connection(ctx); err != nil {
@@ -277,11 +286,16 @@ func (k *Keeper) Connect(ctx context.Context, token string) error {
 	if err := k.op.SignIn(ctx, token); err != nil {
 		return err
 	}
-	vault, err := k.op.Vault(ctx, token, VaultName)
+	vaults, err := k.op.Vaults(ctx, token)
 	if err != nil {
 		return err
 	}
-	c := connection{token, vault}
+	v, err := pickVault(vaults, vaultID)
+	if err != nil {
+		return err
+	}
+	vault := v.ID
+	c := connection{token, vault, v.Name}
 	projects, err := k.projects(ctx)
 	if err != nil {
 		return err
@@ -312,7 +326,25 @@ func (k *Keeper) Connect(ctx context.Context, token string) error {
 			return err
 		}
 	}
-	return k.store.ConnectOnePassword(ctx, token, vault)
+	return k.store.ConnectOnePassword(ctx, store.OnePasswordConnection{Token: token, VaultID: vault, VaultName: v.Name})
+}
+
+// pickVault returns the vault with ID id, or, if id is empty, the only one.
+func pickVault(vaults []onepassword.Vault, id string) (onepassword.Vault, error) {
+	switch {
+	case id != "":
+		for _, v := range vaults {
+			if v.ID == id {
+				return v, nil
+			}
+		}
+		return onepassword.Vault{}, fmt.Errorf("%w: the service account can't access vault %s", ErrVault, id)
+	case len(vaults) == 0:
+		return onepassword.Vault{}, fmt.Errorf("%w: the service account can't access any vaults; create one with read and write access to the vault for shed", ErrVault)
+	case len(vaults) > 1:
+		return onepassword.Vault{}, fmt.Errorf("%w: the service account can access %d vaults; choose one", ErrVault, len(vaults))
+	}
+	return vaults[0], nil
 }
 
 func (k *Keeper) projects(ctx context.Context) (map[string]store.Project, error) {

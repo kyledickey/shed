@@ -52,7 +52,6 @@ type Item struct {
 // api is the part of the SDK Client uses. sdkAPI implements it.
 type api interface {
 	ListVaults(ctx context.Context) ([]sdk.VaultOverview, error)
-	CreateVault(ctx context.Context, title string) (sdk.Vault, error)
 	CreateItem(ctx context.Context, params sdk.ItemCreateParams) (sdk.Item, error)
 	GetItems(ctx context.Context, vaultID string, itemIDs []string) (sdk.ItemsGetAllResponse, error)
 	PutItem(ctx context.Context, item sdk.Item) (sdk.Item, error)
@@ -101,10 +100,6 @@ func (a sdkAPI) ListVaults(ctx context.Context) ([]sdk.VaultOverview, error) {
 	return a.client.Vaults().List(ctx)
 }
 
-func (a sdkAPI) CreateVault(ctx context.Context, title string) (sdk.Vault, error) {
-	return a.client.Vaults().Create(ctx, sdk.VaultCreateParams{Title: title})
-}
-
 func (a sdkAPI) CreateItem(ctx context.Context, params sdk.ItemCreateParams) (sdk.Item, error) {
 	return a.client.Items().Create(ctx, params)
 }
@@ -139,27 +134,28 @@ func (c *Client) SignIn(ctx context.Context, token string) error {
 	return err
 }
 
-// Vault returns the ID of the vault titled name that token can access,
-// creating the vault if there is none.
-func (c *Client) Vault(ctx context.Context, token, name string) (string, error) {
+// Vault is a vault a token can access.
+type Vault struct {
+	ID   string
+	Name string
+}
+
+// Vaults returns the vaults token can access, sorted by name.
+func (c *Client) Vaults(ctx context.Context, token string) ([]Vault, error) {
 	a, err := c.client(ctx, token)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	vaults, err := a.ListVaults(ctx)
+	list, err := a.ListVaults(ctx)
 	if err != nil {
-		return "", c.failed(token, a, "list vaults", err)
+		return nil, c.failed(token, a, "list vaults", err)
 	}
-	for _, v := range vaults {
-		if v.Title == name {
-			return v.ID, nil
-		}
+	out := make([]Vault, 0, len(list))
+	for _, v := range list {
+		out = append(out, Vault{ID: v.ID, Name: v.Title})
 	}
-	v, err := a.CreateVault(ctx, name)
-	if err != nil {
-		return "", c.failed(token, a, "create vault "+name, err)
-	}
-	return v.ID, nil
+	slices.SortFunc(out, func(a, b Vault) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
 }
 
 // CreateItem creates item as a Secure Note in a vault and returns its ID.

@@ -45,18 +45,25 @@ func TestConnectAndDisconnectOnePassword(t *testing.T) {
 	if err := s.SetVariables(ctx, web.ID, map[string]string{"A": "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("OnePassword() before connecting = %v, want ErrNotFound", err)
 	}
 
 	if err := s.SetOnePasswordItem(ctx, web.ID, "i1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ConnectOnePassword(ctx, "ops_token", "vault1"); err != nil {
+	want := OnePasswordConnection{Token: "ops_token", VaultID: "vault1", VaultName: "Infra"}
+	if err := s.ConnectOnePassword(ctx, want); err != nil {
 		t.Fatal(err)
 	}
-	if token, vault, err := s.OnePassword(ctx); err != nil || token != "ops_token" || vault != "vault1" {
-		t.Errorf("OnePassword() = %q, %q, %v", token, vault, err)
+	if got, err := s.OnePassword(ctx); err != nil || got != want {
+		t.Errorf("OnePassword() = %+v, %v; want %+v", got, err, want)
+	}
+	if err := s.exec(ctx, `DELETE FROM settings WHERE key = ?`, onePasswordVaultName); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.OnePassword(ctx); err != nil || got.Token != "ops_token" || got.VaultName != "" {
+		t.Errorf("OnePassword() without a vault name = %+v, %v; want connected, no name", got, err)
 	}
 	if rows := rawRows(t, s, `SELECT key FROM variables`); len(rows) != 0 {
 		t.Errorf("variables after connecting = %v, want none", rows)
@@ -73,7 +80,7 @@ func TestConnectAndDisconnectOnePassword(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
 		t.Errorf("OnePassword() after disconnecting = %v, want ErrNotFound", err)
 	}
 	if items, _ := s.OnePasswordItems(ctx); len(items) != 0 {
@@ -115,7 +122,7 @@ func TestMigrateOnePasswordItems(t *testing.T) {
 	if err := s.SetOnePasswordItem(ctx, "web", "i1"); err != nil {
 		t.Errorf("SetOnePasswordItem() after migrating: %v", err)
 	}
-	if _, _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
+	if _, err := s.OnePassword(ctx); !errors.Is(err, ErrNotFound) {
 		t.Errorf("1Password settings survived the migration: %v", err)
 	}
 	if v, err := s.Setting(ctx, "other"); err != nil || v != "kept" {

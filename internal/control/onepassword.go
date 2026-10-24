@@ -15,23 +15,49 @@ func (p *Plane) OnePassword(ctx context.Context) (variables.Status, error) {
 	return p.variables.Status(ctx)
 }
 
+// OnePasswordVaults returns the vaults a service account token can access,
+// sorted by name. The request is invalid if 1Password rejects the token.
+func (p *Plane) OnePasswordVaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errorf(ErrInvalid, "a service account token is required")
+	}
+	vaults, err := p.variables.Vaults(ctx, token)
+	if err != nil {
+		return nil, onePasswordError(ctx, err)
+	}
+	return vaults, nil
+}
+
 // ConnectOnePassword moves every service's variables into a 1Password vault
-// that a service account token can create, and keeps them there from then
-// on. The request is invalid if 1Password rejects the token. If 1Password
-// fails partway, shed.db keeps the variables and connecting again picks up
-// where it stopped.
-func (p *Plane) ConnectOnePassword(ctx context.Context, token string) (variables.Status, error) {
+// and keeps them there from then on. vault is the ID of a vault the token
+// can access; if it is empty, the token's only vault is used. The request is
+// invalid if 1Password rejects the token or there is no such vault. If
+// 1Password fails partway, shed.db keeps the variables and connecting again
+// picks up where it stopped.
+func (p *Plane) ConnectOnePassword(ctx context.Context, token, vault string) (variables.Status, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return variables.Status{}, errorf(ErrInvalid, "a service account token is required")
 	}
-	if err := p.variables.Connect(ctx, token); err != nil {
-		if errors.Is(err, onepassword.ErrInvalidToken) && ctx.Err() == nil {
-			return variables.Status{}, errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), "onepassword: "))
-		}
-		return variables.Status{}, err
+	if err := p.variables.Connect(ctx, token, strings.TrimSpace(vault)); err != nil {
+		return variables.Status{}, onePasswordError(ctx, err)
 	}
 	return p.variables.Status(ctx)
+}
+
+// onePasswordError makes a rejected token or a missing vault an invalid
+// request.
+func onePasswordError(ctx context.Context, err error) error {
+	switch {
+	case ctx.Err() != nil:
+		return err
+	case errors.Is(err, onepassword.ErrInvalidToken):
+		return errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), "onepassword: "))
+	case errors.Is(err, variables.ErrVault):
+		return errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), variables.ErrVault.Error()+": "))
+	}
+	return err
 }
 
 // DisconnectOnePassword copies every service's variables from 1Password back

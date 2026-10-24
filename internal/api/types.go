@@ -78,6 +78,12 @@ func toOnePassword(s variables.Status) onePasswordJSON {
 	return onePasswordJSON{Connected: s.Connected, Vault: s.Vault, Items: s.Items}
 }
 
+// onePasswordVaultJSON is a vault a service account token can access.
+type onePasswordVaultJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // restoreFenceJSON is the fence a failed restore left on a service.
 type restoreFenceJSON struct {
 	RestoreID string             `json:"restoreId"`

@@ -26,8 +26,11 @@ func (f *fakeOnePassword) SignIn(_ context.Context, token string) error {
 	return nil
 }
 
-func (f *fakeOnePassword) Vault(context.Context, string, string) (string, error) {
-	return "vault1", f.err
+func (f *fakeOnePassword) Vaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	if err := f.SignIn(ctx, token); err != nil {
+		return nil, err
+	}
+	return []onepassword.Vault{{ID: "vault1", Name: "Infra"}}, f.err
 }
 
 func (f *fakeOnePassword) CreateItem(_ context.Context, _, _ string, item onepassword.Item) (string, error) {
@@ -94,15 +97,24 @@ func TestOnePasswordConnection(t *testing.T) {
 	if msg, _ := got["error"].(string); !strings.Contains(msg, "1Password rejected the token") {
 		t.Errorf("error = %q, want the 1Password message", msg)
 	}
+	f.decode(f.do("POST", "/api/onepassword/vaults", `{"token":"wrong"}`), http.StatusBadRequest)
+	rec := f.do("POST", "/api/onepassword/vaults", `{"token":"tok"}`)
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `[{"id":"vault1","name":"Infra"}]` {
+		t.Errorf("POST vaults = %d %s, want the token's vaults", rec.Code, rec.Body)
+	}
+	got = f.decode(f.do("PUT", "/api/onepassword", `{"token":"tok","vault":"other"}`), http.StatusBadRequest)
+	if msg, _ := got["error"].(string); !strings.Contains(msg, "can't access vault other") {
+		t.Errorf("error = %q, want the vault message", msg)
+	}
 	f.onePassword.err = fmt.Errorf("%w: rate limited", onepassword.ErrRequest)
 	f.decode(f.do("PUT", "/api/onepassword", `{"token":"tok"}`), http.StatusBadGateway)
 	f.onePassword.err = nil
 
-	rec := f.do("PUT", "/api/onepassword", `{"token":"tok"}`)
+	rec = f.do("PUT", "/api/onepassword", `{"token":"tok","vault":"vault1"}`)
 	if strings.Contains(rec.Body.String(), "tok\"") {
 		t.Errorf("response contains the token: %s", rec.Body)
 	}
-	want(f.decode(rec, http.StatusOK), true, "shed", 1)
+	want(f.decode(rec, http.StatusOK), true, "Infra", 1)
 	f.decode(f.do("PUT", "/api/onepassword", `{"token":"tok"}`), http.StatusConflict)
 
 	vars := "/api/services/" + svc.ID + "/variables"

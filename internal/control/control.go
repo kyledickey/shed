@@ -25,6 +25,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/internal/variables"
@@ -160,7 +161,8 @@ type Variables interface {
 	Set(ctx context.Context, svc store.Service, vars map[string]string) error
 	Retitle(ctx context.Context, project store.Project, services []store.Service) error
 	Archive(ctx context.Context, svc store.Service) error
-	Connect(ctx context.Context, token string) error
+	Vaults(ctx context.Context, token string) ([]onepassword.Vault, error)
+	Connect(ctx context.Context, token, vaultID string) error
 	Disconnect(ctx context.Context) error
 	Status(ctx context.Context) (variables.Status, error)
 }

@@ -19,6 +19,7 @@ type fakeStore struct {
 	items    map[string]string
 	token    string
 	vault    string
+	name     string
 }
 
 func (s *fakeStore) Project(_ context.Context, id string) (store.Project, error) {
@@ -43,16 +44,16 @@ func (s *fakeStore) SetVariables(_ context.Context, id string, vars map[string]s
 	return nil
 }
 
-func (s *fakeStore) OnePassword(context.Context) (string, string, error) {
+func (s *fakeStore) OnePassword(context.Context) (store.OnePasswordConnection, error) {
 	if s.token == "" {
-		return "", "", store.ErrNotFound
+		return store.OnePasswordConnection{}, store.ErrNotFound
 	}
-	return s.token, s.vault, nil
+	return store.OnePasswordConnection{Token: s.token, VaultID: s.vault, VaultName: s.name}, nil
 }
 
-func (s *fakeStore) ConnectOnePassword(_ context.Context, token, vault string) error {
+func (s *fakeStore) ConnectOnePassword(_ context.Context, c store.OnePasswordConnection) error {
 	clear(s.vars)
-	s.token, s.vault = token, vault
+	s.token, s.vault, s.name = c.Token, c.VaultID, c.VaultName
 	return nil
 }
 
@@ -60,7 +61,7 @@ func (s *fakeStore) DisconnectOnePassword(_ context.Context, vars map[string]map
 	for id, v := range vars {
 		s.vars[id] = maps.Clone(v)
 	}
-	s.token, s.vault = "", ""
+	s.token, s.vault, s.name = "", "", ""
 	clear(s.items)
 	return nil
 }
@@ -81,9 +82,10 @@ func (s *fakeStore) SetOnePasswordItem(_ context.Context, id, item string) error
 	return nil
 }
 
-// fakeOnePassword is a 1Password account that accepts the token "tok".
+// fakeOnePassword is a 1Password account that accepts the token "tok",
+// which can access vaults.
 type fakeOnePassword struct {
-	vaults  map[string]string // ID by name
+	vaults  []onepassword.Vault
 	items   map[string]onepassword.Item
 	created int
 	reads   int
@@ -93,7 +95,10 @@ type fakeOnePassword struct {
 }
 
 func newOnePassword() *fakeOnePassword {
-	return &fakeOnePassword{vaults: make(map[string]string), items: make(map[string]onepassword.Item)}
+	return &fakeOnePassword{
+		vaults: []onepassword.Vault{{ID: "v1", Name: "Infra"}},
+		items:  make(map[string]onepassword.Item),
+	}
 }
 
 func (f *fakeOnePassword) Preload(context.Context, string) {}
@@ -105,11 +110,11 @@ func (f *fakeOnePassword) SignIn(_ context.Context, token string) error {
 	return nil
 }
 
-func (f *fakeOnePassword) Vault(_ context.Context, _, name string) (string, error) {
-	if _, ok := f.vaults[name]; !ok {
-		f.vaults[name] = "vault-" + name
+func (f *fakeOnePassword) Vaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	if err := f.SignIn(ctx, token); err != nil {
+		return nil, err
 	}
-	return f.vaults[name], nil
+	return f.vaults, nil
 }
 
 func (f *fakeOnePassword) CreateItem(_ context.Context, _, _ string, item onepassword.Item) (string, error) {
@@ -186,7 +191,7 @@ func newKeeper() (*Keeper, *fakeStore, *fakeOnePassword) {
 
 func connect(t *testing.T, k *Keeper) {
 	t.Helper()
-	if err := k.Connect(context.Background(), "tok"); err != nil {
+	if err := k.Connect(context.Background(), "tok", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -206,26 +211,58 @@ func TestConnectMovesVariablesToItems(t *testing.T) {
 	if len(st.vars) != 0 {
 		t.Errorf("shed.db still has variables %v", st.vars)
 	}
-	if st.token != "tok" || st.vault != "vault-shed" {
-		t.Errorf("connection = %q, %q; want the token and the shed vault", st.token, st.vault)
+	if st.token != "tok" || st.vault != "v1" {
+		t.Errorf("connection = %q, %q; want the token and its only vault", st.token, st.vault)
 	}
 	got, err := k.Status(ctx)
-	if err != nil || got != (Status{Connected: true, Vault: "shed", Items: 2}) {
+	if err != nil || got != (Status{Connected: true, Vault: "Infra", Items: 2}) {
 		t.Errorf("Status = %+v, %v", got, err)
 	}
-	if err := k.Connect(ctx, "tok"); !errors.Is(err, ErrConnected) {
+	if err := k.Connect(ctx, "tok", ""); !errors.Is(err, ErrConnected) {
 		t.Errorf("Connect while connected = %v, want ErrConnected", err)
 	}
 }
 
 func TestConnectRejectedToken(t *testing.T) {
 	k, st, op := newKeeper()
-	err := k.Connect(context.Background(), "wrong")
+	err := k.Connect(context.Background(), "wrong", "")
 	if !errors.Is(err, onepassword.ErrInvalidToken) {
 		t.Errorf("Connect = %v, want ErrInvalidToken", err)
 	}
-	if st.token != "" || len(op.vaults) != 0 || len(st.vars) != 2 {
-		t.Errorf("a rejected token changed state: token %q, vaults %v, vars %v", st.token, op.vaults, st.vars)
+	if st.token != "" || len(op.items) != 0 || len(st.vars) != 2 {
+		t.Errorf("a rejected token changed state: token %q, items %v, vars %v", st.token, op.items, st.vars)
+	}
+}
+
+func TestConnectPicksVault(t *testing.T) {
+	ctx := context.Background()
+	several := []onepassword.Vault{{ID: "v1", Name: "Infra"}, {ID: "v2", Name: "shed"}}
+	for _, tt := range []struct {
+		name   string
+		vaults []onepassword.Vault
+		id     string
+		want   string // vault ID connected to; "" for ErrVault
+	}{
+		{"only vault", several[:1], "", "v1"},
+		{"chosen", several, "v2", "v2"},
+		{"none", nil, "", ""},
+		{"several, none chosen", several, "", ""},
+		{"not accessible", several, "v3", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			k, st, op := newKeeper()
+			op.vaults = tt.vaults
+			err := k.Connect(ctx, "tok", tt.id)
+			if tt.want == "" {
+				if !errors.Is(err, ErrVault) || st.token != "" || len(op.items) != 0 {
+					t.Errorf("Connect = %v with token %q, items %v; want ErrVault and nothing changed", err, st.token, op.items)
+				}
+				return
+			}
+			if err != nil || st.vault != tt.want {
+				t.Errorf("Connect = %v to vault %q, want %q", err, st.vault, tt.want)
+			}
+		})
 	}
 }
 
@@ -233,7 +270,7 @@ func TestConnectConvergesAfterFailure(t *testing.T) {
 	ctx := context.Background()
 	k, st, op := newKeeper()
 	op.failCreate = "shop / db"
-	if err := k.Connect(ctx, "tok"); !errors.Is(err, onepassword.ErrRequest) {
+	if err := k.Connect(ctx, "tok", ""); !errors.Is(err, onepassword.ErrRequest) {
 		t.Fatalf("Connect = %v, want the 1Password failure", err)
 	}
 	if st.token != "" || len(st.vars) != 2 || st.vars[db.ID]["PASSWORD"] != "secret" {

@@ -18,13 +18,17 @@ import (
 type fakeOnePassword struct {
 	mu      sync.Mutex
 	items   map[string]onepassword.Item
+	vaults  []onepassword.Vault
 	created int
 	// err, if set, fails every request but signing in.
 	err error
 }
 
 func newFakeOnePassword() *fakeOnePassword {
-	return &fakeOnePassword{items: make(map[string]onepassword.Item)}
+	return &fakeOnePassword{
+		items:  make(map[string]onepassword.Item),
+		vaults: []onepassword.Vault{{ID: "vault1", Name: "Infra"}},
+	}
 }
 
 func (f *fakeOnePassword) fail(err error) {
@@ -49,10 +53,13 @@ func (f *fakeOnePassword) SignIn(_ context.Context, token string) error {
 	return nil
 }
 
-func (f *fakeOnePassword) Vault(context.Context, string, string) (string, error) {
+func (f *fakeOnePassword) Vaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	if err := f.SignIn(ctx, token); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return "vault1", f.err
+	return f.vaults, f.err
 }
 
 func (f *fakeOnePassword) CreateItem(_ context.Context, _, _ string, item onepassword.Item) (string, error) {
@@ -123,7 +130,7 @@ var errRateLimited = fmt.Errorf("%w: rate limited", onepassword.ErrRequest)
 // connect connects 1Password with the fixture's fake account.
 func (f *fixture) connect(t *testing.T) {
 	t.Helper()
-	if _, err := f.plane.ConnectOnePassword(context.Background(), "tok"); err != nil {
+	if _, err := f.plane.ConnectOnePassword(context.Background(), "tok", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,20 +157,22 @@ func TestConnectOnePassword(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := f.plane.ConnectOnePassword(ctx, "  ")
+	_, err := f.plane.ConnectOnePassword(ctx, "  ", "")
 	wantKind(t, err, ErrInvalid, "token is required")
-	_, err = f.plane.ConnectOnePassword(ctx, "wrong")
+	_, err = f.plane.ConnectOnePassword(ctx, "wrong", "")
 	wantKind(t, err, ErrInvalid, "1Password rejected the token")
+	_, err = f.plane.ConnectOnePassword(ctx, "tok", "nope")
+	wantKind(t, err, ErrInvalid, "can't access vault nope")
 	f.op.fail(errRateLimited)
-	_, err = f.plane.ConnectOnePassword(ctx, "tok")
+	_, err = f.plane.ConnectOnePassword(ctx, "tok", "")
 	wantKind(t, err, ErrUpstream, "rate limited")
 	if got, _ := f.st.Variables(ctx, svc.ID); got["API_KEY"] != "k" {
 		t.Fatalf("variables after failed connects = %v, want them kept in shed.db", got)
 	}
 	f.op.fail(nil)
 
-	got, err := f.plane.ConnectOnePassword(ctx, " tok ")
-	if err != nil || got != (variables.Status{Connected: true, Vault: "shed", Items: 1}) {
+	got, err := f.plane.ConnectOnePassword(ctx, " tok ", "")
+	if err != nil || got != (variables.Status{Connected: true, Vault: "Infra", Items: 1}) {
 		t.Fatalf("ConnectOnePassword() = %+v, %v", got, err)
 	}
 	if item := f.itemOf(t, svc.ID); item.Variables["API_KEY"] != "k" {
@@ -172,13 +181,31 @@ func TestConnectOnePassword(t *testing.T) {
 	if got, _ := f.st.Variables(ctx, svc.ID); len(got) != 0 {
 		t.Errorf("shed.db still has %v", got)
 	}
-	if token, _, err := f.st.OnePassword(ctx); err != nil || token != "tok" {
-		t.Errorf("saved token = %q, %v; want it trimmed", token, err)
+	if c, err := f.st.OnePassword(ctx); err != nil || c.Token != "tok" {
+		t.Errorf("saved token = %q, %v; want it trimmed", c.Token, err)
 	}
-	_, err = f.plane.ConnectOnePassword(ctx, "tok")
+	_, err = f.plane.ConnectOnePassword(ctx, "tok", "")
 	wantKind(t, err, ErrConflict, "already connected")
 	if got, err := f.plane.OnePassword(ctx); err != nil || !got.Connected {
 		t.Errorf("OnePassword() = %+v, %v", got, err)
+	}
+}
+
+func TestOnePasswordVaults(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.op.vaults = []onepassword.Vault{{ID: "v1", Name: "Infra"}, {ID: "v2", Name: "shed"}}
+
+	_, err := f.plane.OnePasswordVaults(ctx, "wrong")
+	wantKind(t, err, ErrInvalid, "1Password rejected the token")
+	got, err := f.plane.OnePasswordVaults(ctx, " tok ")
+	if err != nil || !slices.Equal(got, f.op.vaults) {
+		t.Errorf("OnePasswordVaults() = %v, %v; want %v", got, err, f.op.vaults)
+	}
+	_, err = f.plane.ConnectOnePassword(ctx, "tok", "")
+	wantKind(t, err, ErrInvalid, "can access 2 vaults; choose one")
+	if s, err := f.plane.ConnectOnePassword(ctx, "tok", "v2"); err != nil || s.Vault != "shed" {
+		t.Errorf("ConnectOnePassword(v2) = %+v, %v; want the chosen vault", s, err)
 	}
 }
 
