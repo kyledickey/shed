@@ -59,10 +59,9 @@ export function OnePasswordCard({ status }: { status: OnePassword }) {
       }
     >
       <p className={styles.intro}>
-        Keep every service's variables in your 1Password account instead of on this server. On
-        1Password.com, create a service account that's allowed to create vaults, and paste its token
-        here. shed creates a vault named shed, adds an item for each service, and moves your
-        variables into it.{" "}
+        {status.connected
+          ? "Every service's variables are kept in the shed vault in your 1Password account. Edit them on a service's Variables tab or in the 1Password app; edits made in the app apply on the next deploy."
+          : "Keep every service's variables in your 1Password account instead of on this server. On 1Password.com, create a service account that's allowed to create vaults, and paste its token here. shed creates a vault named shed, adds an item for each service, and moves your variables into it."}{" "}
         <Link to="/docs/$slug" params={{ slug: "onepassword" }} className={styles.docs}>
           Docs <ArrowRight size={12} />
         </Link>

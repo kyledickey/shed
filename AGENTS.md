@@ -26,6 +26,8 @@ internal/build     clone a commit, build an image (Dockerfile or Railpack)
 internal/proxy     embedded Caddy, Apply(routes)
 internal/github    GitHub App: manifest, tokens, repos, CI status, OAuth, webhooks
 internal/vars      ${{ KEY }} / ${{ service.KEY }} reference resolution
+internal/onepassword 1Password vault and item operations (service account)
+internal/variables where variables live: shed.db or a 1Password vault
 internal/catalog   database templates
 internal/s3        S3-compatible object storage client
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
