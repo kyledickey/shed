@@ -39,6 +39,7 @@ import (
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
 	"github.com/kyledickey/shed/web"
 )
 
@@ -153,8 +154,10 @@ func run() error {
 		routes = px
 	}
 
-	onePassword := onepassword.New(version, log)
-	preloadOnePassword(ctx, st, onePassword, log)
+	vars := variables.New(st, onepassword.New(version, log))
+	if err := vars.Preload(ctx); err != nil {
+		log.Warn("load 1Password", "err", err)
+	}
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
@@ -174,7 +177,7 @@ func run() error {
 			}
 			return nil, false
 		},
-		OnePassword:     onePassword,
+		Variables:       vars,
 		LogDir:          logDir,
 		LogLimit:        int64(cfg.Deployments.LogMaxMB) << 20,
 		KeepDeployments: cfg.Deployments.Keep,
@@ -239,10 +242,10 @@ func run() error {
 			}
 			return nil, false
 		},
-		OnePassword: onePassword,
-		BaseURL:     cfg.Server.URL,
-		BaseDomain:  cfg.Proxy.BaseDomain,
-		Log:         log,
+		Variables:  vars,
+		BaseURL:    cfg.Server.URL,
+		BaseDomain: cfg.Proxy.BaseDomain,
+		Log:        log,
 	})
 
 	server, err := api.New(ctx, api.Config{
@@ -320,23 +323,6 @@ func (s updateSettings) Setting(ctx context.Context, key string) (string, bool, 
 
 func (s updateSettings) SetSetting(ctx context.Context, key, value string) error {
 	return s.st.SetSetting(ctx, key, value)
-}
-
-// preloadOnePassword loads the 1Password SDK in the background with the
-// token of the first service whose link has one, so the first deployment that
-// reads an Environment does not wait for it.
-func preloadOnePassword(ctx context.Context, st *store.Store, op *onepassword.Client, log *slog.Logger) {
-	svcs, err := st.AllServices(ctx)
-	if err != nil {
-		log.Warn("load 1Password", "err", err)
-		return
-	}
-	for _, svc := range svcs {
-		if link, err := st.OnePasswordLink(ctx, svc.ID); err == nil && link.Token != "" {
-			op.Preload(ctx, link.Token)
-			return
-		}
-	}
 }
 
 // backupServices adapts the deployer to backup.Services.

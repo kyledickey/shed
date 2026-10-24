@@ -67,9 +67,18 @@ func (p *Plane) CreateProject(ctx context.Context, name string) (ProjectView, er
 	return p.projectView(ctx, pr)
 }
 
-// RenameProject renames a project.
+// RenameProject renames a project and retitles its services' 1Password
+// items. If 1Password fails, the old name is kept.
 func (p *Plane) RenameProject(ctx context.Context, id, name string) (ProjectView, error) {
 	name, err := projectName(name)
+	if err != nil {
+		return ProjectView{}, err
+	}
+	old, err := p.store.Project(ctx, id)
+	if err != nil {
+		return ProjectView{}, err
+	}
+	services, err := p.store.Services(ctx, id)
 	if err != nil {
 		return ProjectView{}, err
 	}
@@ -78,6 +87,17 @@ func (p *Plane) RenameProject(ctx context.Context, id, name string) (ProjectView
 		return ProjectView{}, errorf(ErrConflict, "a project named %q already exists", name)
 	}
 	if err != nil {
+		return ProjectView{}, err
+	}
+	renamed := old
+	renamed.Name = name
+	if err := p.variables.Retitle(ctx, renamed, services); err != nil {
+		if rerr := p.store.RenameProject(ctx, id, old.Name); rerr != nil {
+			p.log.Error("restore project name", "project", id, "err", rerr)
+		}
+		if rerr := p.variables.Retitle(ctx, old, services); rerr != nil {
+			p.log.Warn("restore 1Password item titles", "project", old.Name, "err", rerr)
+		}
 		return ProjectView{}, err
 	}
 	return p.Project(ctx, id)
@@ -99,6 +119,7 @@ func (p *Plane) DeleteProject(ctx context.Context, id string) error {
 		return err
 	}
 	defer resume()
+	p.archiveItems(ctx, services...)
 	if err := p.deployer.DeleteProject(ctx, id); err != nil {
 		return err
 	}

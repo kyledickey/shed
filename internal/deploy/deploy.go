@@ -71,10 +71,10 @@ type GitHub interface {
 	CIStatus(ctx context.Context, repo, sha string) (github.CIState, error)
 }
 
-// OnePassword reads 1Password Environments, each with the service account
-// token of the link that names it. *onepassword.Client implements it.
-type OnePassword interface {
-	EnvironmentVariables(ctx context.Context, token, environmentID string) (map[string]string, error)
+// Variables reads the own variables of services from where they are kept,
+// which may be 1Password. *variables.Keeper implements it.
+type Variables interface {
+	Get(ctx context.Context, svc store.Service) (map[string]string, error)
 }
 
 // Config configures a Deployer.
@@ -87,9 +87,9 @@ type Config struct {
 	// GitHub returns the GitHub client, or false while the GitHub App is not
 	// configured.
 	GitHub func() (GitHub, bool)
-	// OnePassword reads the 1Password Environments services link. Nil fails
-	// deployments of services that link one.
-	OnePassword OnePassword
+	// Variables reads the variables of services for deployments. Nil reads
+	// the ones saved in Store.
+	Variables Variables
 	// LogDir holds the build logs, one <deploymentID>.log per deployment.
 	LogDir string
 	// LogLimit caps each build log, in bytes. Output beyond it is replaced
@@ -152,17 +152,17 @@ var (
 
 // Deployer runs deployments. It is safe for concurrent use.
 type Deployer struct {
-	store       *store.Store
-	docker      Docker
-	builder     Builder
-	proxy       Proxy
-	github      func() (GitHub, bool)
-	onePassword OnePassword
-	logDir      string
-	logLimit    int64
-	keep        int // deployments kept per service; 0 keeps all
-	dashboard   proxy.Route
-	log         *slog.Logger
+	store     *store.Store
+	docker    Docker
+	builder   Builder
+	proxy     Proxy
+	github    func() (GitHub, bool)
+	variables Variables
+	logDir    string
+	logLimit  int64
+	keep      int // deployments kept per service; 0 keeps all
+	dashboard proxy.Route
+	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
 	ciInterval     time.Duration
@@ -206,13 +206,13 @@ type worker struct {
 // Stop on shutdown.
 func New(cfg Config) *Deployer {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &Deployer{
+	d := &Deployer{
 		store:            cfg.Store,
 		docker:           cfg.Docker,
 		builder:          cfg.Builder,
 		proxy:            cfg.Proxy,
 		github:           cfg.GitHub,
-		onePassword:      cfg.OnePassword,
+		variables:        cfg.Variables,
 		logDir:           cfg.LogDir,
 		logLimit:         cfg.LogLimit,
 		keep:             cfg.KeepDeployments,
@@ -236,6 +236,10 @@ func New(cfg Config) *Deployer {
 		deletingProjects: make(map[string]bool),
 		held:             make(map[string]string),
 	}
+	if d.variables == nil {
+		d.variables = savedVariables{cfg.Store}
+	}
+	return d
 }
 
 // Stop cancels running deployments and waits for the workers to exit.

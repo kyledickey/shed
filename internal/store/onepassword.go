@@ -5,72 +5,134 @@ import (
 	"fmt"
 )
 
-const onePasswordLinkCols = `service_id, environment, token, created_at`
+// The settings of the 1Password connection.
+const (
+	onePasswordToken = "onepassword.token"
+	onePasswordVault = "onepassword.vault"
+)
 
-func (s *Store) scanOnePasswordLink(r scanner) (OnePasswordLink, error) {
-	var l OnePasswordLink
-	if err := r.Scan(&l.ServiceID, &l.Environment, &l.Token, (*timestamp)(&l.CreatedAt)); err != nil {
-		return OnePasswordLink{}, err
+// OnePassword returns the service account token and vault ID of the
+// 1Password connection, or ErrNotFound while 1Password is not connected.
+func (s *Store) OnePassword(ctx context.Context) (token, vaultID string, err error) {
+	if token, err = s.Setting(ctx, onePasswordToken); err != nil {
+		return "", "", err
 	}
-	if l.Token == "" {
-		return l, nil
+	if vaultID, err = s.Setting(ctx, onePasswordVault); err != nil {
+		return "", "", err
 	}
-	token, err := s.crypt.open(l.Token, onePasswordLinkAD(l.ServiceID))
-	if err != nil {
-		return OnePasswordLink{}, fmt.Errorf("token: %w", err)
-	}
-	l.Token = token
-	return l, nil
+	return token, vaultID, nil
 }
 
-// OnePasswordLink returns the 1Password link of a service, or ErrNotFound if
-// it has none.
-func (s *Store) OnePasswordLink(ctx context.Context, serviceID string) (OnePasswordLink, error) {
-	l, err := queryOne(ctx, s, s.scanOnePasswordLink,
-		`SELECT `+onePasswordLinkCols+` FROM onepassword_links WHERE service_id = ?`, serviceID)
-	if err != nil {
-		return OnePasswordLink{}, fmt.Errorf("store: 1Password link of service %s: %w", serviceID, err)
+// ConnectOnePassword deletes the variables of every service, whose values
+// now live in 1Password, and saves the connection's vault ID and then its
+// token, in one transaction.
+func (s *Store) ConnectOnePassword(ctx context.Context, token, vaultID string) error {
+	if err := s.connectOnePassword(ctx, token, vaultID); err != nil {
+		return fmt.Errorf("store: connect 1Password: %w", err)
 	}
-	return l, nil
+	return nil
 }
 
-// OnePasswordLinks returns the 1Password links of a project's services by
+func (s *Store) connectOnePassword(ctx context.Context, token, vaultID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM variables`); err != nil {
+		return err
+	}
+	for _, kv := range [][2]string{{onePasswordVault, vaultID}, {onePasswordToken, token}} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+			kv[0], s.crypt.seal(kv[1], settingAD(kv[0]))); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DisconnectOnePassword saves the variables of services, by service ID, in
+// place of their current ones, and deletes the 1Password connection and
+// every service's item record, in one transaction.
+func (s *Store) DisconnectOnePassword(ctx context.Context, vars map[string]map[string]string) error {
+	if err := s.disconnectOnePassword(ctx, vars); err != nil {
+		return fmt.Errorf("store: disconnect 1Password: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) disconnectOnePassword(ctx context.Context, vars map[string]map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for serviceID, v := range vars {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM variables WHERE service_id = ?`, serviceID); err != nil {
+			return err
+		}
+		for k, value := range v {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO variables (service_id, key, value) VALUES (?, ?, ?)`,
+				serviceID, k, s.crypt.seal(value, variableAD(serviceID, k))); err != nil {
+				return err
+			}
+		}
+	}
+	for _, q := range []string{
+		`DELETE FROM settings WHERE key IN ('` + onePasswordToken + `', '` + onePasswordVault + `')`,
+		`DELETE FROM onepassword_items`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// OnePasswordItem returns the ID of the 1Password item that holds a
+// service's variables, or ErrNotFound if none is recorded.
+func (s *Store) OnePasswordItem(ctx context.Context, serviceID string) (string, error) {
+	id, err := queryOne(ctx, s, scanString,
+		`SELECT item_id FROM onepassword_items WHERE service_id = ?`, serviceID)
+	if err != nil {
+		return "", fmt.Errorf("store: 1Password item of service %s: %w", serviceID, err)
+	}
+	return id, nil
+}
+
+// OnePasswordItems returns the IDs of the 1Password items of services by
 // service ID.
-func (s *Store) OnePasswordLinks(ctx context.Context, projectID string) (map[string]OnePasswordLink, error) {
-	links, err := queryAll(ctx, s, s.scanOnePasswordLink, `SELECT `+onePasswordLinkCols+`
-		FROM onepassword_links
-		WHERE service_id IN (SELECT id FROM services WHERE project_id = ?)`, projectID)
+func (s *Store) OnePasswordItems(ctx context.Context) (map[string]string, error) {
+	rows, err := queryAll(ctx, s, func(r scanner) ([2]string, error) {
+		var row [2]string
+		err := r.Scan(&row[0], &row[1])
+		return row, err
+	}, `SELECT service_id, item_id FROM onepassword_items`)
 	if err != nil {
-		return nil, fmt.Errorf("store: 1Password links of project %s: %w", projectID, err)
+		return nil, fmt.Errorf("store: 1Password items: %w", err)
 	}
-	out := make(map[string]OnePasswordLink, len(links))
-	for _, l := range links {
-		out[l.ServiceID] = l
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r[0]] = r[1]
 	}
 	return out, nil
 }
 
-// SetOnePasswordLink links l.ServiceID to l.Environment with l.Token,
-// replacing its current link, which keeps its creation time.
-func (s *Store) SetOnePasswordLink(ctx context.Context, l OnePasswordLink) error {
-	token := ""
-	if l.Token != "" {
-		token = s.crypt.seal(l.Token, onePasswordLinkAD(l.ServiceID))
-	}
-	err := s.exec(ctx, `INSERT INTO onepassword_links (`+onePasswordLinkCols+`) VALUES (?, ?, ?, ?)
-		ON CONFLICT (service_id) DO UPDATE SET environment = excluded.environment, token = excluded.token`,
-		l.ServiceID, l.Environment, token, formatTime(now()))
+// SetOnePasswordItem records the 1Password item that holds a service's
+// variables, in place of the one recorded.
+func (s *Store) SetOnePasswordItem(ctx context.Context, serviceID, itemID string) error {
+	err := s.exec(ctx, `INSERT INTO onepassword_items (service_id, item_id) VALUES (?, ?)
+		ON CONFLICT (service_id) DO UPDATE SET item_id = excluded.item_id`, serviceID, itemID)
 	if err != nil {
-		return fmt.Errorf("store: set 1Password link of service %s: %w", l.ServiceID, err)
+		return fmt.Errorf("store: set 1Password item of service %s: %w", serviceID, err)
 	}
 	return nil
 }
 
-// DeleteOnePasswordLink removes the 1Password link of a service, if it has
-// one.
-func (s *Store) DeleteOnePasswordLink(ctx context.Context, serviceID string) error {
-	if err := s.exec(ctx, `DELETE FROM onepassword_links WHERE service_id = ?`, serviceID); err != nil {
-		return fmt.Errorf("store: delete 1Password link of service %s: %w", serviceID, err)
-	}
-	return nil
+func scanString(r scanner) (string, error) {
+	var v string
+	err := r.Scan(&v)
+	return v, err
 }

@@ -57,7 +57,6 @@ type api interface {
 	GetItems(ctx context.Context, vaultID string, itemIDs []string) (sdk.ItemsGetAllResponse, error)
 	PutItem(ctx context.Context, item sdk.Item) (sdk.Item, error)
 	ArchiveItem(ctx context.Context, vaultID, itemID string) error
-	GetVariables(ctx context.Context, environmentID string) (sdk.GetVariablesResponse, error)
 }
 
 // Client reads and writes 1Password vaults and items, each call with the
@@ -120,10 +119,6 @@ func (a sdkAPI) PutItem(ctx context.Context, item sdk.Item) (sdk.Item, error) {
 
 func (a sdkAPI) ArchiveItem(ctx context.Context, vaultID, itemID string) error {
 	return a.client.Items().Archive(ctx, vaultID, itemID)
-}
-
-func (a sdkAPI) GetVariables(ctx context.Context, environmentID string) (sdk.GetVariablesResponse, error) {
-	return a.client.Environments().GetVariables(ctx, environmentID)
 }
 
 // Preload signs in with token in the background, which loads the SDK core,
@@ -260,24 +255,6 @@ func (c *Client) Archive(ctx context.Context, token, vaultID, itemID string) err
 		return c.failed(token, a, "archive item "+itemID, err)
 	}
 	return nil
-}
-
-// EnvironmentVariables returns the variables of an Environment, read with
-// token.
-func (c *Client) EnvironmentVariables(ctx context.Context, token, environmentID string) (map[string]string, error) {
-	a, err := c.client(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := a.GetVariables(ctx, environmentID)
-	if err != nil {
-		return nil, c.failed(token, a, "read Environment "+environmentID, err)
-	}
-	vars := make(map[string]string, len(resp.Variables))
-	for _, v := range resp.Variables {
-		vars[v.Name] = v.Value
-	}
-	return vars, nil
 }
 
 // update reads an item, changes it with change, and writes it back.

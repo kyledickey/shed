@@ -507,15 +507,11 @@ func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep s
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		r, err := d.environment(ctx, svc, project, dep.CommitSHA, nil)
+		r, err := d.environment(ctx, svc, project, dep.CommitSHA, d.saved)
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		keys, err := d.secretKeys(ctx, svc, r)
-		if err != nil {
-			return store.DeploymentRuntime{}, err
-		}
-		return runtimeOf(svc, r.Env, keys, vols), nil
+		return runtimeOf(svc, r.Env, secretKeys(r), vols), nil
 	}
 	rt := *dep.Runtime
 	rt.Volumes = nil

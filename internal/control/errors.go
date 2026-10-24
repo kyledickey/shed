@@ -9,6 +9,7 @@ import (
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // The kinds of failure an [*Error] reports.
@@ -76,7 +77,8 @@ var known = []struct {
 	{backup.ErrInvalid, ErrInvalid, ""},
 	{backup.ErrNoVolumes, ErrInvalid, "service has no volumes to back up"},
 	{backup.ErrBusy, ErrConflict, "a backup or restore is already in progress"},
-	{deploy.ErrNoOnePasswordToken, ErrConflict, ""},
+	{variables.ErrConnected, ErrConflict, "1Password is already connected; disconnect it first"},
+	{onepassword.ErrItemMissing, ErrConflict, ""},
 	{onepassword.ErrInvalidToken, ErrUpstream, ""},
 	{onepassword.ErrRequest, ErrUpstream, ""},
 	{update.ErrUnsupported, ErrConflict, "this build of shed cannot update itself"},

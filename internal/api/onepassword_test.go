@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,77 +11,132 @@ import (
 	"github.com/kyledickey/shed/internal/onepassword"
 )
 
-// fakeOnePassword serves envs, each to the token "<id>-token" only.
+// fakeOnePassword is a 1Password account that accepts the token "tok".
 type fakeOnePassword struct {
-	envs    map[string]map[string]string
-	readErr error
+	items map[string]onepassword.Item
+	err   error // fails every request but signing in
 }
 
-func (f *fakeOnePassword) EnvironmentVariables(_ context.Context, token, id string) (map[string]string, error) {
-	if f.readErr != nil {
-		return nil, f.readErr
+func (f *fakeOnePassword) Preload(context.Context, string) {}
+
+func (f *fakeOnePassword) SignIn(_ context.Context, token string) error {
+	if token != "tok" {
+		return fmt.Errorf("%w: invalid service account token", onepassword.ErrInvalidToken)
 	}
-	if token != id+"-token" {
-		return nil, fmt.Errorf("%w: invalid service account token", onepassword.ErrInvalidToken)
-	}
-	return f.envs[id], nil
+	return nil
 }
 
-func TestOnePasswordLink(t *testing.T) {
+func (f *fakeOnePassword) Vault(context.Context, string, string) (string, error) {
+	return "vault1", f.err
+}
+
+func (f *fakeOnePassword) CreateItem(_ context.Context, _, _ string, item onepassword.Item) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	id := fmt.Sprintf("item%d", len(f.items)+1)
+	item.Variables = maps.Clone(item.Variables)
+	f.items[id] = item
+	return id, nil
+}
+
+func (f *fakeOnePassword) Variables(_ context.Context, _, _ string, ids []string) (map[string]map[string]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[string]map[string]string)
+	for _, id := range ids {
+		item, ok := f.items[id]
+		if !ok {
+			return nil, &onepassword.MissingItemError{ItemID: id}
+		}
+		out[id] = maps.Clone(item.Variables)
+	}
+	return out, nil
+}
+
+func (f *fakeOnePassword) SetVariables(_ context.Context, _, _, id string, vars map[string]string) error {
+	if f.err != nil {
+		return f.err
+	}
+	item, ok := f.items[id]
+	if !ok {
+		return &onepassword.MissingItemError{ItemID: id}
+	}
+	item.Variables = maps.Clone(vars)
+	f.items[id] = item
+	return nil
+}
+
+func (f *fakeOnePassword) Retitle(context.Context, string, string, string, string, []string) error {
+	return f.err
+}
+
+func (f *fakeOnePassword) Archive(_ context.Context, _, _, id string) error {
+	delete(f.items, id)
+	return f.err
+}
+
+func TestOnePasswordConnection(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.onePassword.envs = map[string]map[string]string{"env1": {"API_KEY": "k"}}
-	target := "/api/services/" + svc.ID + "/onepassword"
+	f.decode(f.do("PUT", "/api/services/"+svc.ID+"/variables", `{"API_KEY":"k"}`), http.StatusOK)
 
-	if got := f.decode(f.do("GET", "/api/services/"+svc.ID, ""), http.StatusOK); got["onePassword"] != nil {
-		t.Fatalf("unlinked service onePassword = %v, want null", got["onePassword"])
+	want := func(got map[string]any, connected bool, vault string, items float64) {
+		t.Helper()
+		if got["connected"] != connected || got["vault"] != vault || got["items"] != items || len(got) != 3 {
+			t.Errorf("OnePassword = %v, want connected %v, vault %q, items %v", got, connected, vault, items)
+		}
 	}
-	got := f.decode(f.do("PUT", target, `{"environment":"env1","token":"wrong"}`), http.StatusBadRequest)
+	want(f.decode(f.do("GET", "/api/onepassword", ""), http.StatusOK), false, "", 0)
+
+	got := f.decode(f.do("PUT", "/api/onepassword", `{"token":"wrong"}`), http.StatusBadRequest)
 	if msg, _ := got["error"].(string); !strings.Contains(msg, "1Password rejected the token") {
 		t.Errorf("error = %q, want the 1Password message", msg)
 	}
-	f.decode(f.do("PUT", target, `{"environment":"Not Valid","token":"env1-token"}`), http.StatusBadRequest)
-	if got := f.decode(f.do("GET", "/api/services/"+svc.ID, ""), http.StatusOK); got["onePassword"] != nil {
-		t.Fatalf("rejected link saved: %v", got["onePassword"])
-	}
+	f.onePassword.err = fmt.Errorf("%w: rate limited", onepassword.ErrRequest)
+	f.decode(f.do("PUT", "/api/onepassword", `{"token":"tok"}`), http.StatusBadGateway)
+	f.onePassword.err = nil
 
-	rec := f.do("PUT", target, `{"environment":"env1","token":"env1-token"}`)
-	if strings.Contains(rec.Body.String(), "env1-token") {
+	rec := f.do("PUT", "/api/onepassword", `{"token":"tok"}`)
+	if strings.Contains(rec.Body.String(), "tok\"") {
 		t.Errorf("response contains the token: %s", rec.Body)
 	}
-	got = f.decode(rec, http.StatusOK)
-	if link, _ := got["onePassword"].(map[string]any); link["environment"] != "env1" || link["hasToken"] != true || len(link) != 2 {
-		t.Errorf("onePassword = %v, want env1 with a token", got["onePassword"])
-	}
-	for _, path := range []string{"/api/services/" + svc.ID, "/api/projects/" + svc.ProjectID} {
-		if rec := f.do("GET", path, ""); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "env1-token") {
-			t.Errorf("GET %s = %d, contains the token: %s", path, rec.Code, rec.Body)
-		}
-	}
-	// A blank token keeps the saved one.
-	f.decode(f.do("PUT", target, `{"environment":"env1"}`), http.StatusOK)
+	want(f.decode(rec, http.StatusOK), true, "shed", 1)
+	f.decode(f.do("PUT", "/api/onepassword", `{"token":"tok"}`), http.StatusConflict)
 
-	got = f.decode(f.do("DELETE", target, ""), http.StatusOK)
-	if got["onePassword"] != nil {
-		t.Errorf("after DELETE onePassword = %v, want null", got["onePassword"])
+	vars := "/api/services/" + svc.ID + "/variables"
+	if got := f.decode(f.do("GET", vars, ""), http.StatusOK); got["API_KEY"] != "k" {
+		t.Errorf("variables = %v, want the item's", got)
 	}
-	f.decode(f.do("PUT", "/api/services/nope/onepassword", `{"environment":"env1","token":"env1-token"}`), http.StatusNotFound)
+	f.onePassword.err = fmt.Errorf("%w: rate limited", onepassword.ErrRequest)
+	f.decode(f.do("GET", vars, ""), http.StatusBadGateway)
+	f.decode(f.do("DELETE", "/api/onepassword", ""), http.StatusBadGateway)
+	f.onePassword.err = nil
+	clear(f.onePassword.items)
+	got = f.decode(f.do("GET", vars, ""), http.StatusConflict)
+	if msg, _ := got["error"].(string); msg != "the 1Password item of service web is missing" {
+		t.Errorf("error = %q", msg)
+	}
+	f.decode(f.do("PUT", vars, `{"B":"2"}`), http.StatusOK)
+
+	want(f.decode(f.do("DELETE", "/api/onepassword", ""), http.StatusOK), false, "", 0)
+	if got := f.decode(f.do("GET", vars, ""), http.StatusOK); got["B"] != "2" || len(got) != 1 {
+		t.Errorf("variables after disconnecting = %v", got)
+	}
 }
 
-func TestOnePasswordVariables(t *testing.T) {
+func TestServiceHasNoOnePasswordField(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	f.onePassword.envs = map[string]map[string]string{"env1": {"API_KEY": "k"}}
-	target := "/api/services/" + svc.ID + "/variables/onepassword"
-
-	if got := f.decode(f.do("GET", target, ""), http.StatusOK); len(got) != 0 {
-		t.Errorf("unlinked = %v, want {}", got)
+	if got := f.decode(f.do("GET", "/api/services/"+svc.ID, ""), http.StatusOK); got["onePassword"] != nil {
+		t.Errorf("service JSON has onePassword: %v", got["onePassword"])
+	} else if _, ok := got["onePassword"]; ok {
+		t.Error("service JSON has an onePassword key")
 	}
-	f.decode(f.do("PUT", "/api/services/"+svc.ID+"/onepassword", `{"environment":"env1","token":"env1-token"}`), http.StatusOK)
-	if got := f.decode(f.do("GET", target, ""), http.StatusOK); got["API_KEY"] != "k" {
-		t.Errorf("linked = %v, want API_KEY", got)
+	for _, path := range []string{"/api/services/" + svc.ID + "/onepassword", "/api/services/" + svc.ID + "/variables/onepassword"} {
+		if rec := f.do("GET", path, ""); rec.Code == http.StatusOK {
+			t.Errorf("GET %s = 200, want the per-service 1Password routes gone", path)
+		}
 	}
-	f.onePassword.readErr = fmt.Errorf("%w env1: rate limited", onepassword.ErrRequest)
-	f.decode(f.do("GET", target, ""), http.StatusBadGateway)
-	f.decode(f.do("GET", "/api/services/nope/variables/onepassword", ""), http.StatusNotFound)
 }

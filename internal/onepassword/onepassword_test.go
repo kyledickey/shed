@@ -17,7 +17,6 @@ type fake1Password struct {
 	tokens map[string]bool
 	vaults []sdk.VaultOverview
 	items  map[string]sdk.Item // by item ID
-	envs   map[string][]sdk.EnvironmentVariable
 	opens  map[string]int
 	err    error // fails every request
 	nextID int
@@ -29,7 +28,6 @@ func newFake() *fake1Password {
 	return &fake1Password{
 		tokens: map[string]bool{"tok": true},
 		items:  make(map[string]sdk.Item),
-		envs:   map[string][]sdk.EnvironmentVariable{"env1": {{Name: "API_KEY", Value: "k"}}},
 		opens:  make(map[string]int),
 	}
 }
@@ -102,10 +100,6 @@ func (a fakeAPI) ArchiveItem(_ context.Context, _, id string) error {
 	}
 	delete(a.f.items, id)
 	return nil
-}
-
-func (a fakeAPI) GetVariables(_ context.Context, id string) (sdk.GetVariablesResponse, error) {
-	return sdk.GetVariablesResponse{Variables: a.f.envs[id]}, a.f.err
 }
 
 func newClient() (*Client, *fake1Password) {

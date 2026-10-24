@@ -17,6 +17,7 @@ import (
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // fakeDeployer records deployments and service controls without running
@@ -255,6 +256,7 @@ type fixture struct {
 	backups  *fakeBackups
 	logs     fakeLogs // set by tests after the fixture is built
 	github   bool     // whether GitHub is configured
+	op       *fakeOnePassword
 	plane    *Plane
 }
 
@@ -265,7 +267,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword()}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -279,6 +281,7 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return nil, false
 		},
+		Variables:  variables.New(st, f.op),
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

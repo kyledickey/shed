@@ -28,13 +28,11 @@ type ProjectView struct {
 	Services []ServiceView
 }
 
-// ServiceView is a service with its settings, 1Password link, live status,
-// domains, volumes, latest deployment, and restore fence. It holds no
-// variable values or tokens.
+// ServiceView is a service with its settings, live status, domains,
+// volumes, latest deployment, and restore fence. It holds no variable
+// values.
 type ServiceView struct {
 	store.Service
-	// OnePassword is nil if the service links no 1Password Environment.
-	OnePassword *OnePasswordLink
 	// Status is derived from the service's deployments and container;
 	// offline if it has neither.
 	Status  deploy.ServiceStatus
@@ -107,9 +105,6 @@ type VariableName struct {
 	// Injected is set for variables shed provides, such as PORT and
 	// SHED_PRIVATE_DOMAIN, and clear for the service's own.
 	Injected bool
-	// OnePassword is set for variables from the service's 1Password
-	// Environment that it does not override with its own.
-	OnePassword bool
 	// Reference is set for own variables whose value refers to other
 	// variables with ${{ }}.
 	Reference bool
@@ -121,6 +116,6 @@ type VariableNames struct {
 	// injected one is listed once, as own.
 	Variables []VariableName
 	// ResolveError says why the variables do not resolve, if they do not.
-	// The injected and 1Password names are then missing.
+	// The injected names are then missing.
 	ResolveError string
 }

@@ -28,7 +28,9 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // fakeDeployer records deployments and service controls without running
@@ -201,15 +203,15 @@ func newFixture(t *testing.T) *fixture {
 	gh := &GitHubHolder{}
 	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
-	f.onePassword = &fakeOnePassword{}
+	f.onePassword = &fakeOnePassword{items: make(map[string]onepassword.Item)}
 	plane := control.New(control.Config{
-		Store:       st,
-		Deployer:    f.deployer,
-		Backups:     f.backups,
-		Metrics:     f.metrics,
-		Logs:        fakeLogs{},
-		Updates:     f.updates,
-		OnePassword: f.onePassword,
+		Store:     st,
+		Deployer:  f.deployer,
+		Backups:   f.backups,
+		Metrics:   f.metrics,
+		Logs:      fakeLogs{},
+		Updates:   f.updates,
+		Variables: variables.New(st, f.onePassword),
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true

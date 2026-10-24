@@ -38,11 +38,10 @@ type Store struct {
 }
 
 // Open opens the database at path, creating it and applying any pending
-// migrations. Settings values, service variables, 1Password service account
-// tokens, backup destination secret keys, and deployment runtimes are
-// encrypted at rest with key, which must be [KeySize] bytes;
-// Open encrypts them in a database that predates encryption. It returns
-// ErrWrongKey if the database was encrypted with a different key.
+// migrations. Settings values, service variables, backup destination secret
+// keys, and deployment runtimes are encrypted at rest with key, which must be
+// [KeySize] bytes; Open encrypts them in a database that predates encryption.
+// It returns ErrWrongKey if the database was encrypted with a different key.
 func Open(path string, key []byte) (*Store, error) {
 	c, err := newCrypter(key)
 	if err != nil {

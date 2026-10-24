@@ -91,13 +91,11 @@ func (p *Plane) CreateService(ctx context.Context, projectID string, req NewServ
 	if err != nil {
 		return ServiceView{}, err
 	}
-	if isDB {
-		if err := p.applyTemplate(ctx, svc, tmpl); err != nil {
-			if derr := p.store.DeleteService(ctx, svc.ID); derr != nil {
-				p.log.Error("delete half-created service", "service", svc.ID, "err", derr)
-			}
-			return ServiceView{}, err
+	if err := p.initService(ctx, svc, tmpl, isDB); err != nil {
+		if derr := p.store.DeleteService(ctx, svc.ID); derr != nil {
+			p.log.Error("delete half-created service", "service", svc.ID, "err", derr)
 		}
+		return ServiceView{}, err
 	}
 	p.pushMu.Lock()
 	_, err = p.deployer.Deploy(ctx, svc.ID, store.TriggerCreate, commit)
@@ -108,12 +106,18 @@ func (p *Plane) CreateService(ctx context.Context, projectID string, req NewServ
 	return p.withStatus(ctx, svc)
 }
 
-// applyTemplate gives a new database service its volume and variables.
-func (p *Plane) applyTemplate(ctx context.Context, svc store.Service, tmpl catalog.Template) error {
-	if _, err := p.store.CreateVolume(ctx, svc.ID, tmpl.MountPath); err != nil {
-		return err
+// initService saves the variables of a new service, which creates its
+// 1Password item while 1Password is connected. A database service first gets
+// its template's volume, and the template's variables.
+func (p *Plane) initService(ctx context.Context, svc store.Service, tmpl catalog.Template, isDB bool) error {
+	vars := map[string]string{}
+	if isDB {
+		if _, err := p.store.CreateVolume(ctx, svc.ID, tmpl.MountPath); err != nil {
+			return err
+		}
+		vars = tmpl.Vars()
 	}
-	return p.store.SetVariables(ctx, svc.ID, tmpl.Vars())
+	return p.variables.Set(ctx, svc, vars)
 }
 
 // branchHead returns the commit at the head of a repo service's branch.
@@ -232,18 +236,35 @@ func relative(p string) bool {
 	return p == "" || filepath.IsLocal(p)
 }
 
-// DeleteService deletes a service with its container, volumes, and backups.
+// DeleteService deletes a service with its container, volumes, and backups,
+// and archives its 1Password item.
 func (p *Plane) DeleteService(ctx context.Context, id string) error {
+	svc, err := p.store.Service(ctx, id)
+	if err != nil {
+		return err
+	}
 	resume, err := p.pauseBackups(ctx, id)
 	if err != nil {
 		return err
 	}
 	defer resume()
+	p.archiveItems(ctx, svc)
 	if err := p.deployer.DeleteService(ctx, id); err != nil {
 		return err
 	}
 	p.forgetBackups(ctx, id)
 	return nil
+}
+
+// archiveItems archives the 1Password items of services being deleted. A
+// failure is logged and leaves the item in the vault; the deletion goes
+// ahead.
+func (p *Plane) archiveItems(ctx context.Context, services ...store.Service) {
+	for _, svc := range services {
+		if err := p.variables.Archive(ctx, svc); err != nil {
+			p.log.Warn("archive 1Password item", "service", svc.Name, "err", err)
+		}
+	}
 }
 
 // StopService stops a service's container and keeps it stopped.
@@ -286,16 +307,11 @@ func (p *Plane) serviceView(ctx context.Context, svc store.Service, statuses map
 	if err != nil {
 		return ServiceView{}, err
 	}
-	link, err := p.onePasswordLink(ctx, svc.ID)
-	if err != nil {
-		return ServiceView{}, err
-	}
 	view := ServiceView{
-		Service:     svc,
-		OnePassword: link,
-		Status:      statuses[svc.ID],
-		Domains:     domains,
-		Volumes:     vols,
+		Service: svc,
+		Status:  statuses[svc.ID],
+		Domains: domains,
+		Volumes: vols,
 	}
 	if view.Status == "" {
 		view.Status = deploy.StatusOffline

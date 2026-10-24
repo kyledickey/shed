@@ -11,18 +11,21 @@ import (
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // Variables returns a service's own variables as saved, with references
-// unexpanded.
+// unexpanded. While 1Password is connected they are read from the service's
+// item.
 func (p *Plane) Variables(ctx context.Context, serviceID string) (map[string]string, error) {
-	if _, err := p.store.Service(ctx, serviceID); err != nil {
+	svc, err := p.store.Service(ctx, serviceID)
+	if err != nil {
 		return nil, err
 	}
-	return p.store.Variables(ctx, serviceID)
+	return p.variables.Get(ctx, svc)
 }
 
 // SetVariables replaces a service's own variables and returns them. They
 // apply from its next deployment.
 func (p *Plane) SetVariables(ctx context.Context, serviceID string, vars map[string]string) (map[string]string, error) {
-	if _, err := p.store.Service(ctx, serviceID); err != nil {
+	svc, err := p.store.Service(ctx, serviceID)
+	if err != nil {
 		return nil, err
 	}
 	for k := range vars {
@@ -30,10 +33,13 @@ func (p *Plane) SetVariables(ctx context.Context, serviceID string, vars map[str
 			return nil, errorf(ErrInvalid, "invalid variable name %q", k)
 		}
 	}
-	if err := p.store.SetVariables(ctx, serviceID, vars); err != nil {
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	if err := p.variables.Set(ctx, svc, vars); err != nil {
 		return nil, err
 	}
-	return p.store.Variables(ctx, serviceID)
+	return vars, nil
 }
 
 // ResolvedVariables returns the variables of a service's next deployment,
@@ -47,8 +53,8 @@ func (p *Plane) ResolvedVariables(ctx context.Context, serviceID string) (map[st
 }
 
 // VariableNames returns the names of the variables a service's next
-// deployment would see: its own, the ones from its 1Password Environment, and
-// the ones shed injects. It never returns values.
+// deployment would see: its own and the ones shed injects. It never returns
+// values.
 func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNames, error) {
 	own, err := p.Variables(ctx, serviceID)
 	if err != nil {
@@ -69,11 +75,7 @@ func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNa
 		if _, ok := own[name]; ok {
 			continue
 		}
-		if slices.Contains(resolved.OnePassword, name) {
-			out.Variables = append(out.Variables, VariableName{Name: name, OnePassword: true})
-		} else {
-			out.Variables = append(out.Variables, VariableName{Name: name, Injected: true})
-		}
+		out.Variables = append(out.Variables, VariableName{Name: name, Injected: true})
 	}
 	slices.SortFunc(out.Variables, func(a, b VariableName) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
