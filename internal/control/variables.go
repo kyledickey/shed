@@ -56,23 +56,22 @@ func (p *Plane) ResolvedVariables(ctx context.Context, serviceID string) (map[st
 // deployment would see: its own and the ones shed injects. It never returns
 // values.
 func (p *Plane) VariableNames(ctx context.Context, serviceID string) (VariableNames, error) {
-	own, err := p.Variables(ctx, serviceID)
-	if err != nil {
-		return VariableNames{}, err
-	}
-	var out VariableNames
-	for name, value := range own {
-		out.Variables = append(out.Variables, VariableName{Name: name, Reference: strings.Contains(value, "${{")})
-	}
 	resolved, err := p.deployer.ResolveVariables(ctx, serviceID)
 	if ctx.Err() != nil {
 		return VariableNames{}, ctx.Err()
 	}
+	if err != nil && resolved.Saved == nil {
+		return VariableNames{}, err
+	}
+	var out VariableNames
 	if err != nil {
 		out.ResolveError = err.Error()
 	}
+	for name, value := range resolved.Saved {
+		out.Variables = append(out.Variables, VariableName{Name: name, Reference: strings.Contains(value, "${{")})
+	}
 	for name := range resolved.Env {
-		if _, ok := own[name]; ok {
+		if _, ok := resolved.Saved[name]; ok {
 			continue
 		}
 		out.Variables = append(out.Variables, VariableName{Name: name, Injected: true})

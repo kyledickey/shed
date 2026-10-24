@@ -200,11 +200,10 @@ func TestVariableNames(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	svc := createApp(t, f.st)
-	if err := f.st.SetVariables(ctx, svc.ID, map[string]string{
+	saved := map[string]string{
 		"API_KEY": "secret-value", "DATABASE_URL": "${{ db.DATABASE_URL }}", "PORT": "3000",
-	}); err != nil {
-		t.Fatal(err)
 	}
+	f.deployer.resolved.Saved = saved
 	f.deployer.resolved.Env = map[string]string{
 		"API_KEY": "secret-value", "DATABASE_URL": "postgres://u:p@db/x", "PORT": "3000",
 		"SHED_SERVICE_NAME": "web", "SHED_PRIVATE_DOMAIN": "web",
@@ -224,7 +223,7 @@ func TestVariableNames(t *testing.T) {
 		t.Errorf("VariableNames() = %+v, want %+v", got, want)
 	}
 
-	f.deployer.resolved, f.deployer.resolveErr = deploy.Resolved{}, errors.New("vars: reference cycle: web.A -> web.A")
+	f.deployer.resolved, f.deployer.resolveErr = deploy.Resolved{Saved: saved}, errors.New("vars: reference cycle: web.A -> web.A")
 	got, err = f.plane.VariableNames(ctx, svc.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +231,7 @@ func TestVariableNames(t *testing.T) {
 	if len(got.Variables) != 3 || !strings.Contains(got.ResolveError, "reference cycle") {
 		t.Errorf("unresolvable: %+v, want own names and the error", got)
 	}
+	f.deployer.resolved, f.deployer.resolveErr = deploy.Resolved{}, store.ErrNotFound
 	if _, err := f.plane.VariableNames(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("VariableNames(nope) = %v, want not found", err)
 	}

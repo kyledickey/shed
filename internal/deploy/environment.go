@@ -17,6 +17,9 @@ type Resolved struct {
 	// Own holds the keys of the service's own variables, as opposed to the
 	// ones shed injects, sorted.
 	Own []string
+	// Saved holds the service's own variables as saved, with references
+	// unexpanded.
+	Saved map[string]string
 }
 
 // readVariables returns the own variables of a service.
@@ -102,6 +105,9 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 	if err != nil {
 		return Resolved{}, fmt.Errorf("deploy: %w", err)
 	}
+	if selfOwn == nil {
+		selfOwn = map[string]string{}
+	}
 	ownKeys := slices.Sorted(maps.Keys(selfOwn))
 	keys := slices.Concat(slices.Collect(maps.Keys(self.injected)), ownKeys)
 	slices.Sort(keys)
@@ -123,14 +129,16 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		return v, ok, nil
 	})
 	if err != nil {
-		return Resolved{}, fmt.Errorf("deploy: resolve variables: %w", err)
+		return Resolved{Own: ownKeys, Saved: selfOwn}, fmt.Errorf("deploy: resolve variables: %w", err)
 	}
-	return Resolved{Env: env, Own: ownKeys}, nil
+	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn}, nil
 }
 
 // ResolveVariables returns the variables of a service with references
 // expanded, as its next deployment would see them. SHED_GIT_COMMIT_SHA is
-// the commit of the active deployment, if any.
+// the commit of the active deployment, if any. If the service's own
+// variables were read but references do not resolve, the error comes with
+// Own and Saved set.
 func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (Resolved, error) {
 	svc, err := d.store.Service(ctx, serviceID)
 	if err != nil {

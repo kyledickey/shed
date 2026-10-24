@@ -115,6 +115,9 @@ func TestResolveVariablesReadsOtherServicesLazily(t *testing.T) {
 	if want := []string{"GREETING", "SECRET"}; !slices.Equal(got.Own, want) {
 		t.Errorf("Own = %q, want %q", got.Own, want)
 	}
+	if got.Saved["GREETING"] != "hi from ${{ SHED_SERVICE_NAME }}" {
+		t.Errorf("Saved = %v, want web's variables unexpanded", got.Saved)
+	}
 	if n := vault.readCount("db"); n != 0 {
 		t.Errorf("read the variables of an unreferenced service %d times", n)
 	}
