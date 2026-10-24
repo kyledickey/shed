@@ -130,6 +130,8 @@ export type Repo = { fullName: string; defaultBranch: string; private: boolean }
  * takes it.
  */
 export type OnePassword = { connected: boolean; vault: string; items: number };
+/** A vault a service account token can access: POST /api/onepassword/vaults. */
+export type OnePasswordVault = { id: string; name: string };
 
 export type Variables = Record<string, string>;
 

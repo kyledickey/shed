@@ -44,6 +44,8 @@ type Form = Pick<
 > & {
   /** Disables Save while the draft can't be submitted. */
   invalid?: boolean;
+  /** Label of the submit button. Defaults to "Save". */
+  submitLabel?: string;
 };
 
 /**
@@ -96,7 +98,7 @@ export function SettingsCard({
                 disabled={!form.dirty || form.invalid}
                 loading={form.pending}
               >
-                Save
+                {form.submitLabel ?? "Save"}
               </Button>
             )}
           </div>
