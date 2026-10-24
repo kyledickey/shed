@@ -53,25 +53,24 @@ shed adds these to every service. A stored variable with the same name wins.
 
 `${{ web.SHED_GIT_COMMIT_SHA }}` used from another service expands to nothing.
 
-## 1Password Environments
+## 1Password
 
-A service can link one 1Password Environment (`onePasswordEnvironment` on the
-service), read with the token of a service account saved on that link; use one
-service account per Environment. Its variables sit between the injected ones and the service's own:
-injected < 1Password < stored, later winning. References reach 1Password keys
-too, including `${{ api.KEY }}` from another service. `list_variables` marks
-names that come from 1Password with `onepassword`.
+shed can keep every service's variables in a 1Password vault named `shed`
+instead of its database, connected once in the dashboard's settings with a
+service account token. Each service has one item, titled
+`<project> / <service>`, whose concealed fields in the `Variables` section are
+its variables. Nothing else changes: references, injected variables, and
+`list_variables` work the same.
 
-1Password is read when a deployment starts (including redeploys and
-rollbacks), never on restart or crash recovery. A change in 1Password reaches
-the container only with the next deployment, so a rotated secret needs a
-redeploy. A failed read (no token on the link, revoked token, no access to the
-Environment, rate limit) fails the deployment with the 1Password error in the
-build log and on the deployment; the old container keeps serving. Fixing it is
-a dashboard action: on the service's Variables tab, click 1Password and paste a
-token for a service account that can read the Environment. Links made before
-tokens were per service have none until one is added. Values from 1Password are masked
-in logs like stored ones.
+The items are read when a deployment starts (including redeploys and
+rollbacks): the deploying service's, and another service's only when a
+reference needs it. Restarts and crash recovery never read 1Password. An edit
+made in the 1Password app reaches the container only with the next deployment,
+so a rotated secret needs a redeploy. A failed read (revoked token, rate limit,
+a deleted item) fails the deployment with the 1Password error in the build log
+and on the deployment; the old container keeps serving. A deleted item is
+fixed by saving the service's variables in the dashboard, which creates a new
+one. Values from 1Password are masked in logs like stored ones.
 
 ## Database variables
 
