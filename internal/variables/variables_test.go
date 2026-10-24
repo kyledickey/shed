@@ -360,7 +360,11 @@ func TestRetitleAndArchive(t *testing.T) {
 	if item := op.items[st.items[web.ID]]; item.Title != "store / web" || !slices.Equal(item.Tags, []string{"shed/store"}) {
 		t.Errorf("retitled item = %q tagged %v", item.Title, item.Tags)
 	}
-	if err := k.Archive(ctx, web); err != nil {
+	items, err := k.Items(ctx, web)
+	if err != nil || len(items) != 1 || items[0] != (Item{Service: "web", ID: st.items[web.ID]}) {
+		t.Fatalf("Items(web) = %v, %v; want web's item", items, err)
+	}
+	if err := k.Archive(ctx, items[0]); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := op.items[st.items[web.ID]]; ok {
@@ -429,7 +433,10 @@ func TestNotConnectedUsesStore(t *testing.T) {
 	if err := k.Retitle(ctx, shop, st.services); err != nil {
 		t.Fatal(err)
 	}
-	if err := k.Archive(ctx, web); err != nil {
+	if items, err := k.Items(ctx, web); err != nil || len(items) != 0 {
+		t.Fatalf("Items = %v, %v; want none", items, err)
+	}
+	if err := k.Archive(ctx, Item{Service: "web", ID: "item1"}); err != nil {
 		t.Fatal(err)
 	}
 	if op.reads != 0 || op.created != 0 {

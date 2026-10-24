@@ -242,23 +242,46 @@ func (k *Keeper) Retitle(ctx context.Context, project store.Project, services []
 	return nil
 }
 
-// Archive archives the item of a service that is being deleted, if it has
-// one.
-func (k *Keeper) Archive(ctx context.Context, svc store.Service) error {
+// Item is the 1Password item of a service.
+type Item struct {
+	Service string // the service's name
+	ID      string
+}
+
+// Items returns the items of services, none while 1Password is not
+// connected. Deleting a service forgets its item, so the items of services
+// being deleted are looked up first and archived with Archive once the
+// deletion succeeds.
+func (k *Keeper) Items(ctx context.Context, services ...store.Service) ([]Item, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	_, ok, err := k.connection(ctx)
+	if err != nil || !ok {
+		return nil, err
+	}
+	ids, err := k.store.OnePasswordItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var items []Item
+	for _, svc := range services {
+		if id, ok := ids[svc.ID]; ok {
+			items = append(items, Item{Service: svc.Name, ID: id})
+		}
+	}
+	return items, nil
+}
+
+// Archive archives an item. While 1Password is not connected it does
+// nothing.
+func (k *Keeper) Archive(ctx context.Context, item Item) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	c, ok, err := k.connection(ctx)
 	if err != nil || !ok {
 		return err
 	}
-	item, err := k.store.OnePasswordItem(ctx, svc.ID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return nil
-	case err != nil:
-		return err
-	}
-	return k.op.Archive(ctx, c.token, c.vault, item)
+	return k.op.Archive(ctx, c.token, c.vault, item.ID)
 }
 
 // Vaults returns the vaults token can access, sorted by name. An error

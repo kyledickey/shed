@@ -510,8 +510,10 @@ already created, so connecting converges.
 - Renaming a project updates its services' items' titles and tags (tags
   outside `shed/` are kept); if 1Password fails, the rename is not saved
   (502).
-- Deleting a service archives its item. A failure is logged and the deletion
-  goes ahead.
+- Deleting a service (or its project) archives its item once the deletion
+  succeeds; a failed deletion leaves the item alone. The item ID is looked up
+  first, since deleting the service drops its `onepassword_items` row. An
+  archive failure is logged and the item stays in the vault.
 - A service whose item is missing (deleted in 1Password, or none recorded)
   fails reads with 409 "the 1Password item of service <name> is missing";
   saving its variables creates a new item.

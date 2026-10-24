@@ -11,6 +11,7 @@ import (
 	"github.com/kyledickey/shed/internal/catalog"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 var (
@@ -248,21 +249,32 @@ func (p *Plane) DeleteService(ctx context.Context, id string) error {
 		return err
 	}
 	defer resume()
-	p.archiveItems(ctx, svc)
+	items := p.items(ctx, svc)
 	if err := p.deployer.DeleteService(ctx, id); err != nil {
 		return err
 	}
 	p.forgetBackups(ctx, id)
+	p.archive(ctx, items)
 	return nil
 }
 
-// archiveItems archives the 1Password items of services being deleted. A
-// failure is logged and leaves the item in the vault; the deletion goes
-// ahead.
-func (p *Plane) archiveItems(ctx context.Context, services ...store.Service) {
-	for _, svc := range services {
-		if err := p.variables.Archive(ctx, svc); err != nil {
-			p.log.Warn("archive 1Password item", "service", svc.Name, "err", err)
+// items returns the 1Password items of services about to be deleted. A
+// failure is logged; the deletion goes ahead and the items stay in the
+// vault.
+func (p *Plane) items(ctx context.Context, services ...store.Service) []variables.Item {
+	items, err := p.variables.Items(ctx, services...)
+	if err != nil {
+		p.log.Warn("find 1Password items", "err", err)
+	}
+	return items
+}
+
+// archive archives the 1Password items of deleted services. A failure is
+// logged and leaves the item in the vault.
+func (p *Plane) archive(ctx context.Context, items []variables.Item) {
+	for _, item := range items {
+		if err := p.variables.Archive(ctx, item); err != nil {
+			p.log.Warn("archive 1Password item", "service", item.Service, "err", err)
 		}
 	}
 }

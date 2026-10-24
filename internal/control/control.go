@@ -160,7 +160,8 @@ type Variables interface {
 	Get(ctx context.Context, svc store.Service) (map[string]string, error)
 	Set(ctx context.Context, svc store.Service, vars map[string]string) error
 	Retitle(ctx context.Context, project store.Project, services []store.Service) error
-	Archive(ctx context.Context, svc store.Service) error
+	Items(ctx context.Context, services ...store.Service) ([]variables.Item, error)
+	Archive(ctx context.Context, item variables.Item) error
 	Vaults(ctx context.Context, token string) ([]onepassword.Vault, error)
 	Connect(ctx context.Context, token, vaultID string) error
 	Disconnect(ctx context.Context) error

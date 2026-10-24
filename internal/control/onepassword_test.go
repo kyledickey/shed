@@ -304,6 +304,15 @@ func TestDeleteServiceArchivesItem(t *testing.T) {
 	f.connect(t)
 	id, _ := f.st.OnePasswordItem(ctx, web.ID)
 
+	f.deployer.deleteErr = errors.New("docker: remove container: busy")
+	if err := f.plane.DeleteService(ctx, web.ID); err == nil {
+		t.Fatal("DeleteService() = nil, want the teardown error")
+	}
+	if _, ok := f.op.item(id); !ok {
+		t.Error("a failed deletion archived the service's item")
+	}
+	f.deployer.deleteErr = nil
+
 	if err := f.plane.DeleteService(ctx, web.ID); err != nil {
 		t.Fatal(err)
 	}

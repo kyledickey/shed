@@ -119,11 +119,12 @@ func (p *Plane) DeleteProject(ctx context.Context, id string) error {
 		return err
 	}
 	defer resume()
-	p.archiveItems(ctx, services...)
+	items := p.items(ctx, services...)
 	if err := p.deployer.DeleteProject(ctx, id); err != nil {
 		return err
 	}
 	p.forgetBackups(ctx, ids...)
+	p.archive(ctx, items)
 	return nil
 }
 
