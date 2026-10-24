@@ -297,12 +297,19 @@ export const endpointGroups: EndpointGroup[] = [
     endpoints: [
       { method: "GET", path: "/api/onepassword", response: "OnePassword" },
       {
+        method: "POST",
+        path: "/api/onepassword/vaults",
+        body: "{token}",
+        response: "OnePasswordVault[]",
+        notes: "Vaults the token can access, by name. 400 if 1Password rejects the token.",
+      },
+      {
         method: "PUT",
         path: "/api/onepassword",
-        body: "{token}",
+        body: "{token, vault?}",
         response: "OnePassword",
         notes:
-          "Connects: creates the vault and items and moves variables out of shed.db. 400 if 1Password rejects the token; 502 if it fails.",
+          "Connects to vault (an ID), or the token's only vault: creates the items and moves variables out of shed.db. 400 if 1Password rejects the token or there is no such vault; 502 if it fails.",
       },
       {
         method: "DELETE",

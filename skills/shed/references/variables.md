@@ -56,7 +56,7 @@ shed adds these to every service. A stored variable with the same name wins.
 ## 1Password
 
 When 1Password is connected (Settings > 1Password in the dashboard), every
-service's variables live in a vault named `shed` in the user's 1Password
+service's variables live in a vault the user chose in their 1Password
 account instead of on the server: one item per service, titled
 `<project> / <service>`, with each variable a field in its Variables section.
 They are edited on the Variables tab or in the 1Password app, and they resolve

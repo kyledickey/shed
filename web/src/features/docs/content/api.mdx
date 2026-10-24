@@ -291,6 +291,9 @@ type OnePassword = {
   vault: string;                       // the vault's name, "" when not connected
   items: number;                       // services with an item in the vault
 };
+
+// POST /api/onepassword/vaults {token} lists them; PUT takes one's id.
+type OnePasswordVault = { id: string; name: string };
 ```
 
 ### Agents
