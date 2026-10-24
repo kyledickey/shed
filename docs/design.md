@@ -114,13 +114,14 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/onepassword` | 1Password vault and item operations with a service account token (official Go SDK) | — |
+| `internal/variables` | where services' variables live: shed.db, or one 1Password item per service while connected; connecting and disconnecting | interfaces only + store/onepassword types |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions | control via interface + types of control/deploy/github/metrics/update |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -496,8 +497,9 @@ already created, so connecting converges.
   touch shed.db.
 - Creating a service creates its item with the template's variables; if
   1Password fails, the service is not created (502).
-- Renaming a service or project updates its items' titles and tags; if
-  1Password fails, the rename is not saved (502).
+- Renaming a project updates its services' items' titles and tags (tags
+  outside `shed/` are kept); if 1Password fails, the rename is not saved
+  (502).
 - Deleting a service archives its item. A failure is logged and the deletion
   goes ahead.
 - A service whose item is missing (deleted in 1Password, or none recorded)
@@ -516,10 +518,18 @@ already created, so connecting converges.
 **Disconnecting** (`DELETE /api/onepassword`) reads every item, saves their
 variables to shed.db (encrypted), and then deletes the token, the vault
 setting, and `onepassword_items`. The vault and its items are left in
-1Password. If any read fails, nothing changes (502).
+1Password. If any read fails, nothing changes (502; 409 naming the service
+if its item is missing, which saving its variables recreates).
+
+`internal/variables` is the one place that decides between shed.db and
+1Password; deploy and control read and write variables through it. It
+serializes connecting and disconnecting with every read and write of
+variables, so no read sees shed.db emptied before the token is saved and no
+write lands on the side being left.
 
 `GET /api/onepassword` reports `{connected, vault, items}` without calling
-1Password: the vault's name and how many services have an item.
+1Password: the vault's name (`shed`) and how many services have an item;
+`""` and 0 while not connected.
 
 `internal/onepassword` wraps the official Go SDK, which runs a WebAssembly
 core in-process: loading it takes about a second and about 110 MB of memory
@@ -1234,8 +1244,8 @@ PUT    /api/services/{id}/variables  Record     → Record  (replace all; writes
 GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment; 409 if a needed 1Password item is missing; 502 if 1Password fails)
 
 GET    /api/onepassword                         → OnePassword
-PUT    /api/onepassword          {token}        → OnePassword  (connect: create the vault and items, move variables out of shed.db; 400 {error} if 1Password rejects the token; 502 if 1Password fails)
-DELETE /api/onepassword                         → OnePassword  (disconnect: copy variables back into shed.db; 502 if 1Password fails, nothing changed)
+PUT    /api/onepassword          {token}        → OnePassword  (connect: create the vault and items, move variables out of shed.db; 400 {error} if 1Password rejects the token; 409 if already connected; 502 if 1Password fails)
+DELETE /api/onepassword                         → OnePassword  (disconnect: copy variables back into shed.db; 409 if an item is missing, 502 if 1Password fails, nothing changed)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
