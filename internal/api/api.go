@@ -22,8 +22,10 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // Control carries out the operations behind the API. *control.Plane
@@ -49,9 +51,10 @@ type Control interface {
 	Variables(ctx context.Context, serviceID string) (map[string]string, error)
 	SetVariables(ctx context.Context, serviceID string, vars map[string]string) (map[string]string, error)
 	ResolvedVariables(ctx context.Context, serviceID string) (map[string]string, error)
-	OnePasswordVariables(ctx context.Context, serviceID string) (map[string]string, error)
-	LinkOnePassword(ctx context.Context, serviceID, environment, token string) (control.ServiceView, error)
-	UnlinkOnePassword(ctx context.Context, serviceID string) (control.ServiceView, error)
+	OnePassword(ctx context.Context) (variables.Status, error)
+	OnePasswordVaults(ctx context.Context, token string) ([]onepassword.Vault, error)
+	ConnectOnePassword(ctx context.Context, token, vault string) (variables.Status, error)
+	DisconnectOnePassword(ctx context.Context) (variables.Status, error)
 	CreateDomain(ctx context.Context, serviceID, host string) (store.Domain, bool, error)
 	DeleteDomain(ctx context.Context, id string) (bool, error)
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
@@ -233,9 +236,10 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/services/{id}/variables", s.getVariables)
 	authed("PUT /api/services/{id}/variables", s.putVariables)
 	authed("GET /api/services/{id}/variables/resolved", s.getResolvedVariables)
-	authed("GET /api/services/{id}/variables/onepassword", s.getOnePasswordVariables)
-	authed("PUT /api/services/{id}/onepassword", s.putOnePassword)
-	authed("DELETE /api/services/{id}/onepassword", s.deleteOnePassword)
+	authed("GET /api/onepassword", s.getOnePassword)
+	authed("POST /api/onepassword/vaults", s.postOnePasswordVaults)
+	authed("PUT /api/onepassword", s.putOnePassword)
+	authed("DELETE /api/onepassword", s.deleteOnePassword)
 	authed("POST /api/services/{id}/domains", s.createDomain)
 	authed("DELETE /api/domains/{id}", s.deleteDomain)
 	authed("POST /api/services/{id}/volumes", s.createVolume)

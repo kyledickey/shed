@@ -55,8 +55,6 @@ export type Service = {
   memoryLimit: number;
   autoDeploy: boolean;
   waitForCi: boolean;
-  /** The linked 1Password Environment; null = none. */
-  onePassword: OnePasswordLink | null;
   status: ServiceStatus;
   privateHost: string;
   domains: Domain[];
@@ -127,10 +125,13 @@ export type Domain = { id: string; host: string; generated: boolean; url: string
 export type Volume = { id: string; mountPath: string; createdAt: string };
 export type Repo = { fullName: string; defaultBranch: string; private: boolean };
 /**
- * A service's link to a 1Password Environment. The service account token is
- * write-only: responses say only whether one is saved.
+ * Whether variables are kept in 1Password, the vault's name, and how many
+ * services have an item in it. The token is write-only: PUT /api/onepassword
+ * takes it.
  */
-export type OnePasswordLink = { environment: string; hasToken: boolean };
+export type OnePassword = { connected: boolean; vault: string; items: number };
+/** A vault a service account token can access: POST /api/onepassword/vaults. */
+export type OnePasswordVault = { id: string; name: string };
 
 export type Variables = Record<string, string>;
 

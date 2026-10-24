@@ -7,6 +7,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // The JSON types below mirror the TypeScript types of the design document.
@@ -64,14 +65,23 @@ type serviceJSON struct {
 	LatestDeployment *deploymentJSON      `json:"latestDeployment"`
 	RestoreFence     *restoreFenceJSON    `json:"restoreFence"`
 	CreatedAt        time.Time            `json:"createdAt"`
-	// OnePassword is null if the service links no 1Password Environment.
-	OnePassword *onePasswordLinkJSON `json:"onePassword"`
 }
 
-// onePasswordLinkJSON is a service's 1Password link, without its token.
-type onePasswordLinkJSON struct {
-	Environment string `json:"environment"`
-	HasToken    bool   `json:"hasToken"`
+// onePasswordJSON is the 1Password connection, without its token.
+type onePasswordJSON struct {
+	Connected bool   `json:"connected"`
+	Vault     string `json:"vault"`
+	Items     int    `json:"items"`
+}
+
+func toOnePassword(s variables.Status) onePasswordJSON {
+	return onePasswordJSON{Connected: s.Connected, Vault: s.Vault, Items: s.Items}
+}
+
+// onePasswordVaultJSON is a vault a service account token can access.
+type onePasswordVaultJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // restoreFenceJSON is the fence a failed restore left on a service.
@@ -149,9 +159,6 @@ func toService(v control.ServiceView) serviceJSON {
 		Domains:         make([]domainJSON, 0, len(v.Domains)),
 		Volumes:         make([]volumeJSON, 0, len(v.Volumes)),
 		CreatedAt:       v.CreatedAt,
-	}
-	if l := v.OnePassword; l != nil {
-		out.OnePassword = &onePasswordLinkJSON{Environment: l.Environment, HasToken: l.HasToken}
 	}
 	for _, d := range v.Domains {
 		out.Domains = append(out.Domains, toDomain(d))

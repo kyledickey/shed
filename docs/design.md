@@ -113,14 +113,15 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
-| `internal/onepassword` | 1Password Environment reads with a service account token per read (official Go SDK) | — |
+| `internal/onepassword` | 1Password vault and item operations with a service account token (official Go SDK) | — |
+| `internal/variables` | where services' variables live: shed.db, or one 1Password item per service while connected; connecting and disconnecting | interfaces only + store/onepassword types |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions | control via interface + types of control/deploy/github/metrics/update |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -179,11 +180,9 @@ CREATE TABLE services (
   UNIQUE (project_id, name)
 );
 
-CREATE TABLE onepassword_links (         -- see "1Password Environments"
+CREATE TABLE onepassword_items (         -- see "1Password"
   service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
-  environment TEXT NOT NULL,             -- 1Password Environment ID
-  token TEXT NOT NULL DEFAULT '',        -- service account token, encrypted; '' = none (left unencrypted)
-  created_at TEXT NOT NULL
+  item_id TEXT NOT NULL                  -- the service's item in the connected vault
 );
 
 CREATE TABLE variables (
@@ -382,14 +381,14 @@ Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 
 Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
 key: every `settings.value` (including the GitHub App credentials and the backup
-age identity), `variables.value`, `onepassword_links.token` (except `''`, which
-means no token), `backup_destinations.secret_access_key`, and
+age identity and the 1Password token), `variables.value`,
+`backup_destinations.secret_access_key`, and
 `deployments.runtime` (the active deployment's resolved variables).
 
 - **Format.** `v1:` + base64 (raw std, no padding) of `nonce‖ciphertext`. The
   additional data binds each value to its row: the table plus `key`
-  (settings), `service_id`+`key` (variables), `service_id`
-  (1Password links), or the destination or deployment id. A value
+  (settings), `service_id`+`key` (variables), or the destination or
+  deployment id. A value
   copied to another row fails to decrypt.
 - **Key file.** `shed.key` next to the config file (default
   `/etc/shed/shed.key`), deliberately outside `data.dir`. Contents: base64 of
@@ -412,7 +411,7 @@ means no token), `backup_destinations.secret_access_key`, and
   the key file; root on the running host is out of scope. Full-disk encryption
   covers the rest.
 
-Losing the key loses the variables, GitHub App credentials, 1Password tokens,
+Losing the key loses the variables, GitHub App credentials, 1Password token,
 S3 secret, and age identity in shed.db. shed.db system backups hold ciphertext.
 
 ## Runtime model
@@ -459,53 +458,102 @@ Database templates create variables on service creation, e.g. postgres:
 `DATABASE_URL=postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{SHED_PRIVATE_DOMAIN}}:5432/${{POSTGRES_DB}}`.
 An app then sets `DATABASE_URL=${{ postgres.DATABASE_URL }}`.
 
-### 1Password Environments
+### 1Password
 
-A service may link one 1Password Environment by ID, with the service account
-token that reads it (`onepassword_links`). Each link carries its own token
-because 1Password fixes a service account's access when it is created: one
-service account per Environment keeps each token to least privilege, and a new
-Environment needs a new service account rather than a wider one.
+shed can keep every service's variables in a 1Password vault instead of
+shed.db. The operator creates a vault in 1Password (any name), then one
+service account on 1Password.com with read and write access to it.
+1Password allows 100 service accounts per account, so shed needs exactly one.
+shed never creates the vault: a vault a service account creates belongs to
+it, and on Individual and Families accounts nobody else can be given access,
+so the operator could not see their own variables.
 
-Saving a link (`PUT /api/services/{id}/onepassword`) trims both fields,
-requires an ID of up to 64 lowercase letters and digits, and reads the
-Environment once with the token; if that fails, the request is a 400 with the
-1Password error and nothing is saved. A blank token keeps the link's saved
-token, which is checked against the given Environment the same way. The API
-reports only whether a token is saved, never the token.
+**Layout.** One vault, chosen when connecting. One item per service (`onepassword_items`
+maps service to item): category Secure Note, titled `<project> / <service>`,
+tagged `shed/<project>` (1Password nests tags with `/`, so the sidebar shows
+shed › project › items). Each variable is a concealed field in a section
+titled `Variables`, field title = key. Reading an item takes every field whose
+title is a valid variable name (`^[A-Za-z_][A-Za-z0-9_]*$`; other fields,
+notes, and untitled fields are ignored); writing replaces those fields and
+keeps the others.
 
-Links made before tokens were per link (migration 015) keep their Environment
-ID and have no token; the old global `onepassword.token` setting is deleted,
-not copied. Such a link fails every read that needs it (a deployment, the
-variables endpoints) with "1Password link of service <name> has no token; add
-one on its Variables tab" (409 from the API) until a token is saved on it.
+**Choosing the vault** (`POST /api/onepassword/vaults {token}`) signs in and
+lists the vaults the token can access, sorted by name; 400 if 1Password
+rejects the token. The dashboard calls it first: with one vault it connects
+to it, with several it asks which, with none it says to give the service
+account access to one.
+
+**Connecting** (`PUT /api/onepassword {token, vault?}`):
+
+1. Sign in with the token; 400 if that fails.
+2. Pick the vault: `vault` is a vault ID from the list; without it, the only
+   vault the token can access. 400 if the token cannot access `vault`, can
+   access none, or (without `vault`) several. Its ID and name are saved as
+   settings `onepassword.vault` and `onepassword.vault_name` at the end.
+3. For every service without an item, create one holding its variables from
+   shed.db (template variables included). Services that already have an item
+   (from an earlier, failed attempt) get their fields replaced instead.
+4. Delete every service's rows from `variables`, then save the token as
+   setting `onepassword.token`. Connected means the token setting exists.
+
+A failure in steps 2–3 saves nothing in shed.db and returns the 1Password
+error (400 for a rejected token, 502 otherwise); retrying reuses the items
+already created, so connecting converges.
+
+**While connected:**
+
+- `GET /api/services/{id}/variables` reads the service's item (one read);
+  `PUT` replaces its variable fields (one read, one write). The values never
+  touch shed.db.
+- Creating a service creates its item with the template's variables; if
+  1Password fails, the service is not created (502).
+- Renaming a project updates its services' items' titles and tags (tags
+  outside `shed/` are kept); if 1Password fails, the rename is not saved
+  (502).
+- Deleting a service (or its project) archives its item once the deletion
+  succeeds; a failed deletion leaves the item alone. The item ID is looked up
+  first, since deleting the service drops its `onepassword_items` row. An
+  archive failure is logged and the item stays in the vault.
+- A service whose item is missing (deleted in 1Password, or none recorded)
+  fails reads with 409 "the 1Password item of service <name> is missing";
+  saving its variables creates a new item.
+- Deployments read the deploying service's item, and another service's item
+  only when a reference (`${{ api.KEY }}`) needs one of its variables. Each
+  item is read at most once per deployment. A failed read fails the
+  deployment with the 1Password error; the running deployment keeps serving.
+- Restarts, crash recovery, boot reconcile, and log masking use the active
+  deployment's recorded runtime and never call 1Password. Every variable is
+  masked in logs as before.
+- 1Password has no change notifications, so an edit made in the 1Password app
+  applies on the service's next deployment.
+
+**Disconnecting** (`DELETE /api/onepassword`) reads every item, saves their
+variables to shed.db (encrypted), and then deletes the token, the vault
+settings, and `onepassword_items`. The vault and its items are left in
+1Password. If any read fails, nothing changes (502; 409 naming the service
+if its item is missing, which saving its variables recreates).
+
+`internal/variables` is the one place that decides between shed.db and
+1Password; deploy and control read and write variables through it. It
+serializes connecting and disconnecting with every read and write of
+variables, so no read sees shed.db emptied before the token is saved and no
+write lands on the side being left.
+
+`GET /api/onepassword` reports `{connected, vault, items}` without calling
+1Password: the vault's name as saved when connecting and how many services
+have an item;
+`""` and 0 while not connected.
 
 `internal/onepassword` wraps the official Go SDK, which runs a WebAssembly
 core in-process: loading it takes about a second and about 110 MB of memory
-that stays for the life of the process. The client signs in once per token
-and reuses that SDK client until a read with it fails. shed loads the core in
-the background at boot when any link has a token.
+that stays for the life of the process. shed loads it in the background at
+boot when connected, and when connecting. The SDK ends a client's session
+when the `*sdk.Client` is garbage collected, so the client holds it.
 
-Each service's variables are layered, later winning:
-injected `SHED_*`/`PORT` < its 1Password Environment < its own variables.
-References see the same layers, so `${{ KEY }}` and `${{ api.KEY }}` reach
-1Password keys. Resolution reads the deploying service's Environment, and
-another service's Environment only when a reference looks up a key that service
-does not define itself. Each Environment is read at most once per deployment,
-with the token of the link that names it.
-
-1Password is read only when a deployment starts (including redeploys and
-rollbacks), by `GET /api/services/{id}/variables/resolved`, by
-`GET /api/services/{id}/variables/onepassword`, and by MCP `list_variables`.
-Restarts, crash recovery, boot reconcile, and log masking use the active
-deployment's recorded runtime and never call 1Password. A read that fails
-(no token on the link, rejected token, an Environment the token cannot read,
-rate limit, network) fails the deployment with the 1Password error; the
-running deployment keeps serving. Every value that came from 1Password is
-masked in logs, whatever its masked flag says.
-
-shed never writes to 1Password. 1Password has no change notifications, so
-a change in 1Password applies on the service's next deployment.
+Service account limits apply to the one token: Business accounts get 10,000
+reads and 1,000 writes per hour and 50,000 requests per day; other plans get
+1,000 reads and 100 writes per hour, and 1,000 (individual, Families) or 5,000
+(Teams) requests per day for the whole account.
 
 ### Deploy pipeline
 
@@ -528,7 +576,7 @@ the same service.
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
-3. **Start**: resolve variables (reading linked 1Password Environments), record the service's port and container
+3. **Start**: resolve variables (reading 1Password items when connected), record the service's port and container
    configuration on the deployment (persisted on activation), and create and start the new container, without the service's network
    alias. Services with volumes or a public port stop the old container first
    if it is running (volumes can't be shared safely, e.g. database data dirs);
@@ -580,7 +628,7 @@ start, or release of a hold. Saved settings wait for a new deployment. Volumes
 deleted since are not mounted and their Docker volumes are removed; newly added
 volumes wait for deployment. Deployments activated before migration 011 have no
 snapshot and fall back to current settings with a warning when recreated;
-that fallback resolves variables without 1Password Environments.
+that fallback resolves variables without reading 1Password.
 
 ### Stopping a service
 
@@ -1204,12 +1252,14 @@ POST   /api/services/{id}/start                 → Service  (409 if never deplo
 POST   /api/services/{id}/restart               → Service  (409 if stopped, nothing deployed, or fenced)
 POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed restore's fence, keep data; 409 while held)
 
-GET    /api/services/{id}/variables             → Record<string,string>
-PUT    /api/services/{id}/variables  Record     → Record  (replace all)
-GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected and 1Password; commit of active deployment; 409 if a link that is needed has no token; 502 if 1Password fails)
-GET    /api/services/{id}/variables/onepassword → Record<string,string>  (the linked Environment's variables; {} if none linked; 409 if the link has no token; 502 if 1Password fails)
-PUT    /api/services/{id}/onepassword  {environment, token?} → Service  (link; reads the Environment with the token first: 400 {error} with the 1Password message if that fails, nothing saved; blank token keeps the saved one)
-DELETE /api/services/{id}/onepassword           → Service  (unlink and forget the token)
+GET    /api/services/{id}/variables             → Record<string,string>  (from the 1Password item when connected; 409 if it is missing; 502 if 1Password fails)
+PUT    /api/services/{id}/variables  Record     → Record  (replace all; writes the 1Password item when connected, creating it if missing)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment; 409 if a needed 1Password item is missing; 502 if 1Password fails)
+
+GET    /api/onepassword                         → OnePassword
+POST   /api/onepassword/vaults   {token}        → OnePasswordVault[]  (vaults the token can access, by name; 400 {error} if 1Password rejects the token; 502 if 1Password fails)
+PUT    /api/onepassword          {token, vault?} → OnePassword  (connect to vault, an ID, or the token's only vault: create the items, move variables out of shed.db; 400 {error} if 1Password rejects the token or the vault is not one it can access, none, or one of several; 409 if already connected; 502 if 1Password fails)
+DELETE /api/onepassword                         → OnePassword  (disconnect: copy variables back into shed.db; 409 if an item is missing, 502 if 1Password fails, nothing changed)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
@@ -1301,14 +1351,14 @@ found`); unexpected errors are logged and reported as `internal error`.
 |---|---|---|
 | `list_projects` | — | `{projects: [{id, name, createdAt, services: [{id, name, kind, status}]}]}` |
 | `get_project` | `project_id` | `{id, name, createdAt, services: [service]}` |
-| `get_service` | `service_id` | service: settings, `onePasswordEnvironment` (absent if none linked), `status`, `domains`, `volumes`, `latestDeployment`, `restoreFence` |
+| `get_service` | `service_id` | service: settings, `status`, `domains`, `volumes`, `latestDeployment`, `restoreFence` |
 | `list_deployments` | `service_id`, `limit?` (default 20, at most 50) | `{deployments: [deployment]}`, newest first, with `imageAvailable` |
 | `get_deployment` | `deployment_id` | deployment: `status`, `trigger`, commit, `image`, `error`, times |
 | `build_log` | `deployment_id`, `lines?` | text: last lines of the build log (`BuildLog`) |
 | `runtime_logs` | `service_id`, `lines?` | text: snapshot of the active container's output (`RuntimeLogs`, not followed) |
 | `service_metrics` | `service_id`, `range?` (1h, 6h, 24h, 7d) | `{range, from, stepSeconds, cpuLimit, memoryLimit, cpuPercent, memoryBytes, netRxBytesPerSecond, netTxBytesPerSecond, diskReadBytesPerSecond, diskWriteBytesPerSecond}`; each metric is `{latest, avg, max}` over the sampled buckets, null if none |
 | `host_metrics` | `range?` | the same with `cpus`, `memoryTotalBytes`, `diskTotalBytes`, and `diskUsedBytes` |
-| `list_variables` | `service_id` | `{variables: [{name, injected?, reference?, onepassword?}], resolveError?}` (`VariableNames`): names only |
+| `list_variables` | `service_id` | `{variables: [{name, injected?, reference?}], resolveError?}` (`VariableNames`): names only |
 | `list_backups` | `service_id` | `{policy, backups (newest 20), omitted?, restore?}` |
 | `shed_log` | `lines?` | text: last lines of shed's own log (`ShedLog`) |
 | `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
@@ -1366,7 +1416,6 @@ type Service = {
   cpuLimit: number;                    // cores, 0 = unlimited
   memoryLimit: number;                 // bytes, 0 = unlimited
   autoDeploy: boolean; waitForCi: boolean;
-  onePassword: OnePasswordLink | null; // linked 1Password Environment
   status: ServiceStatus;
   privateHost: string;                 // "<name>"
   domains: Domain[];
@@ -1401,9 +1450,9 @@ type Deployment = {
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
-// The token is write-only: PUT /api/services/{id}/onepassword takes it, and
-// responses say only whether one is saved.
-type OnePasswordLink = { environment: string; hasToken: boolean };
+// The token is write-only: PUT /api/onepassword takes it.
+type OnePassword = { connected: boolean; vault: string; items: number };
+type OnePasswordVault = { id: string; name: string };
 
 // Container resource usage. Sample i is at start + i*step seconds; series
 // are the same length, oldest first, null where nothing was running.

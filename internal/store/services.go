@@ -105,7 +105,7 @@ func (s *Store) SetServiceStopped(ctx context.Context, id string, stopped bool) 
 }
 
 // DeleteService deletes a service and, by cascade, its variables, 1Password
-// link, volumes, domains, and deployments. It returns ErrNotFound for an unknown service.
+// item record, volumes, domains, and deployments. It returns ErrNotFound for an unknown service.
 func (s *Store) DeleteService(ctx context.Context, id string) error {
 	if err := s.execOne(ctx, `DELETE FROM services WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("store: delete service %s: %w", id, err)

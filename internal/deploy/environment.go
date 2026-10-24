@@ -14,104 +14,67 @@ import (
 // Resolved holds the variables of a service with references expanded.
 type Resolved struct {
 	Env map[string]string
-	// OnePassword holds the keys of Env whose value comes from the service's
-	// 1Password Environment, sorted.
-	OnePassword []string
+	// Own holds the keys of the service's own variables, as opposed to the
+	// ones shed injects, sorted.
+	Own []string
+	// Saved holds the service's own variables as saved, with references
+	// unexpanded.
+	Saved map[string]string
 }
 
-// ErrNoOnePasswordToken is matched by errors for a service whose 1Password
-// link has no service account token, as links made before tokens were per
-// link have none.
-var ErrNoOnePasswordToken = errors.New("deploy: 1Password link has no token")
+// readVariables returns the own variables of a service.
+type readVariables func(ctx context.Context, svc store.Service) (map[string]string, error)
 
-// noTokenError reports the service whose 1Password link has no token.
-type noTokenError struct{ service string }
-
-func (e noTokenError) Error() string {
-	return "1Password link of service " + e.service + " has no token; add one on its Variables tab"
-}
-
-func (noTokenError) Is(target error) bool { return target == ErrNoOnePasswordToken }
-
-// environments reads 1Password Environments, each at most once per token. A
-// nil *environments treats every Environment as empty, for callers that must
-// not call 1Password.
-type environments struct {
-	client OnePassword
-	read   map[environmentRead]map[string]string
-	logf   func(format string, args ...any)
-}
-
-type environmentRead struct{ environment, token string }
-
-// newEnvironments returns an empty memo of Environment reads. logf, if not
-// nil, reports each read.
-func (d *Deployer) newEnvironments(logf func(format string, args ...any)) *environments {
-	return &environments{client: d.onePassword, read: make(map[environmentRead]map[string]string), logf: logf}
-}
-
-// variables returns the variables of the Environment that service links, or
-// none if link is nil.
-func (e *environments) variables(ctx context.Context, service string, link *store.OnePasswordLink) (map[string]string, error) {
-	if e == nil || link == nil {
-		return nil, nil
-	}
-	if link.Token == "" {
-		return nil, noTokenError{service}
-	}
-	key := environmentRead{link.Environment, link.Token}
-	if v, ok := e.read[key]; ok {
+// readOnce returns a reader that reads each service's variables with read
+// at most once, for one deployment.
+func readOnce(read readVariables) readVariables {
+	done := make(map[string]map[string]string)
+	return func(ctx context.Context, svc store.Service) (map[string]string, error) {
+		if v, ok := done[svc.ID]; ok {
+			return v, nil
+		}
+		v, err := read(ctx, svc)
+		if err != nil {
+			return nil, err
+		}
+		done[svc.ID] = v
 		return v, nil
 	}
-	e.printf("==> Reading 1Password Environment %s", link.Environment)
-	if e.client == nil {
-		return nil, errors.New("1Password is not available")
-	}
-	v, err := e.client.Variables(ctx, link.Token, link.Environment)
-	if err != nil {
-		return nil, err
-	}
-	e.printf("%d variables", len(v))
-	e.read[key] = v
-	return v, nil
 }
 
-func (e *environments) printf(format string, args ...any) {
-	if e.logf != nil {
-		e.logf(format, args...)
-	}
+// savedVariables reads the variables saved in shed.db.
+type savedVariables struct{ store *store.Store }
+
+func (s savedVariables) Get(ctx context.Context, svc store.Service) (map[string]string, error) {
+	return s.store.Variables(ctx, svc.ID)
 }
 
-// environment resolves the variables of svc. Each service's variables are
-// layered, later winning: the ones shed injects, its 1Password Environment,
-// and its own. References to other services of the project are expanded.
-// sha is the commit being deployed. PORT comes from svc.Port.
+// saved reads the variables saved in shed.db, which never calls 1Password:
+// while it is connected, shed.db has none.
+func (d *Deployer) saved(ctx context.Context, svc store.Service) (map[string]string, error) {
+	return savedVariables{d.store}.Get(ctx, svc)
+}
+
+// environment resolves the variables of svc. Each service's own variables
+// override the ones shed injects into it. References to other services of
+// the project are expanded. sha is the commit being deployed. PORT comes
+// from svc.Port.
 //
-// svc's Environment is read through envs up front; another service's only
-// when a reference looks up a key that service does not define itself.
-func (d *Deployer) environment(ctx context.Context, svc store.Service, project store.Project, sha string, envs *environments) (Resolved, error) {
+// svc's variables are read with read up front; another service's only when
+// a reference needs one of them.
+func (d *Deployer) environment(ctx context.Context, svc store.Service, project store.Project, sha string, read readVariables) (Resolved, error) {
 	services, err := d.store.Services(ctx, svc.ProjectID)
 	if err != nil {
 		return Resolved{}, err
 	}
-	links, err := d.store.OnePasswordLinks(ctx, svc.ProjectID)
-	if err != nil {
-		return Resolved{}, err
-	}
 	type layers struct {
-		name        string
-		link        *store.OnePasswordLink
-		injected    map[string]string
-		own         map[string]string
-		onePassword map[string]string
-		read        bool
+		svc      store.Service
+		injected map[string]string
+		own      map[string]string
+		read     bool
 	}
 	byName := make(map[string]*layers, len(services))
 	for _, s := range services {
-		own, err := d.store.Variables(ctx, s.ID)
-		if err != nil {
-			return Resolved{}, err
-		}
 		domains, err := d.store.Domains(ctx, s.ID)
 		if err != nil {
 			return Resolved{}, err
@@ -121,33 +84,32 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 			commit = sha
 			s.Port = svc.Port
 		}
-		l := &layers{name: s.Name, injected: injected(project, s, domains, commit), own: own}
-		if link, ok := links[s.ID]; ok {
-			l.link = &link
-		}
-		byName[s.Name] = l
+		byName[s.Name] = &layers{svc: s, injected: injected(project, s, domains, commit)}
 	}
-	onePassword := func(l *layers) (map[string]string, error) {
+	own := func(l *layers) (map[string]string, error) {
 		if !l.read {
-			v, err := envs.variables(ctx, l.name, l.link)
+			v, err := read(ctx, l.svc)
 			if err != nil {
 				return nil, err
 			}
-			l.onePassword, l.read = v, true
+			l.own, l.read = v, true
 		}
-		return l.onePassword, nil
+		return l.own, nil
 	}
 
 	self, ok := byName[svc.Name]
 	if !ok {
 		return Resolved{}, fmt.Errorf("deploy: service %s is not in its project", svc.Name)
 	}
-	selfOnePassword, err := onePassword(self)
+	selfOwn, err := own(self)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("deploy: %w", err)
 	}
-	keys := slices.Concat(slices.Collect(maps.Keys(self.injected)),
-		slices.Collect(maps.Keys(selfOnePassword)), slices.Collect(maps.Keys(self.own)))
+	if selfOwn == nil {
+		selfOwn = map[string]string{}
+	}
+	ownKeys := slices.Sorted(maps.Keys(selfOwn))
+	keys := slices.Concat(slices.Collect(maps.Keys(self.injected)), ownKeys)
 	slices.Sort(keys)
 	keys = slices.Compact(keys)
 
@@ -156,36 +118,27 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		if !ok {
 			return "", false, nil
 		}
-		if v, ok := l.own[key]; ok {
-			return v, true, nil
-		}
-		op, err := onePassword(l)
+		o, err := own(l)
 		if err != nil {
 			return "", false, err
 		}
-		if v, ok := op[key]; ok {
+		if v, ok := o[key]; ok {
 			return v, true, nil
 		}
 		v, ok := l.injected[key]
 		return v, ok, nil
 	})
 	if err != nil {
-		return Resolved{}, fmt.Errorf("deploy: resolve variables: %w", err)
+		return Resolved{Own: ownKeys, Saved: selfOwn}, fmt.Errorf("deploy: resolve variables: %w", err)
 	}
-	r := Resolved{Env: env}
-	for key := range selfOnePassword {
-		if _, own := self.own[key]; !own {
-			r.OnePassword = append(r.OnePassword, key)
-		}
-	}
-	slices.Sort(r.OnePassword)
-	return r, nil
+	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn}, nil
 }
 
 // ResolveVariables returns the variables of a service with references
-// expanded, as its next deployment would see them, reading 1Password
-// Environments. SHED_GIT_COMMIT_SHA is the commit of the active deployment,
-// if any.
+// expanded, as its next deployment would see them. SHED_GIT_COMMIT_SHA is
+// the commit of the active deployment, if any. If the service's own
+// variables were read but references do not resolve, the error comes with
+// Own and Saved set.
 func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (Resolved, error) {
 	svc, err := d.store.Service(ctx, serviceID)
 	if err != nil {
@@ -202,5 +155,5 @@ func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (Reso
 	case !errors.Is(err, store.ErrNotFound):
 		return Resolved{}, err
 	}
-	return d.environment(ctx, svc, project, sha, d.newEnvironments(nil))
+	return d.environment(ctx, svc, project, sha, d.variables.Get)
 }

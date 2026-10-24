@@ -65,14 +65,12 @@ func (j *job) execute(ctx context.Context) error {
 	if err := j.waitForCI(ctx); err != nil {
 		return err
 	}
-	envs := j.newEnvironments(j.printf)
-	r, err := j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, envs)
+	read := readOnce(j.variables.Get)
+	r, err := j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, read)
 	if err != nil {
 		return err
 	}
-	if j.masked, err = j.secretKeys(ctx, j.svc, r); err != nil {
-		return err
-	}
+	j.masked = secretKeys(r)
 	j.secrets = secretValues(r.Env, j.masked)
 	if err := j.buildImage(ctx, r.Env); err != nil {
 		return err
@@ -82,7 +80,7 @@ func (j *job) execute(ctx context.Context) error {
 			return err
 		} else if found {
 			// PORT is injected only once the service has a port.
-			if r, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, envs); err != nil {
+			if r, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, read); err != nil {
 				return err
 			}
 			j.secrets = append(j.secrets, secretValues(r.Env, j.masked)...)

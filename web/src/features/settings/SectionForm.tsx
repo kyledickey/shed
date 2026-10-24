@@ -44,9 +44,14 @@ type Form = Pick<
 > & {
   /** Disables Save while the draft can't be submitted. */
   invalid?: boolean;
+  /** Label of the submit button. Defaults to "Save". */
+  submitLabel?: string;
 };
 
-/** SettingsCard is a LayerCard wrapped in a form with its own Save button. */
+/**
+ * SettingsCard is a LayerCard wrapped in a form with its own Save button.
+ * Without a form it has no Save button, only footerStart.
+ */
 export function SettingsCard({
   title,
   meta,
@@ -56,7 +61,7 @@ export function SettingsCard({
 }: {
   title: ReactNode;
   meta?: ReactNode;
-  form: Form;
+  form?: Form;
   /** Extra footer content on the left, e.g. a secondary action. */
   footerStart?: ReactNode;
   children: ReactNode;
@@ -65,7 +70,7 @@ export function SettingsCard({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (form.dirty && !form.invalid) form.save();
+        if (form?.dirty && !form.invalid) form.save();
       }}
     >
       <LayerCard
@@ -75,25 +80,27 @@ export function SettingsCard({
         footer={
           <div className={styles.footer}>
             {footerStart}
-            {form.error ? (
+            {form?.error ? (
               <span className={styles.error}>{errorMessage(form.error)}</span>
             ) : (
               <span className={styles.spacer} />
             )}
-            {form.dirty && (
+            {form?.dirty && (
               <Button size="sm" disabled={form.pending} onClick={form.reset}>
                 Discard
               </Button>
             )}
-            <Button
-              type="submit"
-              size="sm"
-              variant="primary"
-              disabled={!form.dirty || form.invalid}
-              loading={form.pending}
-            >
-              Save
-            </Button>
+            {form && (
+              <Button
+                type="submit"
+                size="sm"
+                variant="primary"
+                disabled={!form.dirty || form.invalid}
+                loading={form.pending}
+              >
+                {form.submitLabel ?? "Save"}
+              </Button>
+            )}
           </div>
         }
       >

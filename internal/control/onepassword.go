@@ -3,99 +3,69 @@ package control
 import (
 	"context"
 	"errors"
-	"regexp"
 	"strings"
 
-	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/onepassword"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
-// environmentID matches a 1Password Environment ID.
-var environmentID = regexp.MustCompile(`^[a-z0-9]{1,64}$`)
-
-// OnePasswordLink is the 1Password Environment a service reads variables
-// from. It never holds the token.
-type OnePasswordLink struct {
-	Environment string
-	// HasToken is set while a service account token is saved for the link.
-	HasToken bool
+// OnePassword reports whether variables are kept in 1Password, without
+// calling 1Password.
+func (p *Plane) OnePassword(ctx context.Context) (variables.Status, error) {
+	return p.variables.Status(ctx)
 }
 
-// LinkOnePassword links a service to a 1Password Environment, read with a
-// service account token, in place of its current link. A blank token keeps
-// the token of the current link. The Environment is read once with the token
-// first; if that fails, the request is invalid and nothing is saved.
-func (p *Plane) LinkOnePassword(ctx context.Context, serviceID, environment, token string) (ServiceView, error) {
-	svc, err := p.store.Service(ctx, serviceID)
-	if err != nil {
-		return ServiceView{}, err
-	}
-	environment, token = strings.TrimSpace(environment), strings.TrimSpace(token)
-	if !environmentID.MatchString(environment) {
-		return ServiceView{}, errorf(ErrInvalid, "1Password Environment ID must be up to 64 lowercase letters and digits")
-	}
+// OnePasswordVaults returns the vaults a service account token can access,
+// sorted by name. The request is invalid if 1Password rejects the token.
+func (p *Plane) OnePasswordVaults(ctx context.Context, token string) ([]onepassword.Vault, error) {
+	token = strings.TrimSpace(token)
 	if token == "" {
-		switch link, err := p.store.OnePasswordLink(ctx, serviceID); {
-		case err == nil:
-			token = link.Token
-		case !errors.Is(err, store.ErrNotFound):
-			return ServiceView{}, err
-		}
+		return nil, errorf(ErrInvalid, "a service account token is required")
 	}
-	if token == "" {
-		return ServiceView{}, errorf(ErrInvalid, "a service account token is required")
-	}
-	if _, err := p.onePassword.Variables(ctx, token, environment); err != nil {
-		if ctx.Err() != nil {
-			return ServiceView{}, ctx.Err()
-		}
-		return ServiceView{}, errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), "onepassword: "))
-	}
-	if err := p.store.SetOnePasswordLink(ctx, store.OnePasswordLink{ServiceID: serviceID, Environment: environment, Token: token}); err != nil {
-		return ServiceView{}, err
-	}
-	return p.withStatus(ctx, svc)
-}
-
-// UnlinkOnePassword removes a service's 1Password link and its token, if it
-// has one.
-func (p *Plane) UnlinkOnePassword(ctx context.Context, serviceID string) (ServiceView, error) {
-	svc, err := p.store.Service(ctx, serviceID)
+	vaults, err := p.variables.Vaults(ctx, token)
 	if err != nil {
-		return ServiceView{}, err
+		return nil, onePasswordError(ctx, err)
 	}
-	if err := p.store.DeleteOnePasswordLink(ctx, serviceID); err != nil {
-		return ServiceView{}, err
-	}
-	return p.withStatus(ctx, svc)
+	return vaults, nil
 }
 
-// OnePasswordVariables returns the variables of the 1Password Environment a
-// service links, or none if it links none.
-func (p *Plane) OnePasswordVariables(ctx context.Context, serviceID string) (map[string]string, error) {
-	if _, err := p.store.Service(ctx, serviceID); err != nil {
-		return nil, err
+// ConnectOnePassword moves every service's variables into a 1Password vault
+// and keeps them there from then on. vault is the ID of a vault the token
+// can access; if it is empty, the token's only vault is used. The request is
+// invalid if 1Password rejects the token or there is no such vault. If
+// 1Password fails partway, shed.db keeps the variables and connecting again
+// picks up where it stopped.
+func (p *Plane) ConnectOnePassword(ctx context.Context, token, vault string) (variables.Status, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return variables.Status{}, errorf(ErrInvalid, "a service account token is required")
 	}
-	link, err := p.store.OnePasswordLink(ctx, serviceID)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return map[string]string{}, nil
-	case err != nil:
-		return nil, err
-	case link.Token == "":
-		return nil, errorf(ErrConflict, "this service's 1Password link has no service account token; add one on its Variables tab")
+	if err := p.variables.Connect(ctx, token, strings.TrimSpace(vault)); err != nil {
+		return variables.Status{}, onePasswordError(ctx, err)
 	}
-	return p.onePassword.Variables(ctx, link.Token, link.Environment)
+	return p.variables.Status(ctx)
 }
 
-// onePasswordLink returns the 1Password link of a service, or nil if it has
-// none.
-func (p *Plane) onePasswordLink(ctx context.Context, serviceID string) (*OnePasswordLink, error) {
-	link, err := p.store.OnePasswordLink(ctx, serviceID)
+// onePasswordError makes a rejected token or a missing vault an invalid
+// request.
+func onePasswordError(ctx context.Context, err error) error {
 	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return nil, nil
-	case err != nil:
-		return nil, err
+	case ctx.Err() != nil:
+		return err
+	case errors.Is(err, onepassword.ErrInvalidToken):
+		return errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), "onepassword: "))
+	case errors.Is(err, variables.ErrVault):
+		return errorf(ErrInvalid, "%s", strings.TrimPrefix(err.Error(), variables.ErrVault.Error()+": "))
 	}
-	return &OnePasswordLink{Environment: link.Environment, HasToken: link.Token != ""}, nil
+	return err
+}
+
+// DisconnectOnePassword copies every service's variables from 1Password back
+// into shed.db and forgets the token. The vault and its items stay in
+// 1Password. If 1Password fails, nothing changes.
+func (p *Plane) DisconnectOnePassword(ctx context.Context) (variables.Status, error) {
+	if err := p.variables.Disconnect(ctx); err != nil {
+		return variables.Status{}, err
+	}
+	return p.variables.Status(ctx)
 }

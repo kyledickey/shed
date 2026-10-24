@@ -91,7 +91,6 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 		{`INSERT INTO variables (service_id, key, value) VALUES (?, 'TOKEN', 'abc'), (?, 'EMPTY', '')`, []any{sv.ID, sv.ID}},
 		{`UPDATE backup_destinations SET secret_access_key = 'SK' WHERE id = ?`, []any{d.ID}},
 		{`UPDATE deployments SET runtime = '{"env":{"TOKEN":"abc"}}' WHERE id = ?`, []any{dep.ID}},
-		{`INSERT INTO onepassword_links (service_id, environment, token, created_at) VALUES (?, 'env1', 'ops', '2026-10-01T00:00:00.000Z')`, []any{sv.ID}},
 	} {
 		if _, err := s.db.ExecContext(ctx, q.query, q.args...); err != nil {
 			t.Fatal(err)
@@ -108,7 +107,6 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 		`SELECT value FROM variables`,
 		`SELECT secret_access_key FROM backup_destinations`,
 		`SELECT runtime FROM deployments`,
-		`SELECT token FROM onepassword_links`,
 	} {
 		rows := rawRows(t, s, q)
 		if len(rows) == 0 {
@@ -131,9 +129,6 @@ func TestOpenEncryptsPlaintext(t *testing.T) {
 	}
 	if got, err := s.Deployment(ctx, dep.ID); err != nil || got.Runtime == nil || got.Runtime.Env["TOKEN"] != "abc" {
 		t.Errorf("Deployment() runtime = %+v, %v; want TOKEN=abc", got.Runtime, err)
-	}
-	if got, err := s.OnePasswordLink(ctx, sv.ID); err != nil || got.Token != "ops" {
-		t.Errorf("OnePasswordLink() = %+v, %v; want token ops", got, err)
 	}
 	s.Close()
 

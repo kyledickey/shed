@@ -1,18 +1,27 @@
-import { useQuery } from "@tanstack/react-query";
-import { Check, Eye, EyeOff, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import {
+  Check,
+  TriangleAlert,
+  CircleX,
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  Trash2,
+  KeyRound,
+} from "lucide-react";
 import { useRef, useState } from "react";
-import { onePasswordVariablesQuery } from "../../api/onepassword";
+import { onePasswordQuery } from "../../api/onepassword";
 import { resolveVariables, useSaveVariables } from "../../api/services";
-import { errorMessage } from "../../api/client";
-import type { Service, Variables } from "../../api/types";
+import { errorMessage, isApiError } from "../../api/client";
+import type { Variables } from "../../api/types";
 import { Button } from "../../components/Button";
 import { LayerCard } from "../../components/Card";
 import { Input, Segmented, Textarea } from "../../components/Form";
-import { CopyButton, EmptyState, OnePasswordIcon } from "../../components/Misc";
+import { Callout, CopyButton, EmptyState, OnePasswordIcon } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { isValidKey, parseEnv, serializeEnv } from "../../lib/env";
 import { useRedeployHint } from "../services/redeploy";
-import { OnePasswordLink } from "./OnePasswordLink";
 import { VarValue } from "./VarValue";
 import styles from "./Variables.module.css";
 import { HelpTip } from "../docs/HelpTip";
@@ -46,20 +55,75 @@ function rowsToVars(rows: Row[]): { vars: Variables; errors: string[] } {
   return { vars, errors };
 }
 
+const title = (
+  <>
+    Variables <HelpTip topic="variables" />
+  </>
+);
+
+/** Meta says where the variables are stored when that is 1Password. */
+function Meta() {
+  const { data } = useSuspenseQuery(onePasswordQuery);
+  if (!data.connected) return "References resolve at deploy time.";
+  return (
+    <>
+      <span className={styles.mark}>
+        <OnePasswordIcon size={12} />
+      </span>
+      Stored in 1Password. References resolve at deploy time.
+    </>
+  );
+}
+
 /**
- * VariablesEditor edits a service's variables as a table or raw .env text. The
- * table also lists, read-only, the variables of a linked 1Password Environment.
+ * VariablesUnavailable stands in for the editor when the variables can't be
+ * read from 1Password. A missing item is replaced by saving an empty set.
  */
+export function VariablesUnavailable({ serviceId, error }: { serviceId: string; error: Error }) {
+  const save = useSaveVariables(serviceId);
+  const toast = useToast();
+  return (
+    <LayerCard title={title} meta={<Meta />} padded>
+      {isApiError(error, 409) ? (
+        <Callout
+          tone="sunflower"
+          icon={<TriangleAlert size={16} />}
+          title="This service's 1Password item is missing"
+          actions={
+            <Button
+              size="sm"
+              loading={save.isPending}
+              onClick={() =>
+                save.mutate(
+                  {},
+                  { onSuccess: () => toast.add({ type: "success", title: "Item created" }) },
+                )
+              }
+            >
+              Create item
+            </Button>
+          }
+        >
+          It was deleted or moved in 1Password. Saving variables creates a new, empty item.
+          {save.error && <p className={styles.error}>{errorMessage(save.error)}</p>}
+        </Callout>
+      ) : (
+        <Callout tone="tomato" icon={<CircleX size={16} />} title="Could not load variables">
+          {errorMessage(error)}
+        </Callout>
+      )}
+    </LayerCard>
+  );
+}
+
+/** VariablesEditor edits a service's variables as a table or raw .env text. */
 export function VariablesEditor({
-  service,
+  serviceId,
   variables,
 }: {
-  service: Service;
+  serviceId: string;
   variables: Variables;
 }) {
-  const serviceId = service.id;
-  const link = service.onePassword;
-  const [linking, setLinking] = useState(false);
   const save = useSaveVariables(serviceId);
   const hint = useRedeployHint();
   const toast = useToast();
@@ -80,11 +144,6 @@ export function VariablesEditor({
   const current = mode === "raw" ? parseEnv(raw) : rowsToVars(rows);
   const changes = diff(current.vars, variables);
   const dirty = changes > 0;
-  const onePassword = useQuery({
-    ...onePasswordVariablesQuery(serviceId, link?.environment ?? ""),
-    enabled: link?.hasToken ?? false,
-  });
-  const fromOnePassword = onePassword.data ?? {};
 
   const update = (id: number, patch: Partial<Row>) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -168,18 +227,11 @@ export function VariablesEditor({
 
   return (
     <LayerCard
-      title={
-        <>
-          Variables <HelpTip topic="variables" />
-        </>
-      }
-      meta="References resolve at deploy time."
+      title={title}
+      meta={<Meta />}
       actions={
         <>
-          {mode === "table" && (
-            <OnePasswordLink service={service} open={linking} onOpenChange={setLinking} />
-          )}
-          {mode === "table" && (rows.length > 0 || link) && (
+          {mode === "table" && rows.length > 0 && (
             <Button
               size="sm"
               onClick={() =>
@@ -218,7 +270,7 @@ export function VariablesEditor({
             aria-label="Variables in .env format"
           />
         </div>
-      ) : rows.length === 0 && !link ? (
+      ) : rows.length === 0 ? (
         <EmptyState
           icon={<KeyRound size={20} />}
           title="No variables yet"
@@ -287,9 +339,6 @@ export function VariablesEditor({
                     <span className={styles.masked}>••••••••</span>
                   )}
                 </span>
-                {r.key in fromOnePassword && (
-                  <span className={styles.status}>overrides 1Password</span>
-                )}
                 <span className={styles.actions}>
                   <Button
                     variant="ghost"
@@ -323,14 +372,6 @@ export function VariablesEditor({
               </div>
             ),
           )}
-          {link && (
-            <OnePasswordRows
-              hasToken={link.hasToken}
-              query={onePassword}
-              shadowed={current.vars}
-              onAddToken={() => setLinking(true)}
-            />
-          )}
         </div>
       )}
       {(current.errors.length > 0 || save.error) && (
@@ -343,95 +384,4 @@ export function VariablesEditor({
       )}
     </LayerCard>
   );
-}
-
-/** OnePasswordRows lists a linked Environment's variables, minus the ones the service overrides. */
-function OnePasswordRows({
-  hasToken,
-  query,
-  shadowed,
-  onAddToken,
-}: {
-  hasToken: boolean;
-  query: { data?: Variables; error: Error | null };
-  shadowed: Variables;
-  onAddToken: () => void;
-}) {
-  const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
-
-  if (!hasToken) {
-    return (
-      <div className={styles.row}>
-        <span className={styles.status}>Add a service account token to load this Environment.</span>
-        <span className={styles.actions}>
-          <Button size="sm" onClick={onAddToken}>
-            Add token
-          </Button>
-        </span>
-      </div>
-    );
-  }
-  if (query.error) {
-    return (
-      <div className={styles.row}>
-        <span className={styles.status} data-tone="danger">
-          {errorMessage(query.error)}
-        </span>
-      </div>
-    );
-  }
-  if (!query.data) {
-    return (
-      <div className={styles.row}>
-        <span className={styles.status}>Loading from 1Password…</span>
-      </div>
-    );
-  }
-
-  if (Object.keys(query.data).length === 0) {
-    return (
-      <div className={styles.row}>
-        <span className={styles.status}>This Environment has no variables.</span>
-      </div>
-    );
-  }
-
-  const toggle = (key: string) =>
-    setRevealed((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-
-  return Object.entries(query.data)
-    .filter(([key]) => !(key in shadowed))
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([key, value]) => {
-      const shown = revealed.has(key);
-      return (
-        <div key={key} className={styles.row}>
-          <span className={styles.key}>
-            <span className={styles.mark}>
-              <OnePasswordIcon size={13} />
-            </span>
-            {key}
-          </span>
-          <span className={styles.value}>
-            {shown ? value : <span className={styles.masked}>••••••••</span>}
-          </span>
-          <span className={styles.actions} data-readonly>
-            <Button
-              variant="ghost"
-              size="sm"
-              icon
-              aria-label={shown ? "Hide" : "Reveal"}
-              onClick={() => toggle(key)}
-            >
-              {shown ? <EyeOff size={14} /> : <Eye size={14} />}
-            </Button>
-            <CopyButton value={value} label={`Copy ${key}`} />
-          </span>
-        </div>
-      );
-    });
 }

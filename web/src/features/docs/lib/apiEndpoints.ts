@@ -110,40 +110,27 @@ export const endpointGroups: EndpointGroup[] = [
         response: "Service",
         notes: "Keeps the current data. 409 while held.",
       },
-      { method: "GET", path: "/api/services/{id}/variables", response: "Record<string,string>" },
+      {
+        method: "GET",
+        path: "/api/services/{id}/variables",
+        response: "Record<string,string>",
+        notes:
+          "From the 1Password item when connected. 409 if it is missing; 502 if 1Password fails.",
+      },
       {
         method: "PUT",
         path: "/api/services/{id}/variables",
         body: "Record<string,string>",
         response: "Record<string,string>",
-        notes: "Replaces all variables.",
+        notes:
+          "Replaces all variables. Writes the 1Password item when connected, creating it if missing.",
       },
       {
         method: "GET",
         path: "/api/services/{id}/variables/resolved",
         response: "Record<string,string>",
-        notes: "References expanded, injected and 1Password variables included.",
-      },
-      {
-        method: "GET",
-        path: "/api/services/{id}/variables/onepassword",
-        response: "Record<string,string>",
         notes:
-          "The linked 1Password Environment. {} if none; 409 if the link has no token; 502 if 1Password fails.",
-      },
-      {
-        method: "PUT",
-        path: "/api/services/{id}/onepassword",
-        body: "{environment, token?}",
-        response: "Service",
-        notes:
-          "Links a 1Password Environment. Reads it with the token first: 400 with 1Password's error if that fails, and nothing is saved. No token keeps the saved one.",
-      },
-      {
-        method: "DELETE",
-        path: "/api/services/{id}/onepassword",
-        response: "Service",
-        notes: "Unlinks the Environment and forgets its token.",
+          "References expanded, injected variables included. 409 if a needed 1Password item is missing.",
       },
       {
         method: "POST",
@@ -302,6 +289,34 @@ export const endpointGroups: EndpointGroup[] = [
         path: "/api/github/webhook",
         response: "202",
         notes: "Public. HMAC-signed by GitHub.",
+      },
+    ],
+  },
+  {
+    title: "1Password",
+    endpoints: [
+      { method: "GET", path: "/api/onepassword", response: "OnePassword" },
+      {
+        method: "POST",
+        path: "/api/onepassword/vaults",
+        body: "{token}",
+        response: "OnePasswordVault[]",
+        notes: "Vaults the token can access, by name. 400 if 1Password rejects the token.",
+      },
+      {
+        method: "PUT",
+        path: "/api/onepassword",
+        body: "{token, vault?}",
+        response: "OnePassword",
+        notes:
+          "Connects to vault (an ID), or the token's only vault: creates the items and moves variables out of shed.db. 400 if 1Password rejects the token or there is no such vault; 502 if it fails.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/onepassword",
+        response: "OnePassword",
+        notes:
+          "Disconnects: copies variables back into shed.db. 502 if 1Password fails, and nothing changes.",
       },
     ],
   },

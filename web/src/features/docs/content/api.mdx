@@ -22,16 +22,16 @@ The dashboard is just a client of this API, so anything you can click has an end
 - **Authentication** is the `shed_session` cookie. Auth, setup, the webhook, and the OAuth endpoints under `/oauth` and `/.well-known` are public; everything else answers 401 without a session. `/mcp` takes only a bearer token, never the cookie; see [MCP](/docs/mcp). Unknown `/api/*` paths are a JSON 404, not the dashboard.
 - **Mutations** from a browser must come from the origin of `server.url`, and POST, PUT, and PATCH need `Content-Type: application/json` even with an empty body. See [request protections](/docs/security#request-protections).
 
-| Status        | Meaning                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------- |
-| `400`         | Invalid input, or a request the target can't satisfy, such as a backup of a service with no volumes.    |
-| `401`         | No session, or the user is no longer on allowed_users.                                                  |
-| `403`         | untrusted request origin.                                                                               |
-| `404`         | Unknown route or id.                                                                                    |
-| `409`         | Conflict: a name in use, a service busy with a backup or restore, fenced, stopped, or being deleted.    |
-| `413` / `415` | Webhook body too large, or a mutation without a JSON content type.                                      |
-| `429`         | The webhook guard is full, or too many client registrations from one address.                           |
-| `502` / `503` | GitHub failed on repos and branches, 1Password failed on an Environment read, or shed is shutting down. |
+| Status        | Meaning                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `400`         | Invalid input, or a request the target can't satisfy, such as a backup of a service with no volumes.                              |
+| `401`         | No session, or the user is no longer on allowed_users.                                                                            |
+| `403`         | untrusted request origin.                                                                                                         |
+| `404`         | Unknown route or id.                                                                                                              |
+| `409`         | Conflict: a name in use, a service busy with a backup or restore, fenced, stopped, or being deleted, or a missing 1Password item. |
+| `413` / `415` | Webhook body too large, or a mutation without a JSON content type.                                                                |
+| `429`         | The webhook guard is full, or too many client registrations from one address.                                                     |
+| `502` / `503` | GitHub failed on repos and branches, 1Password failed, or shed is shutting down.                                                  |
 
 ### Streams
 
@@ -136,7 +136,6 @@ type Service = {
   cpuLimit: number;                    // cores, 0 = unlimited
   memoryLimit: number;                 // bytes, 0 = unlimited
   autoDeploy: boolean; waitForCi: boolean;
-  onePassword: OnePasswordLink | null; // linked 1Password Environment
   status: ServiceStatus;
   privateHost: string;                 // "<name>"
   domains: Domain[];
@@ -162,9 +161,6 @@ type ServicePatch = Partial<Pick<Service,
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
-// The token is write-only: PUT /api/services/{id}/onepassword takes it, and
-// responses say only whether one is saved.
-type OnePasswordLink = { environment: string; hasToken: boolean };
 ```
 
 ### Deployments
@@ -284,6 +280,20 @@ type UpdateStatus = {
   autoDownload: boolean;
   unsupported: string;                 // why this build can't update itself, "" if it can
 };
+```
+
+### 1Password
+
+```title="TypeScript"
+// The token is write-only: PUT /api/onepassword takes it.
+type OnePassword = {
+  connected: boolean;
+  vault: string;                       // the vault's name, "" when not connected
+  items: number;                       // services with an item in the vault
+};
+
+// POST /api/onepassword/vaults {token} lists them; PUT takes one's id.
+type OnePasswordVault = { id: string; name: string };
 ```
 
 ### Agents

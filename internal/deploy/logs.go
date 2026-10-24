@@ -227,13 +227,9 @@ func (d *Deployer) currentSecrets(ctx context.Context, serviceID string, dep sto
 		return nil, err
 	}
 	svc.Port = dep.Port
-	r, err := d.environment(ctx, svc, project, dep.CommitSHA, nil)
+	r, err := d.environment(ctx, svc, project, dep.CommitSHA, d.saved)
 	if err != nil {
 		return nil, err
 	}
-	keys, err := d.secretKeys(ctx, svc, r)
-	if err != nil {
-		return nil, err
-	}
-	return secretValues(r.Env, keys), nil
+	return secretValues(r.Env, secretKeys(r)), nil
 }

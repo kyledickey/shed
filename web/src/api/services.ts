@@ -14,6 +14,11 @@ export const variablesQuery = (serviceId: string) =>
   queryOptions({
     queryKey: keys.variables(serviceId),
     queryFn: () => api.get<Variables>(`/services/${serviceId}/variables`),
+    // With 1Password connected each fetch is a read against its rate limit:
+    // the project canvas fetches every service's, so they stay fresh for a
+    // minute, and a failure is shown rather than retried.
+    staleTime: 60_000,
+    retry: false,
   });
 
 /** resolveVariables fetches a service's variables with references expanded. */

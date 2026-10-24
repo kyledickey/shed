@@ -86,12 +86,6 @@ func destinationAD(id string) string {
 	return "backup_destinations\x00" + id
 }
 
-// onePasswordLinkAD returns the additional data binding a service account
-// token to an onepassword_links row.
-func onePasswordLinkAD(serviceID string) string {
-	return "onepassword_links\x00" + serviceID
-}
-
 // deploymentAD returns the additional data binding a runtime to a
 // deployments row.
 func deploymentAD(id string) string {
@@ -164,11 +158,6 @@ func encryptAll(ctx context.Context, tx *sql.Tx, c *crypter) error {
 			`SELECT id, runtime FROM deployments WHERE runtime <> ''`,
 			`UPDATE deployments SET runtime = ? WHERE id = ?`,
 			func(k []string) string { return deploymentAD(k[0]) },
-		},
-		{
-			`SELECT service_id, token FROM onepassword_links WHERE token <> ''`,
-			`UPDATE onepassword_links SET token = ? WHERE service_id = ?`,
-			func(k []string) string { return onePasswordLinkAD(k[0]) },
 		},
 	}
 	for _, t := range tables {

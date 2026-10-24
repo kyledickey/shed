@@ -143,6 +143,28 @@
   }
 }
 
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+
+  & dt {
+    color: var(--ink-3);
+    font-size: var(--text-xs);
+  }
+
+  & dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 4px;
+    margin: 2px 0 0;
+    color: var(--ink);
+    font-size: var(--text-sm);
+  }
+}
+
 .intro {
   margin: 0;
   color: var(--ink-2);

@@ -56,17 +56,6 @@ type Service struct {
 	CreatedAt time.Time
 }
 
-// OnePasswordLink links a service to the 1Password Environment it reads
-// variables from.
-type OnePasswordLink struct {
-	ServiceID   string
-	Environment string
-	// Token is the service account token that reads the Environment; empty
-	// if none is saved, as for links made before tokens were per link.
-	Token     string
-	CreatedAt time.Time
-}
-
 // Volume is persistent storage mounted into a service's container.
 type Volume struct {
 	ID        string
