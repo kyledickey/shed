@@ -182,7 +182,7 @@ CREATE TABLE services (
 
 CREATE TABLE onepassword_items (         -- see "1Password"
   service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
-  item_id TEXT NOT NULL                  -- the service's item in the shed vault
+  item_id TEXT NOT NULL                  -- the service's item in the connected vault
 );
 
 CREATE TABLE variables (
@@ -461,12 +461,14 @@ An app then sets `DATABASE_URL=${{ postgres.DATABASE_URL }}`.
 ### 1Password
 
 shed can keep every service's variables in a 1Password vault instead of
-shed.db. It uses one service account, which the operator creates on
-1Password.com with "can create vaults" turned on; it needs access to no
-existing vault. A service account can access the vaults it creates, and
+shed.db. The operator creates a vault in 1Password (any name), then one
+service account on 1Password.com with read and write access to it.
 1Password allows 100 service accounts per account, so shed needs exactly one.
+shed never creates the vault: a vault a service account creates belongs to
+it, and on Individual and Families accounts nobody else can be given access,
+so the operator could not see their own variables.
 
-**Layout.** One vault named `shed`. One item per service (`onepassword_items`
+**Layout.** One vault, chosen when connecting. One item per service (`onepassword_items`
 maps service to item): category Secure Note, titled `<project> / <service>`,
 tagged `shed/<project>` (1Password nests tags with `/`, so the sidebar shows
 shed › project › items). Each variable is a concealed field in a section
@@ -475,11 +477,19 @@ title is a valid variable name (`^[A-Za-z_][A-Za-z0-9_]*$`; other fields,
 notes, and untitled fields are ignored); writing replaces those fields and
 keeps the others.
 
-**Connecting** (`PUT /api/onepassword {token}`):
+**Choosing the vault** (`POST /api/onepassword/vaults {token}`) signs in and
+lists the vaults the token can access, sorted by name; 400 if 1Password
+rejects the token. The dashboard calls it first: with one vault it connects
+to it, with several it asks which, with none it says to give the service
+account access to one.
+
+**Connecting** (`PUT /api/onepassword {token, vault?}`):
 
 1. Sign in with the token; 400 if that fails.
-2. Find the vault named `shed` the token can access, or create it. Its ID is
-   saved as setting `onepassword.vault` at the end.
+2. Pick the vault: `vault` is a vault ID from the list; without it, the only
+   vault the token can access. 400 if the token cannot access `vault`, can
+   access none, or (without `vault`) several. Its ID and name are saved as
+   settings `onepassword.vault` and `onepassword.vault_name` at the end.
 3. For every service without an item, create one holding its variables from
    shed.db (template variables included). Services that already have an item
    (from an earlier, failed attempt) get their fields replaced instead.
@@ -517,7 +527,7 @@ already created, so connecting converges.
 
 **Disconnecting** (`DELETE /api/onepassword`) reads every item, saves their
 variables to shed.db (encrypted), and then deletes the token, the vault
-setting, and `onepassword_items`. The vault and its items are left in
+settings, and `onepassword_items`. The vault and its items are left in
 1Password. If any read fails, nothing changes (502; 409 naming the service
 if its item is missing, which saving its variables recreates).
 
@@ -528,7 +538,8 @@ variables, so no read sees shed.db emptied before the token is saved and no
 write lands on the side being left.
 
 `GET /api/onepassword` reports `{connected, vault, items}` without calling
-1Password: the vault's name (`shed`) and how many services have an item;
+1Password: the vault's name as saved when connecting and how many services
+have an item;
 `""` and 0 while not connected.
 
 `internal/onepassword` wraps the official Go SDK, which runs a WebAssembly
@@ -1244,7 +1255,8 @@ PUT    /api/services/{id}/variables  Record     → Record  (replace all; writes
 GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment; 409 if a needed 1Password item is missing; 502 if 1Password fails)
 
 GET    /api/onepassword                         → OnePassword
-PUT    /api/onepassword          {token}        → OnePassword  (connect: create the vault and items, move variables out of shed.db; 400 {error} if 1Password rejects the token; 409 if already connected; 502 if 1Password fails)
+POST   /api/onepassword/vaults   {token}        → OnePasswordVault[]  (vaults the token can access, by name; 400 {error} if 1Password rejects the token; 502 if 1Password fails)
+PUT    /api/onepassword          {token, vault?} → OnePassword  (connect to vault, an ID, or the token's only vault: create the items, move variables out of shed.db; 400 {error} if 1Password rejects the token or the vault is not one it can access, none, or one of several; 409 if already connected; 502 if 1Password fails)
 DELETE /api/onepassword                         → OnePassword  (disconnect: copy variables back into shed.db; 409 if an item is missing, 502 if 1Password fails, nothing changed)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
@@ -1438,6 +1450,7 @@ type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
 // The token is write-only: PUT /api/onepassword takes it.
 type OnePassword = { connected: boolean; vault: string; items: number };
+type OnePasswordVault = { id: string; name: string };
 
 // Container resource usage. Sample i is at start + i*step seconds; series
 // are the same length, oldest first, null where nothing was running.
