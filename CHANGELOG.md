@@ -3,6 +3,22 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.2.6 - 2026-10-23
+
+- 1Password now keeps every service's variables in one vault you choose,
+  with one service account for all of shed. Create a vault in 1Password,
+  then a service account with read and write access to it, and paste its
+  token in Settings → 1Password. shed adds an item for each service, titled
+  `<project> / <service>` and tagged by project, and moves your variables
+  into them. The Variables tab reads and writes those items, and edits made
+  in the 1Password app apply on the next deploy. Disconnecting copies the
+  variables back to the server.
+- New services get an item automatically, renaming a project renames its
+  items, and deleting a service archives its item.
+- The per-service 1Password Environment links from v0.2.4 and v0.2.5 are
+  removed. Connect once in Settings → 1Password to move your variables into
+  a vault.
+
 ## v0.2.5 - 2026-10-23
 
 - Each service's 1Password link has its own service account token, so a
