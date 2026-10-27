@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.opentelemetry.io/otel"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,11 +87,13 @@ func newFixture(t *testing.T, configure func(*otlp.Config)) *fixture {
 		reader: sdkmetric.NewManualReader(),
 		clock:  &clock{t: time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)},
 	}
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(f.reader)))
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
 	cfg := otlp.Config{
-		Attribute:     func(*http.Request) (otlp.Attribution, error) { return otlp.Attribution{Source: app}, nil },
-		Forwarder:     f.fwd,
-		MeterProvider: sdkmetric.NewMeterProvider(sdkmetric.WithReader(f.reader)),
-		Now:           f.clock.now,
+		Attribute: func(*http.Request) (otlp.Attribution, error) { return otlp.Attribution{Source: app}, nil },
+		Forwarder: f.fwd,
+		Now:       f.clock.now,
 	}
 	if configure != nil {
 		configure(&cfg)
@@ -601,6 +604,7 @@ func TestMasking(t *testing.T) {
 					Attributes: []*commonpb.KeyValue{{Key: "conn", Value: nested()}},
 					Events:     []*tracepb.Span_Event{{Name: "exception", Attributes: []*commonpb.KeyValue{str("exception.message", "bad password hunter2")}}},
 					Links:      []*tracepb.Span_Link{{Attributes: []*commonpb.KeyValue{str("why", secret)}}},
+					Status:     &tracepb.Status{Code: tracepb.Status_STATUS_CODE_ERROR, Message: "auth failed for hunter2"},
 				}}}},
 			}}},
 			fwd: func(f *forwarder) [][]byte { return f.traces },
@@ -609,6 +613,9 @@ func TestMasking(t *testing.T) {
 				args := span.Attributes[0].Value.GetKvlistValue().Values[1].Value.GetArrayValue().Values[0]
 				if got := args.GetStringValue(); got != "--password="+masked {
 					t.Errorf("nested array value = %q", got)
+				}
+				if got := span.Status.Message; got != "auth failed for "+masked {
+					t.Errorf("status message = %q", got)
 				}
 			},
 		},

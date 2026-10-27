@@ -1239,7 +1239,7 @@ one, else it becomes the service name. On the loopback listener, records are
 attributed to shed, except edge spans, attributed by their `http.host`
 through the domain table.
 
-Masking: string attribute values and log bodies are masked with the saved
+Masking: string attribute values, span status messages, and log bodies are masked with the saved
 values of every variable in the sender's project and the values its container
 was started with (the [build secret handling](#build-secret-handling) limits
 apply). shed's own records are masked with every project's values, like

@@ -24,9 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/metric/noop"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 )
 
@@ -120,14 +120,13 @@ type Config struct {
 	// senders shed does not know; any other error answers 503.
 	Attribute func(r *http.Request) (Attribution, error)
 	// Mask returns the masking function for a source's records, applied to
-	// every string attribute value and log body. Nil means no masking.
+	// every string attribute value, span status message, and log body. Nil
+	// means no masking.
 	Mask func(Source) func(string) string
 	// Caps returns a service's caps. Nil means no caps.
 	Caps func(serviceID string) Caps
 	// Forwarder receives every request that still has records after caps.
 	Forwarder Forwarder
-	// MeterProvider records the gateway's own metrics. Nil means none.
-	MeterProvider metric.MeterProvider
 	// Logger logs forwarding failures. Nil discards.
 	Logger *slog.Logger
 	// Now is the clock for caps. Nil means time.Now.
@@ -174,11 +173,7 @@ func New(cfg Config) (*Handler, error) {
 	if h.now == nil {
 		h.now = time.Now
 	}
-	mp := cfg.MeterProvider
-	if mp == nil {
-		mp = noop.NewMeterProvider()
-	}
-	m := mp.Meter("github.com/kyledickey/shed/internal/otlp")
+	m := otel.Meter("github.com/kyledickey/shed/internal/otlp")
 	var err error
 	if h.ingested, err = m.Int64Counter("shed_telemetry_ingested_total",
 		metric.WithDescription("Telemetry records accepted by the OTLP gateway.")); err != nil {
