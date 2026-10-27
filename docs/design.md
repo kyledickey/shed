@@ -1268,6 +1268,16 @@ attributes. VictoriaMetrics lets a data point attribute override the resource
 attribute of the same name, so `shed_service_id` names the service the record
 is about, not shed.
 
+That override, and VictoriaLogs merging log record attributes with the
+resource's, would let any sender claim another service. So the gateway removes
+the `shed` namespace from the data point, log record, and scope attributes of
+every request but shed's own (the host loopback listener): every key that is
+`shed` or starts with `shed` followed by anything other than a letter or
+digit (`shed.service.id`, `shed_service_id`, `shed-project.id`, a nested
+`shed` map). It does so before the series cap counts the data point. Span
+attributes are kept: VictoriaTraces stores them apart from the resource's, as
+`span_attr:*`.
+
 ### Ingest
 
 `internal/otlp` is an OTLP/HTTP receiver: `POST /v1/traces`, `/v1/metrics`,

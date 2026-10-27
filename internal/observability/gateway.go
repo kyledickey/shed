@@ -411,7 +411,7 @@ func (g *Gateway) Attribute(r *http.Request) (otlp.Attribution, error) {
 		return otlp.Attribution{Source: src}, nil
 	case hostLoopback:
 		_, err := g.mask(ctx, shedKey)
-		return otlp.Attribution{Source: shedSource, Span: g.edgeSpan}, err
+		return otlp.Attribution{Source: shedSource, Span: g.edgeSpan, Trusted: true}, err
 	}
 	return otlp.Attribution{}, errors.New("observability: request on no gateway listener")
 }

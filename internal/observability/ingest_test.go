@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -560,6 +561,32 @@ func TestGatewayLoopbackAndEdgeSpans(t *testing.T) {
 				t.Errorf("shed.project.id = %q, want %q", got, tt.projectID)
 			}
 		})
+	}
+}
+
+// TestGatewayTrust checks that only the host loopback, where shed's own
+// telemetry arrives, may keep shed.* attributes on its records.
+func TestGatewayTrust(t *testing.T) {
+	f := newGatewayFixture(t)
+	app := &appListener{}
+	app.src.Store(&otlp.Source{ServiceID: "s1", ProjectID: "p1", DeploymentID: "d1"})
+	for _, tt := range []struct {
+		name     string
+		listener any
+		want     bool
+	}{
+		{"host loopback", hostLoopback{}, true},
+		{"app listener", app, false},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/v1/metrics", nil)
+		r = r.WithContext(context.WithValue(r.Context(), listenerKey{}, tt.listener))
+		a, err := f.g.Attribute(r)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if a.Trusted != tt.want {
+			t.Errorf("%s: trusted = %v, want %v", tt.name, a.Trusted, tt.want)
+		}
 	}
 }
 

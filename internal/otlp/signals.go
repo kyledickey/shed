@@ -169,8 +169,14 @@ func (h *Handler) logs(ctx context.Context, req *collogspb.ExportLogsServiceRequ
 
 		rl.Resource = stamp(rl.Resource, src, mask)
 		for _, sl := range rl.ScopeLogs {
+			if !a.Trusted && sl.Scope != nil {
+				sl.Scope.Attributes = dropReserved(sl.Scope.Attributes)
+			}
 			maskAttrs(sl.Scope.GetAttributes(), mask)
 			for _, lr := range sl.LogRecords {
+				if !a.Trusted {
+					lr.Attributes = dropReserved(lr.Attributes)
+				}
 				maskAttrs(lr.Attributes, mask)
 				maskValue(lr.Body, mask)
 			}
@@ -197,11 +203,17 @@ func (h *Handler) metrics(ctx context.Context, req *colmetricspb.ExportMetricsSe
 
 		scopes := rm.ScopeMetrics[:0]
 		for _, sm := range rm.ScopeMetrics {
+			if !a.Trusted && sm.Scope != nil {
+				sm.Scope.Attributes = dropReserved(sm.Scope.Attributes)
+			}
 			maskAttrs(sm.Scope.GetAttributes(), mask)
 			ms := sm.Metrics[:0]
 			for _, m := range sm.Metrics {
 				maskAttrs(m.Metadata, mask)
 				keep := func(p dataPoint) bool {
+					if !a.Trusted {
+						dropPointReserved(p)
+					}
 					maskAttrs(p.GetAttributes(), mask)
 					if e, ok := p.(interface{ GetExemplars() []*metricspb.Exemplar }); ok {
 						for _, ex := range e.GetExemplars() {
@@ -344,6 +356,20 @@ func keepFirst[S, R any](scopes []S, records func(S) *[]R, n int) []S {
 // dataPoint is what every OTLP metric data point type has in common.
 type dataPoint interface {
 	GetAttributes() []*commonpb.KeyValue
+}
+
+// dropPointReserved removes the reserved attributes of p.
+func dropPointReserved(p dataPoint) {
+	switch p := p.(type) {
+	case *metricspb.NumberDataPoint:
+		p.Attributes = dropReserved(p.Attributes)
+	case *metricspb.HistogramDataPoint:
+		p.Attributes = dropReserved(p.Attributes)
+	case *metricspb.ExponentialHistogramDataPoint:
+		p.Attributes = dropReserved(p.Attributes)
+	case *metricspb.SummaryDataPoint:
+		p.Attributes = dropReserved(p.Attributes)
+	}
 }
 
 // filterPoints keeps the data points of m for which keep returns true and

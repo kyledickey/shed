@@ -65,6 +65,11 @@ type Attribution struct {
 	// Source, and counts against that service's caps. The loopback listener
 	// uses it to attribute the proxy's edge spans by host.
 	Span func(resource, span Attrs) (Source, bool)
+	// Trusted keeps attributes in shed's namespace on data points, log
+	// records, and scopes. Only shed's own telemetry is trusted: its data
+	// points name the service they are about. Anyone else's are removed,
+	// since the stores merge them with the resource's shed.* attributes.
+	Trusted bool
 }
 
 // Attrs is a read-only view of an OTLP attribute list.

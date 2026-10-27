@@ -6,6 +6,7 @@ import (
 	"hash/maphash"
 	"math"
 	"slices"
+	"strings"
 
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
@@ -62,6 +63,28 @@ func stamp(res *resourcepb.Resource, src Source, mask func(string) string) *reso
 	}
 	res.Attributes = kept
 	return res
+}
+
+// reserved reports whether a record attribute key lands in shed's
+// namespace in a store: VictoriaMetrics turns every character but a
+// letter, digit, or underscore into an underscore (shed.service.id becomes
+// shed_service_id), and VictoriaLogs flattens a nested shed value into
+// shed.* fields.
+func reserved(key string) bool {
+	rest, ok := strings.CutPrefix(key, "shed")
+	if !ok {
+		return false
+	}
+	if rest == "" {
+		return true
+	}
+	c := rest[0]
+	return !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9')
+}
+
+// dropReserved removes the attributes whose keys are reserved from kvs.
+func dropReserved(kvs []*commonpb.KeyValue) []*commonpb.KeyValue {
+	return slices.DeleteFunc(kvs, func(kv *commonpb.KeyValue) bool { return reserved(kv.GetKey()) })
 }
 
 func str(key, value string) *commonpb.KeyValue {

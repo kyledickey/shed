@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -865,6 +866,91 @@ func TestSeriesCap(t *testing.T) {
 		decodeResponse(t, w.Body.Bytes(), false, resp)
 		if resp.PartialSuccess != nil {
 			t.Errorf("rejected %d data points of the same series", resp.PartialSuccess.RejectedDataPoints)
+		}
+	})
+}
+
+// TestReservedAttributes checks that a sender cannot claim another service
+// through data point or log record attributes, which the stores merge with
+// the resource's, while shed's own trusted records keep theirs.
+func TestReservedAttributes(t *testing.T) {
+	attrs := func() []*commonpb.KeyValue {
+		return []*commonpb.KeyValue{
+			str("shed.service.id", "victim"),
+			str("shed_service_id", "victim"),
+			str("shed-project.id", "victim"),
+			{Key: "shed", Value: kvlist(str("service.id", "victim"))},
+			str("shedding", "kept"),
+			str("route", "/a"),
+		}
+	}
+	all := []string{"route", "shed", "shed-project.id", "shed.service.id", "shed_service_id", "shedding"}
+	keys := func(kvs []*commonpb.KeyValue) []string {
+		var out []string
+		for k := range attrMap(t, kvs) {
+			out = append(out, k)
+		}
+		slices.Sort(out)
+		return out
+	}
+	tests := []struct {
+		name    string
+		trusted bool
+		want    []string
+	}{
+		{"sender", false, []string{"route", "shedding"}},
+		{"trusted", true, all},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, func(c *otlp.Config) {
+				c.Attribute = func(*http.Request) (otlp.Attribution, error) {
+					return otlp.Attribution{Source: app, Trusted: tt.trusted}, nil
+				}
+			})
+
+			m := gauge("requests", attrs())
+			m.ResourceMetrics[0].ScopeMetrics[0].Scope = &commonpb.InstrumentationScope{Attributes: attrs()}
+			if w := f.post("/v1/metrics", m); w.Code != 200 {
+				t.Fatalf("metrics status = %d: %s", w.Code, w.Body)
+			}
+			sm := unmarshal(t, f.fwd.metrics[0], &colmetricspb.ExportMetricsServiceRequest{}).ResourceMetrics[0].ScopeMetrics[0]
+			if got := keys(sm.Metrics[0].GetGauge().DataPoints[0].Attributes); !slices.Equal(got, tt.want) {
+				t.Errorf("data point attributes = %v, want %v", got, tt.want)
+			}
+			if got := keys(sm.Scope.GetAttributes()); !slices.Equal(got, tt.want) {
+				t.Errorf("metric scope attributes = %v, want %v", got, tt.want)
+			}
+
+			l := nLogs(1)
+			sl := l.ResourceLogs[0].ScopeLogs[0]
+			sl.Scope = &commonpb.InstrumentationScope{Attributes: attrs()}
+			sl.LogRecords[0].Attributes = attrs()
+			if w := f.post("/v1/logs", l); w.Code != 200 {
+				t.Fatalf("logs status = %d: %s", w.Code, w.Body)
+			}
+			sl = unmarshal(t, f.fwd.logs[0], &collogspb.ExportLogsServiceRequest{}).ResourceLogs[0].ScopeLogs[0]
+			if got := keys(sl.LogRecords[0].Attributes); !slices.Equal(got, tt.want) {
+				t.Errorf("log record attributes = %v, want %v", got, tt.want)
+			}
+			if got := keys(sl.Scope.GetAttributes()); !slices.Equal(got, tt.want) {
+				t.Errorf("log scope attributes = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("removed before the series cap", func(t *testing.T) {
+		f := newFixture(t, func(c *otlp.Config) {
+			c.Caps = func(string) otlp.Caps { return otlp.Caps{Series: 1} }
+		})
+		w := f.post("/v1/metrics", gauge("m",
+			[]*commonpb.KeyValue{str("shed_service_id", "a")},
+			[]*commonpb.KeyValue{str("shed_service_id", "b")},
+		))
+		resp := &colmetricspb.ExportMetricsServiceResponse{}
+		decodeResponse(t, w.Body.Bytes(), false, resp)
+		if resp.PartialSuccess != nil {
+			t.Errorf("rejected %d data points that differ only in reserved attributes", resp.PartialSuccess.RejectedDataPoints)
 		}
 	})
 }
