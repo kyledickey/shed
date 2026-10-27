@@ -84,6 +84,53 @@ func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
+// Network is a bridge network and the host's address on it.
+type Network struct {
+	Name string
+	// Gateway is the first IPv4 gateway of the network, the host's address
+	// on its bridge; zero if it has none.
+	Gateway netip.Addr
+}
+
+// Networks returns the networks whose names start with prefix.
+func (c *Client) Networks(ctx context.Context, prefix string) ([]Network, error) {
+	filters := make(client.Filters)
+	filters.Add("name", prefix)
+	res, err := c.api.NetworkList(ctx, client.NetworkListOptions{Filters: filters})
+	if err != nil {
+		return nil, fmt.Errorf("docker: list networks: %w", err)
+	}
+	var out []Network
+	for _, n := range res.Items {
+		if strings.HasPrefix(n.Name, prefix) {
+			out = append(out, Network{Name: n.Name, Gateway: gateway(n.IPAM)})
+		}
+	}
+	return out, nil
+}
+
+// NetworkGateway returns the host's IPv4 address on the network name.
+func (c *Client) NetworkGateway(ctx context.Context, name string) (netip.Addr, error) {
+	res, err := c.api.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("docker: inspect network %s: %w", name, err)
+	}
+	gw := gateway(res.Network.IPAM)
+	if !gw.IsValid() {
+		return netip.Addr{}, fmt.Errorf("docker: network %s has no IPv4 gateway", name)
+	}
+	return gw, nil
+}
+
+func gateway(ipam network.IPAM) netip.Addr {
+	for _, cfg := range ipam.Config {
+		if cfg.Gateway.Is4() {
+			return cfg.Gateway
+		}
+	}
+	return netip.Addr{}
+}
+
 // ReconnectNetwork replaces the DNS aliases, besides its name, of the
 // container id on the network name, to which it must be connected. Docker
 // cannot change the aliases of a connected container, so it is disconnected
@@ -299,6 +346,8 @@ type RunSpec struct {
 	Mounts  []Mount
 	Binds   []Bind
 	Publish []PortBinding
+	// ExtraHosts are host entries, each "name:address".
+	ExtraHosts []string
 	// CPUs is the CPU quota in cores and Memory the memory limit in bytes,
 	// with no extra swap. Zero means unlimited.
 	CPUs   float64
@@ -356,6 +405,7 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 		HostConfig: &container.HostConfig{
 			NetworkMode:   container.NetworkMode(spec.Network),
 			PortBindings:  bindings,
+			ExtraHosts:    spec.ExtraHosts,
 			Mounts:        append(volumeMounts(spec.Mounts), bindMounts(spec.Binds)...),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     workloadResources(spec),
@@ -549,6 +599,27 @@ func (c *Client) Logs(ctx context.Context, id string, tail int, follow bool, w i
 	defer rc.Close()
 
 	if _, err := stdcopy.StdCopy(w, w, rc); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("docker: logs %s: %w", id, err)
+	}
+	return nil
+}
+
+// LogStream copies the container's stdout and stderr, from since on (all of
+// it if since is zero), to separate writers, each line prefixed with its
+// RFC 3339 timestamp at nanosecond precision and a space. It follows the
+// output until ctx is done or the container exits; canceling ctx is not an
+// error.
+func (c *Client) LogStream(ctx context.Context, id string, since time.Time, stdout, stderr io.Writer) error {
+	opts := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true}
+	if !since.IsZero() {
+		opts.Since = since.UTC().Format(time.RFC3339Nano)
+	}
+	rc, err := c.api.ContainerLogs(ctx, id, opts)
+	if err != nil {
+		return fmt.Errorf("docker: logs %s: %w", id, err)
+	}
+	defer rc.Close()
+	if _, err := stdcopy.StdCopy(stdout, stderr, rc); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("docker: logs %s: %w", id, err)
 	}
 	return nil

@@ -40,6 +40,15 @@ type AuditFilter struct {
 	Limit int
 }
 
+const auditCols = `id, ts, actor_kind, actor, actor_ip, action, outcome, project_id, service_id, target, detail`
+
+func scanAuditEvent(r scanner) (AuditEvent, error) {
+	var e AuditEvent
+	err := r.Scan(&e.ID, (*timestamp)(&e.Time), &e.ActorKind, &e.Actor, &e.ActorIP, &e.Action,
+		&e.Outcome, &e.ProjectID, &e.ServiceID, &e.Target, &e.Detail)
+	return e, err
+}
+
 // InsertAuditEvent appends e to the audit log, at e.Time or now if it is
 // zero, and returns it with its ID and time.
 func (s *Store) InsertAuditEvent(ctx context.Context, e AuditEvent) (AuditEvent, error) {
@@ -107,8 +116,7 @@ func (s *Store) AuditEvents(ctx context.Context, f AuditFilter) ([]AuditEvent, e
 	if !f.Since.IsZero() {
 		where, args = append(where, "ts >= ?"), append(args, formatTime(f.Since))
 	}
-	query := `SELECT id, ts, actor_kind, actor, actor_ip, action, outcome, project_id, service_id, target, detail
-		FROM audit_events`
+	query := `SELECT ` + auditCols + ` FROM audit_events`
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -116,14 +124,20 @@ func (s *Store) AuditEvents(ctx context.Context, f AuditFilter) ([]AuditEvent, e
 	if f.Limit > 0 {
 		query, args = query+" LIMIT ?", append(args, f.Limit)
 	}
-	events, err := queryAll(ctx, s, func(r scanner) (AuditEvent, error) {
-		var e AuditEvent
-		err := r.Scan(&e.ID, (*timestamp)(&e.Time), &e.ActorKind, &e.Actor, &e.ActorIP, &e.Action,
-			&e.Outcome, &e.ProjectID, &e.ServiceID, &e.Target, &e.Detail)
-		return e, err
-	}, query, args...)
+	events, err := queryAll(ctx, s, scanAuditEvent, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: audit events: %w", err)
+	}
+	return events, nil
+}
+
+// AuditEventsAfter returns at most limit events with an ID above after,
+// oldest first.
+func (s *Store) AuditEventsAfter(ctx context.Context, after int64, limit int) ([]AuditEvent, error) {
+	events, err := queryAll(ctx, s, scanAuditEvent, `SELECT `+auditCols+` FROM audit_events
+		WHERE id > ? ORDER BY id LIMIT ?`, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: audit events after %d: %w", after, err)
 	}
 	return events, nil
 }

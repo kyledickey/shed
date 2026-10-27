@@ -22,6 +22,7 @@ var operations = map[string]string{
 	"GET /_ping":                        "ping",
 	"HEAD /_ping":                       "ping",
 	"GET /info":                         "info",
+	"GET /networks":                     "network_list",
 	"POST /networks/create":             "network_create",
 	"GET /networks/{id}":                "network_inspect",
 	"DELETE /networks/{id}":             "network_remove",
