@@ -1168,11 +1168,13 @@ store; data is kept.
 Disabling closes the listeners, stops the shippers, and stops the containers.
 Volumes, `<data>/telemetry`, and the `grafana_dashboards` rows are kept, so
 enabling again resumes with history and edited dashboards intact.
-`DELETE /api/telemetry/data` (only while disabled) removes the containers,
+`DELETE /api/telemetry/data` (only while disabled) stops the workers if a
+disable is not yet reconciled, then removes the containers,
 volumes, `<data>/telemetry`, and those rows, and clears `log_cursors` and the
 `audit_mirror_cursor` setting: the shipped logs are gone, so container output
 is shipped again from what Docker still holds and the audit mirror starts
-over. The Grafana admin password in `settings` is kept.
+over. The Grafana admin password in `settings` is kept. Saving settings
+waits for a deletion in progress, so telemetry cannot be turned on midway.
 
 Workers that only make sense while telemetry is on (ingest listeners,
 shippers) register with the manager and run from the moment the stack is up

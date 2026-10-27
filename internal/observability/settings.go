@@ -104,7 +104,10 @@ func (m *Manager) SetSettings(ctx context.Context, s Settings) (Settings, error)
 	if err != nil {
 		return Settings{}, err
 	}
-	if err := m.cfg.Store.SetSetting(ctx, settingsKey, string(raw)); err != nil {
+	m.settingsMu.Lock()
+	err = m.cfg.Store.SetSetting(ctx, settingsKey, string(raw))
+	m.settingsMu.Unlock()
+	if err != nil {
 		return Settings{}, err
 	}
 	select {

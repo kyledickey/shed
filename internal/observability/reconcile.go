@@ -243,11 +243,15 @@ func (m *Manager) containers(ctx context.Context) (map[Component]*docker.Contain
 	return out, nil
 }
 
-// DeleteData removes the containers, their volumes, the telemetry
-// directory, and the records of shed's dashboards. It fails with ErrEnabled unless telemetry is off.
+// DeleteData stops the workers, then removes the containers, their
+// volumes, the telemetry directory, and the records of shed's dashboards.
+// It fails with ErrEnabled unless telemetry is off. The settings cannot be
+// saved until it returns.
 func (m *Manager) DeleteData(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.settingsMu.Lock()
+	defer m.settingsMu.Unlock()
 	s, err := m.Settings(ctx)
 	if err != nil {
 		return err
@@ -255,6 +259,8 @@ func (m *Manager) DeleteData(ctx context.Context) error {
 	if s.Enabled {
 		return ErrEnabled
 	}
+	// Telemetry may have been turned off without being reconciled yet.
+	m.deactivate()
 	running, err := m.containers(ctx)
 	if err != nil {
 		return err

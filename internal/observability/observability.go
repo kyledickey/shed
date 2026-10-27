@@ -139,6 +139,9 @@ type Manager struct {
 
 	mu     sync.Mutex  // serializes Reconcile and DeleteData
 	active *activation // non-nil while the workers run; guarded by mu
+	// settingsMu serializes saving the settings with DeleteData, which
+	// holds it after mu.
+	settingsMu sync.Mutex
 
 	// scrapeMu serializes writing scrape.yaml, and guards targets, the
 	// exporters it names.

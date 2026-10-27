@@ -524,6 +524,67 @@ func TestDeleteData(t *testing.T) {
 	}
 }
 
+func TestDeleteDataStopsWorkers(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.m.AddWorker(func(ctx context.Context) {
+		<-ctx.Done()
+		h.t.add("worker stop")
+	})
+	h.set(t, enabled())
+	// Saved but not yet reconciled: the workers still run.
+	if _, err := h.m.SetSettings(ctx, DefaultSettings()); err != nil {
+		t.Fatal(err)
+	}
+	h.t.take()
+	if err := h.m.DeleteData(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.t.take(); len(got) == 0 || got[0] != "worker stop" {
+		t.Errorf("DeleteData did %v, want the workers stopped first", got)
+	}
+}
+
+// blockingStore holds DeleteGrafanaDashboards until release is closed.
+type blockingStore struct {
+	*fakeStore
+	entered, release chan struct{}
+}
+
+func (s blockingStore) DeleteGrafanaDashboards(ctx context.Context) error {
+	close(s.entered)
+	<-s.release
+	return s.fakeStore.DeleteGrafanaDashboards(ctx)
+}
+
+func TestDeleteDataHoldsSettings(t *testing.T) {
+	bs := blockingStore{entered: make(chan struct{}), release: make(chan struct{})}
+	h := newHarness(t, func(c *Config) {
+		bs.fakeStore = c.Store.(*fakeStore)
+		c.Store = bs
+	})
+	ctx := context.Background()
+	release := sync.OnceFunc(func() { close(bs.release) })
+	t.Cleanup(release)
+	deleted := make(chan error, 1)
+	go func() { deleted <- h.m.DeleteData(ctx) }()
+	<-bs.entered
+	saved := make(chan error, 1)
+	go func() { _, err := h.m.SetSettings(ctx, enabled()); saved <- err }()
+	select {
+	case err := <-saved:
+		t.Fatalf("SetSettings returned %v during DeleteData", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	if err := <-deleted; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-saved; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRestart(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
