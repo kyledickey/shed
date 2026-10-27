@@ -1661,40 +1661,101 @@ embedded DNS, which forwards from the host, so lookups are not attributed.
 
 ### Built-in charts
 
-While telemetry is on, the metrics sampler pushes each tick to
-VictoriaMetrics (`shed_container_cpu_percent`, `shed_container_memory_bytes`,
-`shed_container_network_{rx,tx}_bytes_per_second`,
-`shed_container_disk_{read,write}_bytes_per_second`, and the same for
-`shed_host_*`, plus the running containers' limits
-`shed_container_cpu_limit_percent` and `shed_container_memory_limit_bytes`
-(0 = unlimited), `shed_host_memory_total_bytes`, `shed_host_disk_used_bytes`,
-and `shed_host_disk_total_bytes`) instead of writing
-`metric_samples` and `host_samples`. `/api/services/{id}/metrics` and
-`/api/host/metrics` then query VictoriaMetrics (`avg_over_time` over each
-bucket width, with the same alignment and window rules). If the query fails,
-or telemetry is off, they read SQLite, which has a gap for the time telemetry
-was on.
+While telemetry is on (`observability.Manager.OnEnabled` calls
+`metrics.Collector.SetRemote`), the metrics sampler pushes each tick to
+VictoriaMetrics in one `ImportPrometheus` call instead of writing
+`metric_samples` and `host_samples`. Series, stamped with the tick's time:
+
+- per service, with the service's `shed.*` labels (`shed_source="sampler"`):
+  `shed_container_cpu_percent`, `shed_container_memory_bytes`,
+  `shed_container_network_{rx,tx}_bytes_per_second`,
+  `shed_container_disk_{read,write}_bytes_per_second`, and the limits of its
+  running containers, summed, `shed_container_cpu_limit_percent` and
+  `shed_container_memory_limit_bytes` (0 = unlimited);
+- the host, with `shed_service_id="shed"`: the same names with `shed_host_`
+  in place of `shed_container_`, plus `shed_host_memory_total_bytes`,
+  `shed_host_disk_used_bytes`, and `shed_host_disk_total_bytes`.
+
+A tick the store refuses is written to SQLite instead, so a failing store
+leaves no gap. `/api/services/{id}/metrics` and `/api/host/metrics` then
+query VictoriaMetrics with the same 180 buckets, widths, and window rules.
+Each metric is one range query, `avg(avg_over_time(<metric>{shed_service_id="…"}[<width>s] offset 1ms))`,
+evaluated at `from + (i+1) × width`, which are multiples of the width: the
+store's `(t − width, t]` window shifted back 1 ms covers exactly the whole
+seconds of SQLite's `[from + i × width, from + (i+1) × width)`, so both paths
+bucket the same samples the same way (`avg` merges the series a rename
+splits). The CPU and memory limits shown with the chart still come from
+Docker. If the query fails, finds nothing in the window, or telemetry is off,
+they read SQLite, which has a gap for the time telemetry was on.
 
 ### Log history and trace links
 
 `GET /api/services/{id}/logs/history` searches the service's stored logs
-(container and OTLP) across deployments. `q` is parsed by shed into a LogsQL
-filter (words, quoted phrases, `field:value`), always inside the service's
-stream filter, so it cannot reach other services. The service Logs tab has
-Live and History modes.
+(container and OTLP) across deployments, newest first.
+
+- `q` is parsed by shed into LogsQL: space-separated terms, each a word, a
+  `"quoted phrase"` (with `\"` and `\\`), or `field:value` /
+  `field:"quoted value"` (field names are letters, digits, `_`, `.`, `-`;
+  `http://x` stays a word). Every term becomes a quoted literal, joined with
+  `AND`: no operators, wildcards, pipes, parentheses, or negation reach the
+  store, and `or` is just a word. At most 512 bytes and 16 terms (400
+  beyond).
+- The query is always `_stream:{"shed.service.id"="<id>"} AND <terms> AND <level>`.
+  `level` (`debug`, `info`, `warn`, `error`) matches the `level`, `severity`,
+  or `lvl` field case-insensitively, with the usual synonyms (`warning`;
+  `err`, `fatal`, `critical`).
+- `from` and `to` are RFC 3339 times; `limit` defaults to 100, at most 500.
+  `next` in the page is the RFC 3339 time of its oldest record when the page
+  is full, else `""`; passing it as `before` returns records older than it
+  (by one nanosecond, so lines sharing that exact timestamp can be skipped).
+- 404 for an unknown service, 409 while telemetry is off, 400 for a bad
+  parameter or search.
+
+The service Logs tab shows Live and History modes while telemetry is on.
+History has a search box, a level filter, a time range (1 h to 7 d), "Load
+older", and a Trace link on records with a `traceId`.
 
 Deployments started while telemetry is on carry `traceId`; the build log
-links to `GET /api/telemetry/trace/{traceId}`, which redirects into Grafana
-Explore. Dashboards are linked by their deterministic UIDs
-(`/grafana/d/<uid>`) from the project, service, and deployment pages.
+(deployment dialog) shows "View trace", linking to
+`GET /api/telemetry/trace/{traceId}`. The ID must be 32 lowercase hex
+characters (400), and telemetry must be on (409). It answers 302 to a
+relative Location on the Grafana proxy:
+
+```
+/grafana/explore?schemaVersion=1&orgId=1&panes={"trc":{"datasource":"shed-traces",
+  "queries":[{"refId":"A","datasource":{"type":"jaeger","uid":"shed-traces"},"query":"<traceId>"}],
+  "range":{"from":"now-<traces retention>d","to":"now"}}}
+```
+
+(`panes` URL-encoded.) Grafana 13 builds its own Explore links this way
+(`schemaVersion` 1, `panes` keyed by a three-letter ID); the Jaeger data
+source reads a trace ID from `query`. Dashboards are linked by their
+deterministic UIDs (`/grafana/d/<uid>`) from the project, service, and
+deployment pages.
 
 ### Agents
 
-The MCP server gains telemetry tools (see [MCP](#mcp)). Results come from the
-stores as ingested (already masked); `query_logs` masks again with
-`ShedLog`'s value set to cover records ingested before a variable existed.
-While telemetry is off, every telemetry tool except `audit_events` answers
-with `isError` and `telemetry is off`.
+The MCP server gains telemetry tools (see [MCP](#mcp)); the instructions it
+sends describe the label schema and give sample queries. Results come from
+the stores as ingested (already masked); `query_logs` and `error_logs` mask
+every field again with the saved variable values of every service, the set
+`ShedLog` uses, to cover records ingested before a variable existed. While
+telemetry is off, every telemetry tool except `audit_events` and
+`telemetry_status` (which reports `enabled: false`) answers with `isError`
+and `telemetry is off`. Store failures are `isError` with
+`<op>: the store did not answer`; a query the store rejects returns its
+message.
+
+JSON cannot carry NaN or infinity, so `query_metrics` encodes them as `null`
+(a series' values are `[unix seconds, number | null]`). VictoriaMetrics itself drops NaN points from results (`0/0` answers an empty series), so `null` shows up only for infinities and for NaN a store does return. A range query's
+`step` is raised to the larger of 1 s and what keeps it within 500 points;
+the result's `stepSeconds` says which was used. `top_queries` reads
+`pg_stat_statements_{calls,seconds,rows}_total` (Postgres, by `query`) or
+`mysql_perf_schema_events_statements_{total,seconds_total,rows_sent_total}`
+(MySQL, by `digest_text`) summed per statement for the service; other kinds
+are rejected. `slow_requests` reads the `shed.source=edge` records (`duration`
+in seconds) with `quantile` and `sort by (duration desc)`. `search_traces`
+with a `service_id` filters on the resource attribute `shed.service.id` (Jaeger tag `resource_attr:shed.service.id`) and, since the Jaeger API searches one service name at a time, asks about each known service (at most 50).
 
 ## GitHub
 
@@ -1991,7 +2052,7 @@ POST   /api/update/download                     202 → UpdateStatus  (409 if un
 PUT    /api/update/settings  {autoDownload}     → UpdateStatus
 POST   /api/update/install                      202 → UpdateStatus  (state restarting; 409 if nothing is downloaded or busy; then shed restarts)
 
-GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → LogPage  (409 if telemetry is off)
+GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → LogPage  (see Telemetry → Log history; 400 for a bad parameter, 409 if telemetry is off)
 GET    /api/services/{id}/telemetry             → ServiceTelemetry
 PUT    /api/services/{id}/telemetry  {caps: TelemetryCaps | null} → ServiceTelemetry  (null = defaults)
 GET    /api/telemetry                           → Telemetry
@@ -2000,7 +2061,7 @@ POST   /api/telemetry/components/{name}/restart → Telemetry  (409 if telemetry
 DELETE /api/telemetry/data                      204  (containers, volumes, dashboards; 409 while enabled)
 POST   /api/telemetry/dashboards/{uid}/reset    204  (overwrite with the current default; 404 if not shed's)
 POST   /api/telemetry/dashboards/restore        204  (recreate default dashboards the user deleted)
-GET    /api/telemetry/trace/{traceId}           302 → Grafana Explore
+GET    /api/telemetry/trace/{traceId}           302 → Grafana Explore  (400 unless 32 hex characters, 409 if telemetry is off)
 GET    /api/audit?before=&limit=&actor=&action=&service=&outcome=  → AuditPage  (newest first; limit default 100, at most 500; actor = login or actor kind; action = action or dotted prefix; service = service ID; 400 for a bad number or outcome)
 GET    /api/audit/settings                      → AuditSettings
 PUT    /api/audit/settings      AuditSettings   → AuditSettings  (400 unless 1 to 3650 days)
@@ -2076,15 +2137,15 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
 | `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
 | `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
-| `telemetry_status` | — | `{enabled, components: [{name, state, version}], ingest, dropped}` |
-| `query_metrics` | `query` (MetricsQL), `time?` or `start?`/`end?`/`step?` | `{resultType, series: [{labels, values: [[t, v]]}]}`; at most 500 series × 500 points |
-| `query_logs` | `query` (LogsQL), `start?`, `end?`, `limit?` (default 200, at most 2000) | text: one JSON record per line |
-| `search_traces` | `service_id?`, `operation?`, `min_duration?`, `max_duration?`, `tags?`, `start?`, `end?`, `limit?` (default 20, at most 100) | `{traces: [{traceId, service, name, start, durationMs, spans, errors}]}` |
+| `telemetry_status` | — | `{enabled, components: [{name, state, version, error?}], ingest: {spansPerSecond, logsPerSecond, pointsPerSecond}, dropped: [{reason, signal, count}]}`; works while telemetry is off |
+| `query_metrics` | `query` (MetricsQL), `time?` or `start?`/`end?`/`step?` | `{resultType, stepSeconds?, series: [{labels, values: [[t, v]]}], truncated?}`; `t` is Unix seconds, `v` a number or `null` (NaN, ±Inf); at most 500 series × the newest 500 points |
+| `query_logs` | `query` (LogsQL), `start?`, `end?`, `limit?` (default 200, at most 2000) | text: one JSON record per line, newest first, values masked, fields cut at 2000 characters, the oldest records dropped beyond 256 KiB with a `_note` line |
+| `search_traces` | `service_id?`, `operation?`, `min_duration?`, `max_duration?` (durations such as `250ms`), `tags?` (object), `start?`, `end?`, `limit?` (default 20, at most 100) | `{traces: [{traceId, service, name, start, durationMs, spans, errors}]}` |
 | `get_trace` | `trace_id` | `{spans: [{spanId, parentId, service, name, kind, start, durationMs, status, attributes}], omitted?}` (at most 1000 spans) |
-| `error_logs` | `service_id`, `since?` (default 1h), `limit?` | text: error-level records of the service, newest first |
-| `slow_requests` | `service_id`, `since?`, `limit?` | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, clientIp, traceId}]}` |
+| `error_logs` | `service_id`, `since?` (default 1h), `limit?` (default 200, at most 2000) | text: error-level records of the service as `query_logs` returns them |
+| `slow_requests` | `service_id`, `since?` (default 1h), `limit?` (default 20, at most 100) | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, clientIp, traceId}]}` |
 | `top_queries` | `service_id` (a database) | `{queries: [{query, calls, totalMs, meanMs, rows}]}` from the exporter's statement statistics |
-| `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url, customized?}]}` |
+| `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url}]}`; `url` is absolute under `server.url` |
 
 Times accept RFC 3339 or a duration before now (`15m`, `24h`). Telemetry
 tool instructions describe the [label schema](#label-schema) and sample

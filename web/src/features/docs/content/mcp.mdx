@@ -115,7 +115,7 @@ These read what [telemetry](/docs/telemetry) collects. They are read-only like t
 
 Every record carries the same labels: `shed_service_id`, `shed_service_name`, `shed_project_id`, `shed_source`, and so on in metrics, `shed.service.id` and the like in logs. The server's instructions list them with sample queries, such as `sum(shed_container_memory_bytes{shed_service_id="…"})` and `_stream:{"shed.service.id"="…"} error`.
 
-`query_metrics` can't put `NaN` or infinity in JSON, so those values come back as `null`. A range query's `step` is raised to keep it within 500 points, and the result says which step it used (`stepSeconds`).
+`query_metrics` can't put `NaN` or infinity in JSON, so those values come back as `null` (VictoriaMetrics leaves NaN points out of its results, so in practice this is infinity). A range query's `step` is raised to keep it within 500 points, and the result says which step it used (`stepSeconds`).
 
 Results are compact JSON. Metrics come as a summary per metric (latest, average, and maximum over the range) rather than every data point. Log results are capped at 2000 lines, each line at 2000 characters, and 256 KiB in total, keeping the newest lines.
 

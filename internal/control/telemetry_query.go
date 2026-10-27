@@ -511,7 +511,7 @@ func (p *Plane) SearchTraces(ctx context.Context, serviceID string, sp victoria.
 		if tags == nil {
 			tags = map[string]string{}
 		}
-		tags["shed.service.id"] = svc.ID
+		tags["resource_attr:shed.service.id"] = svc.ID
 		sp.Tags = tags
 	}
 	if _, err := p.requireTelemetry(ctx); err != nil {
