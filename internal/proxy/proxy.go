@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -48,14 +49,23 @@ type Config struct {
 	// IP in CF-Connecting-IP and X-Forwarded-* headers. Requests from other
 	// addresses are unaffected.
 	Cloudflare bool
+	// Access receives an entry for every request while telemetry is on. It
+	// runs on the request's goroutine, after the response, so it must not
+	// block.
+	Access func(AccessEntry)
+	// TracesURL is the OTLP/HTTP endpoint Caddy exports its spans to while
+	// telemetry is on, such as "http://127.0.0.1:4318/v1/traces".
+	TracesURL string
 }
 
 // Proxy is an embedded reverse proxy.
 type Proxy struct {
 	cfg Config
 
-	mu   sync.Mutex
-	last []byte // Config JSON currently loaded, or nil.
+	mu        sync.Mutex
+	last      []byte  // Config JSON currently loaded, or nil.
+	routes    []Route // Routes last applied; guarded by mu.
+	telemetry bool    // Access logs and tracing are on; guarded by mu.
 
 	applyDuration metric.Float64Histogram
 }
@@ -68,6 +78,9 @@ func New(cfg Config) *Proxy {
 		metric.WithDescription("Duration of loading a changed route set into Caddy."),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10))
+	if cfg.Access != nil {
+		accessSink.Store(&cfg.Access)
+	}
 	return &Proxy{cfg: cfg, applyDuration: d}
 }
 
@@ -76,24 +89,89 @@ func New(cfg Config) *Proxy {
 // nothing if the resulting configuration is already loaded. It is safe for
 // concurrent use.
 func (p *Proxy) Apply(routes []Route) error {
-	cfg, err := buildConfig(p.cfg, routes)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(routes, p.telemetry); err != nil {
+		return err
+	}
+	p.routes = routes
+	return nil
+}
+
+// SetTelemetry turns access entries and tracing on or off. If the proxy is
+// running, it reloads the last applied routes; otherwise the next Apply
+// starts it that way.
+func (p *Proxy) SetTelemetry(on bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.last != nil {
+		if err := p.load(p.routes, on); err != nil {
+			return err
+		}
+	}
+	p.telemetry = on
+	return nil
+}
+
+// load loads the configuration for routes unless it is loaded already.
+// The caller holds mu.
+func (p *Proxy) load(routes []Route, telemetry bool) error {
+	cfg, err := buildConfig(p.cfg, routes, telemetry)
 	if err != nil {
 		return fmt.Errorf("proxy: %w", err)
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	if bytes.Equal(cfg, p.last) {
 		return nil
 	}
 	start := time.Now()
-	err = caddy.Load(cfg, false)
+	if telemetry {
+		err = withEnv(tracingEnv(p.cfg.TracesURL), func() error { return caddy.Load(cfg, false) })
+	} else {
+		err = caddy.Load(cfg, false)
+	}
 	p.applyDuration.Record(context.Background(), time.Since(start).Seconds())
 	if err != nil {
 		return fmt.Errorf("proxy: load config: %w", err)
 	}
 	p.last = cfg
 	return nil
+}
+
+// tracingEnv configures the exporter of Caddy's tracing handler, which
+// reads only the standard OpenTelemetry environment variables.
+func tracingEnv(tracesURL string) map[string]string {
+	return map[string]string{
+		"OTEL_TRACES_EXPORTER":               "otlp",
+		"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
+		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": tracesURL,
+		"OTEL_PROPAGATORS":                   "tracecontext",
+	}
+}
+
+// withEnv runs fn with vars set in the process environment and then
+// restores it. Caddy's tracer reads them only while a config is provisioned,
+// and keeping them set would hand them to every process shed starts, such
+// as builds.
+func withEnv(vars map[string]string, fn func() error) error {
+	prev := make(map[string]*string, len(vars))
+	for k, v := range vars {
+		if old, ok := os.LookupEnv(k); ok {
+			prev[k] = &old
+		} else {
+			prev[k] = nil
+		}
+		os.Setenv(k, v)
+	}
+	defer func() {
+		for k, old := range prev {
+			if old == nil {
+				os.Unsetenv(k)
+			} else {
+				os.Setenv(k, *old)
+			}
+		}
+	}()
+	return fn()
 }
 
 // Stop shuts the proxy down. A later Apply starts it again.
