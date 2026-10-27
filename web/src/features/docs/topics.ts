@@ -80,6 +80,12 @@ export const docTopics = {
     summary:
       "Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana; off keeps their data.",
   },
+  telemetryCaps: {
+    page: "telemetry",
+    section: "caps",
+    summary:
+      "Per-service limits on spans, log records, and series; records over a cap are dropped.",
+  },
   telemetryDisk: {
     page: "telemetry",
     section: "retention-and-disk",

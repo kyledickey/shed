@@ -348,6 +348,15 @@ export type AuditSettings = { retentionDays: number };
 
 export type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
 
+/** A service's telemetry: its caps and whether records are being dropped. */
+export type ServiceTelemetry = {
+  /** Effective: the service's own caps, or the defaults. */
+  caps: TelemetryCaps;
+  overridden: boolean;
+  /** Records were dropped in the last 5 minutes. */
+  dropping: boolean;
+};
+
 export type TelemetrySettings = {
   enabled: boolean;
   metricsRetentionDays: number;

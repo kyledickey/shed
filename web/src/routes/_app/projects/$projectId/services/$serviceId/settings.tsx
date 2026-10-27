@@ -6,6 +6,7 @@ import { DangerCard } from "../../../../../../features/settings/DangerCard";
 import { ResourcesCard } from "../../../../../../features/settings/ResourcesCard";
 import { NetworkingCard } from "../../../../../../features/settings/NetworkingCard";
 import { VolumesCard } from "../../../../../../features/settings/VolumesCard";
+import { TelemetryCard } from "../../../../../../features/settings/TelemetryCard";
 import { Stack } from "../../../../../../components/Layout";
 
 export const Route = createFileRoute("/_app/projects/$projectId/services/$serviceId/settings")({
@@ -24,6 +25,7 @@ function ServiceSettingsPage() {
       <ResourcesCard service={service} />
       <NetworkingCard service={service} />
       <VolumesCard service={service} />
+      <TelemetryCard service={service} />
       <DangerCard service={service} />
     </Stack>
   );

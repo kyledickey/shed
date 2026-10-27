@@ -1,7 +1,13 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { Telemetry, TelemetryComponentName, TelemetrySettings } from "./types";
+import type {
+  ServiceTelemetry,
+  Telemetry,
+  TelemetryCaps,
+  TelemetryComponentName,
+  TelemetrySettings,
+} from "./types";
 
 const POLL_MS = 3000;
 const IDLE_MS = 15_000;
@@ -42,5 +48,23 @@ export function useDeleteTelemetryData() {
   return useMutation({
     mutationFn: () => api.delete("/telemetry/data"),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.telemetry }),
+  });
+}
+
+/** serviceTelemetryQuery reads a service's caps and polls whether it is dropping records. */
+export const serviceTelemetryQuery = (serviceId: string) =>
+  queryOptions({
+    queryKey: keys.serviceTelemetry(serviceId),
+    queryFn: () => api.get<ServiceTelemetry>(`/services/${serviceId}/telemetry`),
+    refetchInterval: IDLE_MS,
+  });
+
+/** useSetServiceCaps saves a service's own caps, or with null returns it to the defaults. */
+export function useSetServiceCaps(serviceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (caps: TelemetryCaps | null) =>
+      api.put<ServiceTelemetry>(`/services/${serviceId}/telemetry`, { caps }),
+    onSuccess: (t) => qc.setQueryData(keys.serviceTelemetry(serviceId), t),
   });
 }

@@ -57,7 +57,57 @@ The disk limit is split 60% for logs and 40% for traces; when either share is fu
 
 Changing a retention or the disk limit recreates that store's container on the same volume. Its data is kept. The Telemetry page shows each store's disk use, as the store reports it.
 
-The default per-service limits (5000 spans and 2000 log records a second, 50000 metric series an hour) are saved with the other settings.
+The default per-service limits are saved with the other settings; see [Caps](#caps).
+
+## Sending telemetry from your app
+
+While telemetry is on, shed is an OpenTelemetry gateway for your services. Each app's next deployment gets these variables:
+
+| Variable                      | Value                                   |
+| ----------------------------- | --------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://shed.internal:4318`             |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf`                         |
+| `OTEL_SERVICE_NAME`           | the service name                        |
+| `OTEL_RESOURCE_ATTRIBUTES`    | `service.version=<commit SHA or image>` |
+
+Any OpenTelemetry SDK reads them, so instrumenting the code is the only change. A variable you set yourself with the same name wins. They are listed as injected on the Variables tab. Every service's container, databases included, also gets the host name `shed.internal`, pointing at its project network's gateway address on the host. The port is [`telemetry.otlp_port`](/docs/configuration#telemetry-addresses) (4318).
+
+The gateway takes OTLP over HTTP: `POST /v1/traces`, `/v1/metrics`, and `/v1/logs`, protobuf or JSON, optionally gzip, up to 8 MiB a request. There is no gRPC endpoint, and it is not reachable from the internet. It knows the sender by the container's address on its project network, so it labels every record with the service, project, and deployment, whatever the SDK claims; a sender shed doesn't know gets a 403. String attributes, span status messages, and log bodies are masked with the values of every variable in the project and those the container started with. Traces go to VictoriaTraces, metrics to VictoriaMetrics, and logs to VictoriaLogs.
+
+Variables and the host entry are part of a container's configuration, so turning telemetry on or off reaches a service with its next deployment.
+
+## Firewall
+
+Containers reach the gateway on the host's address on their bridge. A host firewall whose default input policy drops packets (ufw's default, firewalld's public zone) drops these too, and SDKs see connection timeouts. Allow TCP port 4318 from Docker's bridges, for example:
+
+```sh
+# ufw: Docker's default address pools
+sudo ufw allow proto tcp from 172.16.0.0/12 to any port 4318
+sudo ufw allow proto tcp from 192.168.0.0/16 to any port 4318
+
+# iptables: any user-defined bridge
+sudo iptables -I INPUT -i br-+ -p tcp --dport 4318 -j ACCEPT
+```
+
+Change the port if you changed `telemetry.otlp_port`. The gateway only listens on loopback and on the gateways of shed's project networks, so this does not expose it to the internet.
+
+## Container logs
+
+While telemetry is on, shed also ships the output of every service container to VictoriaLogs, with no change to the app. Each line keeps Docker's timestamp and its stream (`stdout` or `stderr`). A line that is a JSON object keeps its top-level fields (up to 64); `msg` or `message` becomes the message, `level`, `severity`, or `lvl` the level, and `trace_id` links to the trace. Other lines take their level from a leading `ERROR`, `WARN`, `INFO`, or `DEBUG`. Lines are cut at 16 KiB and masked like the runtime logs on the Logs tab.
+
+shed remembers how far it shipped each container, so after a restart of shed it carries on where it stopped. Lines that Docker rotated away meanwhile (10 MB times 3 files per container) are lost.
+
+## Caps
+
+Each service may send at most so many spans and log records a second, and so many distinct metric series an hour:
+
+| Cap         | Default | Counts                                                   |
+| ----------- | ------- | -------------------------------------------------------- |
+| Spans       | 5000/s  | trace spans sent to the gateway                          |
+| Log records | 2000/s  | OTLP log records and lines of container output, together |
+| Series      | 50000   | distinct metric name and attribute sets in the last hour |
+
+Records over a cap are dropped. The SDK is told how many with an OTLP partial success, so it doesn't retry them. Change the defaults on the Telemetry page, or give one service its own caps in its **Settings, Telemetry** card; either applies within seconds, and a service's own caps are recorded as `telemetry.caps.update`. The same card shows **Dropping telemetry** while records of the service were dropped in the last five minutes. The Telemetry page counts drops by reason over the last hour.
 
 ## Resource use
 
