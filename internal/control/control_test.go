@@ -16,6 +16,7 @@ import (
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/internal/variables"
@@ -259,6 +260,7 @@ type fixture struct {
 	github   bool     // whether GitHub is configured
 	op       *fakeOnePassword
 	audit    *fakeAudit
+	tel      *fakeTelemetry
 	plane    *Plane
 }
 
@@ -270,7 +272,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword(),
-		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}}
+		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}, tel: &fakeTelemetry{s: observability.DefaultSettings()}}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -286,6 +288,7 @@ func newFixture(t *testing.T) *fixture {
 		},
 		Variables:  variables.New(st, f.op),
 		Audit:      f.audit,
+		Telemetry:  f.tel,
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

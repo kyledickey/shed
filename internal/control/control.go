@@ -1,5 +1,6 @@
 // Package control holds shed's operations on projects, services,
-// deployments, variables, domains, volumes, backups, metrics, and updates:
+// deployments, variables, domains, volumes, backups, metrics, updates, and
+// telemetry:
 // the rules every interface to shed shares. Every operation that changes
 // state, and every read of secrets, is recorded in the audit log. The HTTP API and the MCP server
 // call a [Plane] instead of the store and the deployer directly, so that both
@@ -186,6 +187,7 @@ type Config struct {
 	GitHub    func() (GitHub, bool)
 	Variables Variables
 	Audit     Audit
+	Telemetry Telemetry
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -207,6 +209,7 @@ type Plane struct {
 	github        func() (GitHub, bool)
 	variables     Variables
 	audit         Audit
+	telemetry     Telemetry
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -230,6 +233,7 @@ func New(cfg Config) *Plane {
 		github:     cfg.GitHub,
 		variables:  cfg.Variables,
 		audit:      cfg.Audit,
+		telemetry:  cfg.Telemetry,
 		baseDomain: strings.ToLower(cfg.BaseDomain),
 		log:        cfg.Log,
 		routes:     newRouteState(),
