@@ -139,6 +139,9 @@ type Deployment struct {
 	// is nil for deployments that are not active and for ones activated
 	// before it was recorded.
 	Runtime *DeploymentRuntime
+	// TraceID is the trace of the deployment's deploy span, empty if
+	// telemetry was off when it ran.
+	TraceID string
 }
 
 // DeploymentRuntime is the container configuration a deployment was started
