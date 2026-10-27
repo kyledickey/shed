@@ -184,10 +184,11 @@ type Config struct {
 	Updates  Updates
 	// GitHub returns the GitHub client, or false until the GitHub App is
 	// configured.
-	GitHub    func() (GitHub, bool)
-	Variables Variables
-	Audit     Audit
-	Telemetry Telemetry
+	GitHub     func() (GitHub, bool)
+	Variables  Variables
+	Audit      Audit
+	Telemetry  Telemetry
+	Dashboards Dashboards
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -210,6 +211,7 @@ type Plane struct {
 	variables     Variables
 	audit         Audit
 	telemetry     Telemetry
+	dashboards    Dashboards
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -234,6 +236,7 @@ func New(cfg Config) *Plane {
 		variables:  cfg.Variables,
 		audit:      cfg.Audit,
 		telemetry:  cfg.Telemetry,
+		dashboards: cfg.Dashboards,
 		baseDomain: strings.ToLower(cfg.BaseDomain),
 		log:        cfg.Log,
 		routes:     newRouteState(),

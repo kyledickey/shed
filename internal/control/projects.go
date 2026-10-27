@@ -58,6 +58,7 @@ func (p *Plane) CreateProject(ctx context.Context, name string) (ProjectView, er
 	p.record(ctx, err, audit.Event{
 		Action: "project.create", ProjectID: pr.ID, Target: pr.ID, Detail: map[string]any{"name": strings.TrimSpace(name)},
 	})
+	p.dashboards.Refresh()
 	if err != nil {
 		return ProjectView{}, err
 	}
@@ -84,6 +85,7 @@ func (p *Plane) RenameProject(ctx context.Context, id, name string) (ProjectView
 		Action: "project.rename", ProjectID: id, Target: id,
 		Detail: map[string]any{"name": strings.TrimSpace(name), "from": old.Name},
 	})
+	p.dashboards.Refresh()
 	if err != nil {
 		return ProjectView{}, err
 	}
@@ -143,6 +145,7 @@ func (p *Plane) DeleteProject(ctx context.Context, id string) error {
 	p.record(ctx, err, audit.Event{
 		Action: "project.delete", ProjectID: id, Target: id, Detail: map[string]any{"name": pr.Name, "services": names},
 	})
+	p.dashboards.Refresh()
 	return err
 }
 

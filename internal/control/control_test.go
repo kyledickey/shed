@@ -261,6 +261,7 @@ type fixture struct {
 	op       *fakeOnePassword
 	audit    *fakeAudit
 	tel      *fakeTelemetry
+	dash     *fakeDashboards
 	plane    *Plane
 }
 
@@ -272,7 +273,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(func() { st.Close() })
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword(),
-		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}, tel: &fakeTelemetry{s: observability.DefaultSettings()}}
+		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}, tel: &fakeTelemetry{s: observability.DefaultSettings()}, dash: &fakeDashboards{}}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -289,6 +290,7 @@ func newFixture(t *testing.T) *fixture {
 		Variables:  variables.New(st, f.op),
 		Audit:      f.audit,
 		Telemetry:  f.tel,
+		Dashboards: f.dash,
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/observability"
 )
 
@@ -102,4 +103,62 @@ func (s *Server) deleteTelemetryData(w http.ResponseWriter, r *http.Request) err
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+func (s *Server) resetDashboard(w http.ResponseWriter, r *http.Request) error {
+	if err := s.control.ResetDashboard(r.Context(), r.PathValue("uid")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (s *Server) restoreDashboards(w http.ResponseWriter, r *http.Request) error {
+	if err := s.control.RestoreDashboards(r.Context()); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+type dashboardLinkJSON struct {
+	UID        string `json:"uid"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	Customized bool   `json:"customized"`
+	Outdated   bool   `json:"outdated"`
+}
+
+type serviceAlertJSON struct {
+	Name  string    `json:"name"`
+	Since time.Time `json:"since"`
+}
+
+type serviceTelemetryJSON struct {
+	FolderURL    string              `json:"folderUrl"`
+	Dashboards   []dashboardLinkJSON `json:"dashboards"`
+	FiringAlerts []serviceAlertJSON  `json:"firingAlerts"`
+}
+
+func toServiceTelemetryJSON(t control.ServiceTelemetry) serviceTelemetryJSON {
+	out := serviceTelemetryJSON{
+		FolderURL:    t.Grafana.FolderURL,
+		Dashboards:   make([]dashboardLinkJSON, 0, len(t.Grafana.Dashboards)),
+		FiringAlerts: make([]serviceAlertJSON, 0, len(t.Grafana.Alerts)),
+	}
+	for _, d := range t.Grafana.Dashboards {
+		out.Dashboards = append(out.Dashboards, dashboardLinkJSON(d))
+	}
+	for _, a := range t.Grafana.Alerts {
+		out.FiringAlerts = append(out.FiringAlerts, serviceAlertJSON{Name: a.Name, Since: a.Since})
+	}
+	return out
+}
+
+func (s *Server) getServiceTelemetry(w http.ResponseWriter, r *http.Request) error {
+	t, err := s.control.ServiceTelemetry(r.Context(), r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, toServiceTelemetryJSON(t))
 }

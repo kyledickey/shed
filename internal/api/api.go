@@ -115,6 +115,9 @@ type Control interface {
 	SetTelemetry(ctx context.Context, s observability.Settings) (observability.Status, error)
 	RestartTelemetryComponent(ctx context.Context, name string) (observability.Status, error)
 	DeleteTelemetryData(ctx context.Context) error
+	ResetDashboard(ctx context.Context, uid string) error
+	RestoreDashboards(ctx context.Context) error
+	ServiceTelemetry(ctx context.Context, id string) (control.ServiceTelemetry, error)
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -313,6 +316,9 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/telemetry", s.putTelemetry)
 	authed("POST /api/telemetry/components/{name}/restart", s.restartTelemetryComponent)
 	authed("DELETE /api/telemetry/data", s.deleteTelemetryData)
+	authed("POST /api/telemetry/dashboards/{uid}/reset", s.resetDashboard)
+	authed("POST /api/telemetry/dashboards/restore", s.restoreDashboards)
+	authed("GET /api/services/{id}/telemetry", s.getServiceTelemetry)
 	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))
 
 	authed("GET /api/github/repos", s.repos)

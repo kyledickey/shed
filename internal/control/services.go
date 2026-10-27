@@ -59,6 +59,7 @@ func (p *Plane) CreateService(ctx context.Context, projectID string, req NewServ
 	p.record(ctx, err, audit.Event{
 		Action: "service.create", ProjectID: projectID, ServiceID: svc.ID, Target: svc.ID, Detail: detail,
 	})
+	p.dashboards.Refresh()
 	if err != nil {
 		return ServiceView{}, err
 	}
@@ -289,6 +290,7 @@ func (p *Plane) DeleteService(ctx context.Context, id string) error {
 		err = p.deleteService(ctx, svc)
 	}
 	p.record(ctx, err, serviceEvent("service.delete", svc, nil))
+	p.dashboards.Refresh()
 	return err
 }
 

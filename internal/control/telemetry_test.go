@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kyledickey/shed/internal/audit"
@@ -45,6 +46,83 @@ func (f *fakeTelemetry) DeleteData(context.Context) error {
 		return observability.ErrEnabled
 	}
 	return nil
+}
+
+// fakeDashboards counts refreshes and knows one dashboard.
+type fakeDashboards struct {
+	refreshes atomic.Int32
+}
+
+func (d *fakeDashboards) Refresh() { d.refreshes.Add(1) }
+
+func (d *fakeDashboards) Reset(_ context.Context, uid string) error {
+	if uid != "svc-logs-s1" {
+		return observability.ErrNotDashboard
+	}
+	return nil
+}
+
+func (d *fakeDashboards) Restore(context.Context) error { return nil }
+
+func (d *fakeDashboards) Service(context.Context, string) (observability.ServiceDashboards, error) {
+	return observability.ServiceDashboards{FolderURL: "https://shed.example.com/grafana/dashboards/f/s-s1/"}, nil
+}
+
+func TestDashboardsAudit(t *testing.T) {
+	f := newFixture(t)
+	ctx := audit.WithActor(context.Background(), audit.Actor{Kind: audit.User, Name: "octocat"})
+	if err := f.plane.ResetDashboard(ctx, "svc-logs-s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.plane.ResetDashboard(ctx, "elsewhere"); !errors.Is(err, observability.ErrNotDashboard) {
+		t.Fatalf("reset of a foreign dashboard = %v, want ErrNotDashboard", err)
+	} else if e, ok := Explain(err); !ok || !errors.Is(e, ErrNotFound) {
+		t.Errorf("Explain(%v) = %v, want ErrNotFound", err, e)
+	}
+	if err := f.plane.RestoreDashboards(ctx); err != nil {
+		t.Fatal(err)
+	}
+	type event struct {
+		action, target string
+		outcome        audit.Outcome
+	}
+	var got []event
+	for _, e := range f.audit.take() {
+		got = append(got, event{e.Action, e.Target, e.Outcome})
+	}
+	want := []event{
+		{"telemetry.dashboard.reset", "svc-logs-s1", audit.OK},
+		{"telemetry.dashboard.reset", "elsewhere", audit.Failed},
+		{"telemetry.dashboards.restore", "", audit.OK},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("recorded %+v, want %+v", got, want)
+	}
+}
+
+func TestDashboardsFollowProjectsAndServices(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	pr, err := f.plane.CreateProject(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.plane.RenameProject(ctx, pr.ID, "shop"); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := f.plane.CreateService(ctx, pr.ID, NewService{Name: "web", Kind: "app", Image: "nginx"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.plane.DeleteService(ctx, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.plane.DeleteProject(ctx, pr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.dash.refreshes.Load(); n != 5 {
+		t.Errorf("dashboards refreshed %d times, want once per create, rename, and delete (5)", n)
+	}
 }
 
 func TestTelemetryAudit(t *testing.T) {
