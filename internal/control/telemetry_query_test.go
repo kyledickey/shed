@@ -266,7 +266,7 @@ func TestTopQueries(t *testing.T) {
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
-	if !strings.Contains(f.metrics.queries[0], `shed_service_id="`+db.ID+`"`) {
+	if q := f.metrics.queries[0]; !strings.Contains(q, `shed_service_id="`+db.ID+`"`) || !strings.Contains(q, "group_left (query) max by (queryid, query) (pg_stat_statements_query_id{") {
 		t.Errorf("query %s", f.metrics.queries[0])
 	}
 	_, err = f.plane.TopQueries(ctx, f.svc.ID, 0)

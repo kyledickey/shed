@@ -20,12 +20,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kyledickey/shed/internal/catalog"
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/observability"
@@ -285,6 +287,28 @@ func TestIntegrationDatabaseExporters(t *testing.T) {
 				t.Fatalf("%s logs lack %q:\n%s", d.svc.Name, want, logs.String())
 			}
 			time.Sleep(time.Second)
+		}
+	}
+
+	// top_queries reads the statement statistics the exporters report.
+	plane := control.New(control.Config{Store: st, Telemetry: stack, Stores: control.TelemetryStores{Metrics: metrics}, Log: log})
+	wantStatement := map[string]string{"postgres": "pg_sleep", "mysql": "SELECT ?"}
+	for _, d := range dbs {
+		want, ok := wantStatement[d.svc.Kind]
+		if !ok {
+			continue
+		}
+		deadline := time.Now().Add(2 * time.Minute)
+		for {
+			stats, err := plane.TopQueries(ctx, d.svc.ID, 50)
+			i := slices.IndexFunc(stats, func(s control.QueryStat) bool { return strings.Contains(s.Query, want) })
+			if err == nil && i >= 0 && stats[i].Calls > 0 && stats[i].TotalMs > 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("top queries of %s lack %q with calls and time: %+v, %v", d.svc.Name, want, stats, err)
+			}
+			time.Sleep(3 * time.Second)
 		}
 	}
 

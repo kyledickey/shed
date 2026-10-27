@@ -418,12 +418,19 @@ type QueryStat struct {
 }
 
 // statementMetrics are the exporter series of the statement statistics of a
-// database kind: the statement label, then the call count, total seconds,
-// and row count counters, each summed over the statement's labels.
-var statementMetrics = map[string]struct{ label, calls, seconds, rows string }{
-	"postgres": {"query", "pg_stat_statements_calls_total", "pg_stat_statements_seconds_total", "pg_stat_statements_rows_total"},
-	"mysql": {"digest_text", "mysql_perf_schema_events_statements_total",
-		"mysql_perf_schema_events_statements_seconds_total", "mysql_perf_schema_events_statements_rows_sent_total"},
+// database kind: the call count, total seconds, and row count counters, and
+// the label holding the statement's text. postgres_exporter keys its
+// counters by queryid and reports the text only on a separate series, text,
+// which the counters are joined with.
+var statementMetrics = map[string]struct{ calls, seconds, rows, label, key, text string }{
+	"postgres": {
+		calls: "pg_stat_statements_calls_total", seconds: "pg_stat_statements_seconds_total", rows: "pg_stat_statements_rows_total",
+		label: "query", key: "queryid", text: "pg_stat_statements_query_id",
+	},
+	"mysql": {
+		calls: "mysql_perf_schema_events_statements_total", seconds: "mysql_perf_schema_events_statements_seconds_total",
+		rows: "mysql_perf_schema_events_statements_rows_sent_total", label: "digest_text",
+	},
 }
 
 // TopQueries returns the statements of a Postgres or MySQL service that took
@@ -443,7 +450,12 @@ func (p *Plane) TopQueries(ctx context.Context, serviceID string, limit int) ([]
 	}
 	limit = clampLimit(limit, DefaultTopQueries, MaxTopQueries)
 	query := func(metric string) (map[string]float64, error) {
-		q := fmt.Sprintf("sum by (%s) (%s{shed_service_id=%s})", m.label, metric, strconv.Quote(svc.ID))
+		sel := "{shed_service_id=" + strconv.Quote(svc.ID) + "}"
+		q := fmt.Sprintf("sum by (%s) (%s%s)", m.label, metric, sel)
+		if m.key != "" {
+			q = fmt.Sprintf("sum by (%[1]s) (sum by (%[2]s) (%[3]s%[4]s) * on (%[2]s) group_left (%[1]s) max by (%[2]s, %[1]s) (%[5]s%[4]s))",
+				m.label, m.key, metric, sel, m.text)
+		}
 		res, err := p.stores.Metrics.Query(ctx, q, time.Time{})
 		if err != nil {
 			return nil, p.storeError("metrics query", err)
