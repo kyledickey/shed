@@ -194,8 +194,12 @@ func TestApply(t *testing.T) {
 		if span == nil {
 			t.Fatal("no span exported for the traced request")
 		}
+		// The gateway attributes edge spans by these two attributes.
 		if got := stringAttr(span.Attributes, "server.address"); got != "localhost" {
 			t.Errorf("span server.address = %q, want localhost", got)
+		}
+		if got := stringAttr(span.resource, "webengine.name"); got != "Caddy" {
+			t.Errorf("span resource webengine.name = %q, want Caddy", got)
 		}
 		if got := fmt.Sprintf("%x", span.ParentSpanId); got != parentID {
 			t.Errorf("span parent = %s, want %s", got, parentID)
@@ -244,7 +248,12 @@ func receive(t *testing.T, entries <-chan AccessEntry) AccessEntry {
 // spanCollector is an OTLP/HTTP traces endpoint that keeps every span.
 type spanCollector struct {
 	mu    sync.Mutex
-	spans []*tracepb.Span
+	spans []collectedSpan
+}
+
+type collectedSpan struct {
+	*tracepb.Span
+	resource []*commonpb.KeyValue
 }
 
 func (c *spanCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -258,18 +267,20 @@ func (c *spanCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer c.mu.Unlock()
 	for _, rs := range req.ResourceSpans {
 		for _, ss := range rs.ScopeSpans {
-			c.spans = append(c.spans, ss.Spans...)
+			for _, sp := range ss.Spans {
+				c.spans = append(c.spans, collectedSpan{sp, rs.Resource.GetAttributes()})
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
 }
 
-func (c *spanCollector) find(traceID string) *tracepb.Span {
+func (c *spanCollector) find(traceID string) *collectedSpan {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, s := range c.spans {
 		if fmt.Sprintf("%x", s.TraceId) == traceID {
-			return s
+			return &s
 		}
 	}
 	return nil
