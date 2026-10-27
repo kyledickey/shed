@@ -114,7 +114,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `cmd/shed` | flags, config, logging, wiring, signals | everything |
 | `internal/config` | koanf → `Config` struct with defaults + validation | — |
 | `internal/store` | SQLite (modernc), embedded migrations, CRUD on plain structs | — |
-| `internal/docker` | Docker Engine ops via `github.com/moby/moby/client` | — |
+| `internal/docker` | Docker Engine ops and events via `github.com/moby/moby/client` | — |
 | `internal/build` | clone a commit, build an image (Dockerfile or Railpack) | — |
 | `internal/proxy` | embedded Caddy; `Apply(routes)`, access entries and tracing while telemetry is on | — |
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
@@ -122,7 +122,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
 | `internal/firewall` | iptables `INPUT` rules letting Docker bridges reach the telemetry gateway port | — |
-| `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
+| `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
@@ -1626,7 +1626,7 @@ in their config, which `cmd/shed` points at `Dashboards.Annotate`:
 | `deploy.active`, `deploy.failed` | the deployer, when the deployment ends (canceled and skipped ones are not marked) | started to finished |
 | `restart`, `stop` | the deployer, after `RestartService` or `StopService` succeeds | now |
 | `backup`, `backup.failed`, `restore`, `restore.failed` | the backup manager, when a job ends, scheduled or not | job start to end |
-| `crash` | the Docker events follower, for a service container's `die` that shed did not cause (not built yet) | the event |
+| `crash` | the Docker events follower, for a service container's `die` that shed did not cause (`Security.Crashed`) | the event |
 
 The deployer and the backup manager are the single sources because every
 interface (API, MCP, webhook, schedules, retries) goes through them and
@@ -1799,33 +1799,95 @@ without a service).
 
 ### Docker events
 
-`internal/observability` follows Docker's event stream for containers with a
-`shed.service`, `shed.exporter`, or `shed.telemetry` label, whether telemetry
-is on or not:
+`internal/docker` reports the daemon's events through `Events(ctx, since, fn)`:
+`start`, `die` (with the exit code), `kill`, `restart`, `oom`, and
+`exec_create` of containers, and image `pull`. Docker cannot filter on one of
+several labels, so the stream is filtered by type and action, and callers
+select containers by their attributes. `Exec` also records the IDs of the
+execs it starts, in a set bounded to 4096 entries that forgets each after 10
+minutes (`IsOwnExec`), safe for concurrent use.
 
-- `exec_create` becomes a `container.exec` audit event with the command,
-  except execs shed started itself (backups, dumps, `CREATE EXTENSION`), whose
-  IDs `internal/docker` reports as shed's own;
-- `oom` becomes a `container.oom` audit event;
-- while telemetry is on, `start`, `die` (exit code), `kill`, `restart`, `oom`,
-  and image `pull` are also log records (`shed.source=docker`) and increment
-  `shed_container_restarts_total` and `shed_container_oom_kills_total`.
+`internal/observability` follows the stream for containers with a
+`shed.service`, `shed.exporter`, or `shed.telemetry` label from `Run` until
+shutdown, whether telemetry is on or not (`Manager.AddAlways` registers
+workers with that lifetime, next to `AddWorker`, whose workers run only while
+telemetry is on). When the stream breaks it reconnects with a backoff from 1
+s to 30 s, which a stream that lasted a minute resets, asking for events
+after the last one handled. Events that happened while shed was not running
+are not seen. A container maps to its service by `shed.service` (or
+`shed.exporter`); containers of the stack and others belong to `shed`.
+
+- `exec_create` becomes a `container.exec` audit event (actor `docker`, no
+  IP, target the container ID, `detail.command`, `detail.container`,
+  `detail.service`), except an exec shed started itself (backups, dumps,
+  `CREATE EXTENSION`) and a run of the container's own health check. The
+  command is the one in the event's action, which is the arguments joined by
+  spaces, without quoting (the exec inspect result has no command), cut at
+  2 KiB. The daemon announces an exec before the call that created it has
+  returned its ID, so the event waits a second and then asks `IsOwnExec`.
+  Health checks are told apart by comparing the command with the container's
+  configured health check, rendered the way the daemon renders it
+  (`/bin/sh -c <cmd>` for `CMD-SHELL`), because the daemon announces them like
+  any exec.
+- `oom` becomes a `container.oom` audit event (outcome `failed`).
+- while telemetry is on, `start`, `die`, `kill`, `restart`, `oom`, and image
+  `pull` are also log records (`shed.source=docker`, `event`, `container`,
+  `container.id`, `image`, `exit_code` for `die`, the container's
+  `shed.deployment.id`; level `warn` for a non-zero exit and for `kill`,
+  `error` for `oom`; an image pull belongs to `shed`), written to VictoriaLogs
+  as they happen; a write that fails is logged and dropped.
+  `shed_container_restarts_total` counts a start of a container that has
+  started or died since shed began following (restart policies, `docker
+  restart`, and a start after a stop; the daemon sends no `restart` event for
+  a policy restart, so that event is only logged), and
+  `shed_container_oom_kills_total` counts `oom`. Both carry the service's
+  `shed_*` labels as data point attributes.
+
+The follower also calls `Security.Crashed(Death{ServiceID, Container,
+ExitCode, OOM})` for a container with a `shed.service` label that dies without
+a `kill` event since it started (the daemon sends one before the die of a
+container that was stopped or restarted) and either exited non-zero or was
+OOM killed. `cmd/shed` turns each into a `crash` annotation ("exited with
+code N" or "killed for running out of memory").
 
 ### Egress
 
 While telemetry is on, every 10 s `internal/host` dumps the conntrack table
-(netlink) and `internal/observability` keeps the flows whose original source
-is a shed container and whose destination is outside the container networks
-and loopback. It aggregates them per service, destination address, port, and
-protocol, and:
+(netlink, `github.com/ti-mo/conntrack`: pure Go, on `mdlayher/netlink`, with
+the per-direction counters) into plain `host.Flow` values (protocol, original
+and reply tuples, packets and bytes in both directions), and
+`internal/observability` keeps the flows whose original source is the address
+of a container with a `shed.service` label (listed from Docker each interval,
+every network) and whose destination is neither loopback nor in the subnet
+of any Docker network. It aggregates them per service, destination address,
+port, and protocol as the change since the previous dump, so long-lived
+connections are not counted twice:
 
-- ships one record per aggregate and interval (`shed.source=egress`) with
-  packets and bytes (bytes need `net.netfilter.nf_conntrack_acct=1`, which
-  shed sets on enable);
-- increments `shed_egress_bytes_total{shed_service_id, proto}`;
-- ships an `egress.first_seen` record (level `warn`) the first time a
-  service reaches a destination address and port not seen in the last 7
-  days. The seen set is in memory and seeded from VictoriaLogs on enable.
+- a connection is keyed by protocol and original tuple; a counter lower than
+  before is a new connection with the same tuple. A connection counts as
+  active when it moved packets or appeared since the previous dump. The first
+  dump after enabling is only a baseline: it adds no traffic, since
+  connections already open carry their whole history;
+- ships one record per aggregate with activity and interval
+  (`shed.source=egress`, `dst`, `dst_port`, `proto`, `packets` and `bytes`
+  sent, `packets_in` and `bytes_in` received, `flows`) (bytes need
+  `net.netfilter.nf_conntrack_acct=1`, which shed sets on enable by writing
+  `/proc/sys/net/netfilter/nf_conntrack_acct`, and does not restore; it only
+  affects connections that begin afterwards, so the others have no bytes);
+- increments `shed_egress_bytes_total{shed_service_id, proto, …}` by the
+  bytes sent;
+- ships an `egress.first_seen` record (level `warn`, `event=egress.first_seen`,
+  message `egress.first_seen <addr>:<port>`) the first time a service
+  reaches a destination address and port (any protocol) not reached in the
+  last 7 days, including by connections that were open before the first dump.
+  The seen set is in memory, holds at most 65536 destinations (the longest
+  unreached is forgotten first), and is seeded from VictoriaLogs on enable by
+  a `stats by (shed.service.id, dst, dst_port)` over the egress records of
+  the last 7 days; if that fails, destinations are reported again.
+
+Without `CAP_NET_ADMIN` (`host.ErrNotPermitted`) or the `nf_conntrack`
+module (`host.ErrConntrackUnavailable`) the worker logs the failure once and
+retries every interval.
 
 Destinations are addresses: containers resolve names through Docker's
 embedded DNS, which forwards from the host, so lookups are not attributed.

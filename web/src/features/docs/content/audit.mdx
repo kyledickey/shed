@@ -27,29 +27,33 @@ Open it in the dashboard under **Server, Audit**. Filter by actor (a login or a 
 | `agent`     | An [MCP client](/docs/mcp) acting for a user. The login is the user's; detail names the client. |
 | `github`    | A push webhook with a valid signature.                                                          |
 | `system`    | shed itself, such as a push deployed when it retries.                                           |
+| `docker`    | A container event: an exec into a container, or an OOM kill. No login or address.               |
 | `anonymous` | A request that has not signed in: denials, first-run setup, and OAuth token requests.           |
 
 The IP is the address the request came from. Behind the built-in proxy it is the client address the proxy put in `X-Forwarded-For`, or `CF-Connecting-IP` with [`proxy.cloudflare`](/docs/networking#cloudflare).
 
 ## Actions
 
-| Action                                                                                                                | When                                                                            |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `auth.signin`, `auth.signin.denied`, `auth.logout`                                                                    | Dashboard sign-in. A denied sign-in is a GitHub account not in `allowed_users`. |
-| `setup.github`, `setup.token.invalid`                                                                                 | First-run GitHub App setup.                                                     |
-| `oauth.grant`, `oauth.denied`, `oauth.revoke`                                                                         | Agent consent, a refused token request or bearer token, revoking a client.      |
-| `webhook.signature.invalid`                                                                                           | A webhook delivery whose signature does not match.                              |
-| `project.create`, `.rename`, `.delete`                                                                                |                                                                                 |
-| `service.create`, `.update`, `.delete`, `.stop`, `.start`, `.restart`, `service.fence.clear`                          | `update` lists the changed fields.                                              |
-| `service.variables.update`, `service.variables.read`, `service.variables.resolved.read`                               | Saving, and viewing values in the dashboard or API.                             |
-| `deployment.create`, `.redeploy`, `.cancel`                                                                           | Manual deploys, and each push that deploys.                                     |
-| `domain.create`, `.delete`, `volume.create`, `.delete`                                                                |                                                                                 |
-| `backup.run`, `.download`, `.restore`, `.delete`, `backup.policy.update`, `backup.settings.update`, `backup.key.read` | Scheduled backups are not recorded; they are in the backup list.                |
-| `onepassword.connect`, `.disconnect`                                                                                  |                                                                                 |
-| `update.download`, `.install`, `update.settings.update`                                                               |                                                                                 |
-| `audit.settings.update`                                                                                               | Changing the retention below.                                                   |
-| `telemetry.enable`, `.disable`, `.settings.update`, `.data.delete`, `telemetry.component.restart`                     | [Telemetry](/docs/telemetry) toggled, tuned, cleared, or a component restarted. |
-| `mcp.call`                                                                                                            | Every MCP tool call, with the tool and its arguments.                           |
+| Action                                                                                                                | When                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `auth.signin`, `auth.signin.denied`, `auth.logout`                                                                    | Dashboard sign-in. A denied sign-in is a GitHub account not in `allowed_users`.                           |
+| `setup.github`, `setup.token.invalid`                                                                                 | First-run GitHub App setup.                                                                               |
+| `oauth.grant`, `oauth.denied`, `oauth.revoke`                                                                         | Agent consent, a refused token request or bearer token, revoking a client.                                |
+| `webhook.signature.invalid`                                                                                           | A webhook delivery whose signature does not match.                                                        |
+| `project.create`, `.rename`, `.delete`                                                                                |                                                                                                           |
+| `service.create`, `.update`, `.delete`, `.stop`, `.start`, `.restart`, `service.fence.clear`                          | `update` lists the changed fields.                                                                        |
+| `service.variables.update`, `service.variables.read`, `service.variables.resolved.read`                               | Saving, and viewing values in the dashboard or API.                                                       |
+| `deployment.create`, `.redeploy`, `.cancel`                                                                           | Manual deploys, and each push that deploys.                                                               |
+| `domain.create`, `.delete`, `volume.create`, `.delete`                                                                |                                                                                                           |
+| `backup.run`, `.download`, `.restore`, `.delete`, `backup.policy.update`, `backup.settings.update`, `backup.key.read` | Scheduled backups are not recorded; they are in the backup list.                                          |
+| `onepassword.connect`, `.disconnect`                                                                                  |                                                                                                           |
+| `update.download`, `.install`, `update.settings.update`                                                               |                                                                                                           |
+| `audit.settings.update`                                                                                               | Changing the retention below.                                                                             |
+| `telemetry.enable`, `.disable`, `.settings.update`, `.data.delete`, `telemetry.component.restart`                     | [Telemetry](/docs/telemetry) toggled, tuned, cleared, or a component restarted.                           |
+| `mcp.call`                                                                                                            | Every MCP tool call, with the tool and its arguments.                                                     |
+| `container.exec`, `container.oom`                                                                                     | A `docker exec` into a service container, with the command; a container killed for running out of memory. |
+
+`container.exec` is recorded for execs that nobody in shed started, such as `docker exec` on the server, with the command line as the daemon reports it (cut at 2 KiB). It is not recorded for the execs shed runs itself or for a container's health check. The command is stored as typed, so keep secrets out of `docker exec` arguments. shed follows Docker's events whether telemetry is on or off, but not while it is stopped.
 
 A push that has to wait, for a running backup or a fenced service, is recorded once, when it deploys, not on every retry.
 

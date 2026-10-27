@@ -251,6 +251,7 @@ func run() error {
 	})
 	defer deployer.Stop()
 
+	auditLog := audit.New(st, log)
 	stack = observability.New(observability.Config{
 		Store:   st,
 		Docker:  dc,
@@ -270,7 +271,30 @@ func run() error {
 		OTLPEndpoint: otlpEndpoint,
 		Databases:    st,
 		Redeployer:   deployer,
-		Log:          log,
+		Security: &observability.Security{
+			Docker:    dc,
+			Catalog:   st,
+			Audit:     auditLog,
+			Logs:      vl,
+			Conntrack: conntrackTable{},
+			Crashed: func(d observability.Death) {
+				svc, err := st.Service(context.Background(), d.ServiceID)
+				if err != nil {
+					return
+				}
+				text := fmt.Sprintf("exited with code %d", d.ExitCode)
+				if d.OOM {
+					text = "killed for running out of memory"
+				}
+				dashboards.Annotate(telemetry.Event{
+					Kind:    telemetry.EventCrash,
+					Service: telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind},
+					Start:   time.Now(),
+					Text:    text,
+				})
+			},
+		},
+		Log: log,
 	})
 	stack.AddWorker(dashboards.Run)
 
@@ -308,7 +332,6 @@ func run() error {
 	}
 	var restarting atomic.Bool
 
-	auditLog := audit.New(st, log)
 	authn := auth.New(api.AuthStore(st), auditLog, func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {
 			return c, true
@@ -431,6 +454,15 @@ func run() error {
 	}
 	return nil
 }
+
+// conntrackTable reads the kernel's connection tracking table.
+type conntrackTable struct{}
+
+func (conntrackTable) Flows(ctx context.Context) ([]host.Flow, error) {
+	return host.ConntrackFlows(ctx)
+}
+
+func (conntrackTable) EnableAccounting() error { return host.EnableConntrackAccounting("") }
 
 // executable returns the path of the running shed binary, with symlinks
 // resolved so an update replaces the file itself.

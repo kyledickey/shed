@@ -36,7 +36,7 @@ internal/grafana   Grafana config, provisioning, HTTP API, dashboard templates
 internal/s3        S3-compatible object storage client
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
 internal/firewall  iptables rules opening the telemetry gateway to containers
-internal/host      host resource usage from procfs, sysfs, and statfs
+internal/host      host resource usage from procfs, sysfs, and statfs, conntrack flows
 internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
 internal/backup    backups and restores: dumps, archives, zstd, age, schedules, S3

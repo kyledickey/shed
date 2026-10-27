@@ -110,7 +110,10 @@ type Config struct {
 	// Redeployer redeploys databases that were started without query
 	// statistics. Nil leaves them as they are.
 	Redeployer Redeployer
-	Log        *slog.Logger
+	// Security enables the Docker events follower and the egress worker; nil
+	// leaves them off.
+	Security *Security
+	Log      *slog.Logger
 }
 
 // A Worker runs while telemetry is enabled and returns once ctx is done,
@@ -125,6 +128,7 @@ type Manager struct {
 	poll time.Duration
 
 	workers []Worker
+	always  []Worker
 	hooks   []func(enabled bool)
 
 	// base is the parent of the workers' context; Run cancels it.
@@ -167,6 +171,9 @@ func New(cfg Config) *Manager {
 		m.dbs = newDatabases(cfg, m.setTargets)
 		m.workers = append(m.workers, m.dbs.watch, m.dbs.upgrade)
 	}
+	if cfg.Security != nil {
+		m.installSecurity()
+	}
 	return m
 }
 
@@ -175,6 +182,12 @@ func New(cfg Config) *Manager {
 // shuts down. Register workers before Run.
 func (m *Manager) AddWorker(w Worker) {
 	m.workers = append(m.workers, w)
+}
+
+// AddAlways registers w to run from Run until it is canceled, whether
+// telemetry is enabled or not. Register it before Run.
+func (m *Manager) AddAlways(w Worker) {
+	m.always = append(m.always, w)
 }
 
 // OnEnabled registers fn, called with true once the stack is up and the
@@ -189,10 +202,15 @@ func (m *Manager) OnEnabled(fn func(enabled bool)) {
 const retryEvery = time.Minute
 
 // Run reconciles the stack now, after every settings change, and a minute
-// after a failure, until ctx is done. It then stops the workers and leaves
-// the containers as they are.
+// after a failure, until ctx is done, and runs the always-on workers. It then
+// stops the workers and leaves the containers as they are.
 func (m *Manager) Run(ctx context.Context) {
 	defer m.shutdown()
+	var always sync.WaitGroup
+	defer always.Wait()
+	for _, w := range m.always {
+		always.Go(func() { w(ctx) })
+	}
 	for {
 		var retry <-chan time.Time
 		if err := m.Reconcile(ctx); err != nil && ctx.Err() == nil {
