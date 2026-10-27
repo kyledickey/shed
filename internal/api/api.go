@@ -119,6 +119,8 @@ type Control interface {
 	RestoreDashboards(ctx context.Context) error
 	ServiceTelemetry(ctx context.Context, serviceID string) (control.ServiceTelemetry, error)
 	SetServiceTelemetryCaps(ctx context.Context, serviceID string, caps *observability.Caps) (control.ServiceTelemetry, error)
+	LogHistory(ctx context.Context, serviceID string, q control.LogQuery) (control.LogPage, error)
+	TraceExploreURL(ctx context.Context, traceID string) (string, error)
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -285,6 +287,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/deployments/{id}/cancel", s.cancelDeployment)
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
+	authed("GET /api/services/{id}/logs/history", s.logHistory)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
 	authed("GET /api/host/metrics", s.hostMetrics)
 	authed("GET /api/logs", s.shedLogs)
@@ -321,6 +324,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/telemetry/dashboards/restore", s.restoreDashboards)
 	authed("GET /api/services/{id}/telemetry", s.getServiceTelemetry)
 	authed("PUT /api/services/{id}/telemetry", s.putServiceTelemetry)
+	authed("GET /api/telemetry/trace/{traceId}", s.traceRedirect)
 	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))
 
 	authed("GET /api/github/repos", s.repos)

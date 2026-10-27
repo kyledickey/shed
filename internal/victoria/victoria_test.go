@@ -534,11 +534,35 @@ func TestSearchTraces(t *testing.T) {
 	}
 }
 
-func TestSearchTracesOmitsEmptyParams(t *testing.T) {
+func TestSearchTracesWithoutServiceAsksEachService(t *testing.T) {
+	var asked []string
 	tr := NewTraces(serve(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.RawQuery != "" {
-			t.Errorf("query = %q", r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/select/jaeger/api/services":
+			io.WriteString(w, `{"data":["checkout","cart"],"errors":null}`)
+		case "/select/jaeger/api/traces":
+			asked = append(asked, r.URL.Query().Get("service")+" "+r.URL.Query().Get("limit"))
+			io.WriteString(w, jaegerTraceJSON)
+		default:
+			t.Errorf("request = %s", r.URL.Path)
 		}
+	}), nil)
+	hits, err := tr.SearchTraces(context.Background(), SearchParams{Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(asked, []string{"checkout 3", "cart 3"}) {
+		t.Errorf("asked %v", asked)
+	}
+	// Each service answers with the same two traces here; the newest three
+	// of the four come back, newest first.
+	if len(hits) != 3 || hits[0].TraceID != "bbbb" || hits[1].TraceID != "bbbb" || hits[2].TraceID != "aaaa" {
+		t.Errorf("hits = %+v", hits)
+	}
+}
+
+func TestSearchTracesWithoutServicesIsEmpty(t *testing.T) {
+	tr := NewTraces(serve(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[],"errors":null}`)
 	}), nil)
 	hits, err := tr.SearchTraces(context.Background(), SearchParams{})
@@ -622,7 +646,7 @@ func TestJaegerErrorsField(t *testing.T) {
 	tr := NewTraces(serve(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":null,"errors":[{"code":400,"msg":"bad tags"}]}`)
 	}), nil)
-	_, err := tr.SearchTraces(context.Background(), SearchParams{})
+	_, err := tr.SearchTraces(context.Background(), SearchParams{Service: "web"})
 	if err == nil || !strings.Contains(err.Error(), "bad tags") {
 		t.Fatalf("err = %v", err)
 	}

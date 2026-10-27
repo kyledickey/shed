@@ -137,6 +137,12 @@ export const docTopics = {
     section: "runtime-logs",
     summary: "The active container's stdout and stderr, streamed over SSE with secrets masked.",
   },
+  logHistory: {
+    page: "logs",
+    section: "log-history",
+    summary:
+      "Stored logs across deployments, searched by words, quoted phrases, and field:value, while telemetry is on.",
+  },
   shedLog: {
     page: "logs",
     section: "sheds-own-log",

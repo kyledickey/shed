@@ -40,6 +40,8 @@ type fakeBackend struct {
 	repos   int
 	backups int
 
+	tel telState
+
 	mu      sync.Mutex
 	filter  store.AuditFilter // of the last AuditEvents call
 	records []recordedEvent
@@ -309,7 +311,10 @@ func TestToolList(t *testing.T) {
 		"audit_events", "build_log", "get_deployment", "get_project", "get_service", "host_metrics", "list_backups",
 		"list_branches", "list_deployments", "list_projects", "list_repos", "list_variables",
 		"runtime_logs", "service_metrics", "shed_log", "update_status",
+		"telemetry_status", "query_metrics", "query_logs", "search_traces", "get_trace", "error_logs",
+		"slow_requests", "top_queries", "list_dashboards",
 	}
+	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v, want %v", names, want)
 	}

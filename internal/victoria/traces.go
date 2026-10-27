@@ -91,8 +91,55 @@ func (t *Traces) ForwardOTLP(ctx context.Context, body []byte) error {
 	})
 }
 
-// SearchTraces finds traces through the Jaeger query API, newest first.
+// maxSearchServices bounds how many services a search without a service
+// asks about.
+const maxSearchServices = 50
+
+// SearchTraces finds traces through the Jaeger query API, newest first. The
+// API searches one service at a time, so without p.Service the search asks
+// about each service the store knows (at most 50) and merges the answers.
+// Tags may name resource attributes as "resource_attr:<key>".
 func (t *Traces) SearchTraces(ctx context.Context, p SearchParams) ([]TraceSummary, error) {
+	if p.Service != "" {
+		return t.search(ctx, p)
+	}
+	services, err := t.Services(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []TraceSummary{}
+	for _, name := range services[:min(len(services), maxSearchServices)] {
+		q := p
+		q.Service = name
+		hits, err := t.search(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, hits...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Start.After(out[j].Start) })
+	if p.Limit > 0 && len(out) > p.Limit {
+		out = out[:p.Limit]
+	}
+	return out, nil
+}
+
+// Services returns the names of the services that have traces.
+func (t *Traces) Services(ctx context.Context) ([]string, error) {
+	data, err := t.b.get(ctx, request{op: "traces services", method: http.MethodGet, path: "/select/jaeger/api/services"})
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Data []string `json:"data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("victoria: traces services: decode: %w", err)
+	}
+	return resp.Data, nil
+}
+
+func (t *Traces) search(ctx context.Context, p SearchParams) ([]TraceSummary, error) {
 	q := url.Values{}
 	if p.Service != "" {
 		q.Set("service", p.Service)

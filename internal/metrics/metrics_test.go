@@ -85,6 +85,14 @@ func (f *fakeStore) HostBuckets(_ context.Context, from time.Time, _ time.Durati
 	return f.hostBuckets, nil
 }
 
+func (f *fakeStore) AllServices(context.Context) ([]store.Service, error) {
+	return []store.Service{{ID: "svcA", ProjectID: "prj", Name: "web", Kind: "app"}}, nil
+}
+
+func (f *fakeStore) Projects(context.Context) ([]store.Project, error) {
+	return []store.Project{{ID: "prj", Name: "acme"}}, nil
+}
+
 func (f *fakeStore) DeleteMetricSamplesBefore(_ context.Context, t time.Time) error {
 	f.prunedBefore = append(f.prunedBefore, t)
 	return nil

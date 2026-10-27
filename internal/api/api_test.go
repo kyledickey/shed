@@ -201,6 +201,7 @@ type fixture struct {
 	telemetry   *fakeTelemetry
 	dashboards  *fakeDashboards
 	grafana     *fakeGrafana
+	logStore    *fakeLogStore
 	server      *Server
 	handler     http.Handler
 	cookie      *http.Cookie
@@ -223,6 +224,7 @@ func newFixture(t *testing.T) *fixture {
 	f.telemetry = &fakeTelemetry{s: observability.DefaultSettings()}
 	f.dashboards = &fakeDashboards{telemetry: f.telemetry}
 	f.grafana = newFakeGrafana(t)
+	f.logStore = &fakeLogStore{}
 	plane := control.New(control.Config{
 		Store:      st,
 		Deployer:   f.deployer,
@@ -234,6 +236,7 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      auditLog,
 		Telemetry:  f.telemetry,
 		Dashboards: f.dashboards,
+		Stores:     control.TelemetryStores{Logs: f.logStore},
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true

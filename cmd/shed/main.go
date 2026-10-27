@@ -290,6 +290,7 @@ func run() error {
 		Docker: dc,
 		Host:   host.Reader{Path: cfg.Data.Dir},
 		Store:  st,
+		Remote: vm,
 		Log:    log,
 	})
 
@@ -327,6 +328,7 @@ func run() error {
 			}
 		})
 	}
+	stack.OnEnabled(collector.SetRemote)
 
 	plane = control.New(control.Config{
 		Store:    st,
@@ -345,6 +347,7 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
+		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt, Dashboards: stack},
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,

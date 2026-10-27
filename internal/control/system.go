@@ -153,3 +153,13 @@ func (p *Plane) Branches(ctx context.Context, owner, repo string) ([]string, err
 	}
 	return branches, nil
 }
+
+// variableValues returns the saved values of every service's variables, the
+// set that shed's own log and the stored telemetry are masked with.
+func (p *Plane) variableValues(ctx context.Context) ([]string, error) {
+	services, err := p.store.AllServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.savedValues(ctx, services)
+}
