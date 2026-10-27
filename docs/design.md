@@ -581,9 +581,11 @@ already created, so connecting converges.
   only when a reference (`${{ api.KEY }}`) needs one of its variables. Each
   item is read at most once per deployment. A failed read fails the
   deployment with the 1Password error; the running deployment keeps serving.
-- Restarts, crash recovery, boot reconcile, and log masking use the active
-  deployment's recorded runtime and never call 1Password. Every variable is
-  masked in logs as before.
+- Restarts, crash recovery, boot reconcile, and container log masking use
+  the active deployment's recorded runtime and never call 1Password. Masking
+  saved values (shed's own log and telemetry, a project's telemetry) reads
+  the items, so it fails rather than miss a value if 1Password does. Every
+  variable is masked in logs as before.
 - 1Password has no change notifications, so an edit made in the 1Password app
   applies on the service's next deployment.
 

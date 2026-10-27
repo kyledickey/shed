@@ -62,12 +62,12 @@ func (p *Plane) TelemetryMask(ctx context.Context, projectID, deploymentID strin
 	return newMask(values), nil
 }
 
-// savedValues returns the values of the variables of services saved in
-// shed.db.
+// savedValues returns the saved values of the variables of services, from
+// shed.db or 1Password.
 func (p *Plane) savedValues(ctx context.Context, services []store.Service) ([]string, error) {
 	var values []string
 	for _, svc := range services {
-		vars, err := p.store.Variables(ctx, svc.ID)
+		vars, err := p.variables.Get(ctx, svc)
 		if err != nil {
 			return nil, err
 		}

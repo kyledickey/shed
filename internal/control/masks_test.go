@@ -56,3 +56,41 @@ func TestMasks(t *testing.T) {
 		}
 	}
 }
+
+func TestMasksWhileConnected(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	web := createApp(t, f.st)
+	other := createApp(t, f.st)
+	f.connect(t)
+	if _, err := f.plane.SetVariables(ctx, web.ID, map[string]string{"TOKEN": "web-vault-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.plane.SetVariables(ctx, other.ID, map[string]string{"TOKEN": "other-vault-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	const line = "web-vault-secret other-vault-secret"
+
+	shed, err := f.plane.ShedMask(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := shed(line); got != "*** ***" {
+		t.Errorf("ShedMask: %q, want both vault values masked", got)
+	}
+	telemetry, err := f.plane.TelemetryMask(ctx, web.ProjectID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := telemetry(line); got != "*** other-vault-secret" {
+		t.Errorf("TelemetryMask: %q, want the project's vault value masked", got)
+	}
+
+	f.op.fail(errRateLimited)
+	if _, err := f.plane.ShedMask(ctx); err == nil {
+		t.Error("ShedMask with 1Password failing: no error")
+	}
+	if _, err := f.plane.TelemetryMask(ctx, web.ProjectID, ""); err == nil {
+		t.Error("TelemetryMask with 1Password failing: no error")
+	}
+}
