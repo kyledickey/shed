@@ -44,6 +44,15 @@ func (t *trail) take() []string {
 type fakeStore struct {
 	mu   sync.Mutex
 	rows map[string]string
+	// dashboardsDeleted is set by DeleteGrafanaDashboards.
+	dashboardsDeleted bool
+}
+
+func (s *fakeStore) DeleteGrafanaDashboards(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dashboardsDeleted = true
+	return nil
 }
 
 func (s *fakeStore) Setting(_ context.Context, key string) (string, error) {
@@ -460,6 +469,9 @@ func TestDeleteData(t *testing.T) {
 	}
 	if _, err := os.Stat(h.dir); !os.IsNotExist(err) {
 		t.Errorf("telemetry directory: %v, want it gone", err)
+	}
+	if !h.store.dashboardsDeleted {
+		t.Error("DeleteData kept the dashboard records")
 	}
 	st, err := h.m.Status(ctx)
 	if err != nil {

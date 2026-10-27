@@ -13,6 +13,7 @@ type Dashboard struct {
 	// dashboards.
 	UID      string
 	Template string
+	Title    string
 	// Version is the template's version.
 	Version int
 	// JSON is the dashboard model for [Client.PutDashboard].
@@ -87,7 +88,7 @@ func render(ts []template, scopeID string, tags []string) []Dashboard {
 		if err != nil {
 			panic(fmt.Sprintf("grafana: encode template %s: %v", t.name, err))
 		}
-		out[i] = Dashboard{UID: uid, Template: t.name, Version: t.version, JSON: js}
+		out[i] = Dashboard{UID: uid, Template: t.name, Title: t.title, Version: t.version, JSON: js}
 	}
 	return out
 }

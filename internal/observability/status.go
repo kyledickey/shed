@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/grafana"
 )
 
 // State is how a component is doing.
@@ -92,7 +93,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 
 	var pw string
 	if s.Enabled || running[Grafana] != nil {
-		if pw, err = m.adminPassword(ctx); err != nil {
+		if pw, err = m.AdminPassword(ctx); err != nil {
 			return Status{}, err
 		}
 	}
@@ -232,6 +233,12 @@ func (m *Manager) alerts(ctx context.Context, pw string) []Alert {
 	if err != nil {
 		return nil
 	}
+	return firingAlerts(firing)
+}
+
+// firingAlerts maps Grafana's firing alert instances to the services they
+// are about, by their shed_service_id label.
+func firingAlerts(firing []grafana.Alert) []Alert {
 	out := make([]Alert, 0, len(firing))
 	for _, a := range firing {
 		out = append(out, Alert{Name: a.Labels["alertname"], ServiceID: a.Labels["shed_service_id"], Since: a.ActiveAt})

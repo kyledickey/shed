@@ -22,11 +22,13 @@ import (
 	"github.com/kyledickey/shed/internal/victoria"
 )
 
-// Store keeps the settings. *store.Store implements it.
+// Store keeps the settings and the records of shed's Grafana dashboards.
+// *store.Store implements it.
 type Store interface {
 	Setting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
 	AddSetting(ctx context.Context, key, value string) (bool, error)
+	DeleteGrafanaDashboards(ctx context.Context) error
 }
 
 var _ Store = (*store.Store)(nil)

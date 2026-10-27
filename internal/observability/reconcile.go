@@ -56,7 +56,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 }
 
 func (m *Manager) enable(ctx context.Context, s Settings) error {
-	pw, err := m.adminPassword(ctx)
+	pw, err := m.AdminPassword(ctx)
 	if err != nil {
 		return err
 	}
@@ -235,8 +235,8 @@ func (m *Manager) containers(ctx context.Context) (map[Component]*docker.Contain
 	return out, nil
 }
 
-// DeleteData removes the containers, their volumes, and the telemetry
-// directory. It fails with ErrEnabled unless telemetry is off.
+// DeleteData removes the containers, their volumes, the telemetry
+// directory, and the records of shed's dashboards. It fails with ErrEnabled unless telemetry is off.
 func (m *Manager) DeleteData(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -265,7 +265,7 @@ func (m *Manager) DeleteData(ctx context.Context) error {
 	if err := os.RemoveAll(m.cfg.Dir); err != nil {
 		return fmt.Errorf("observability: delete %s: %w", m.cfg.Dir, err)
 	}
-	return nil
+	return m.cfg.Store.DeleteGrafanaDashboards(ctx)
 }
 
 // Restart restarts the container of c. It fails with ErrDisabled while
