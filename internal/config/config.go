@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/toml/v2"
@@ -35,7 +37,20 @@ type Config struct {
 	Auth        Auth        `koanf:"auth"`
 	Build       Build       `koanf:"build"`
 	Deployments Deployments `koanf:"deployments"`
+	Telemetry   Telemetry   `koanf:"telemetry"`
 	Log         Log         `koanf:"log"`
+}
+
+// Telemetry configures where the telemetry components listen. Each address
+// is a loopback host:port.
+type Telemetry struct {
+	MetricsAddr string `koanf:"metrics_addr"`
+	LogsAddr    string `koanf:"logs_addr"`
+	TracesAddr  string `koanf:"traces_addr"`
+	GrafanaAddr string `koanf:"grafana_addr"`
+	// OTLPPort is the port of the OTLP/HTTP gateway, on loopback and on
+	// each project network's gateway address.
+	OTLPPort int `koanf:"otlp_port"`
 }
 
 // Build limits the resources image builds may use.
@@ -113,7 +128,14 @@ func defaults() Config {
 		Proxy:       Proxy{Enabled: true, HTTPPort: 80, HTTPSPort: 443},
 		Build:       Build{MemoryMB: 2048, CPUs: 2, MinFreeMB: 2048},
 		Deployments: Deployments{LogMaxMB: 10, Keep: 50},
-		Log:         Log{Level: "info", MaxSizeMB: 20, MaxBackups: 5, MaxAgeDays: 30},
+		Telemetry: Telemetry{
+			MetricsAddr: "127.0.0.1:8428",
+			LogsAddr:    "127.0.0.1:9428",
+			TracesAddr:  "127.0.0.1:10428",
+			GrafanaAddr: "127.0.0.1:3001",
+			OTLPPort:    4318,
+		},
+		Log: Log{Level: "info", MaxSizeMB: 20, MaxBackups: 5, MaxAgeDays: 30},
 	}
 }
 
@@ -208,6 +230,28 @@ func (c Config) validate() error {
 	}
 	if c.Deployments.LogMaxMB < 0 || c.Deployments.Keep < 0 {
 		return errors.New("config: deployments limits must not be negative")
+	}
+	return c.Telemetry.validate()
+}
+
+// validate reports the first address that is not a loopback host:port, or a
+// port out of range.
+func (t Telemetry) validate() error {
+	for _, a := range []struct{ key, addr string }{
+		{"telemetry.metrics_addr", t.MetricsAddr},
+		{"telemetry.logs_addr", t.LogsAddr},
+		{"telemetry.traces_addr", t.TracesAddr},
+		{"telemetry.grafana_addr", t.GrafanaAddr},
+	} {
+		host, port, err := net.SplitHostPort(a.addr)
+		ip := net.ParseIP(host)
+		n, perr := strconv.Atoi(port)
+		if err != nil || ip == nil || !ip.IsLoopback() || perr != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("config: %s %q must be a loopback IP and port", a.key, a.addr)
+		}
+	}
+	if t.OTLPPort < 1 || t.OTLPPort > 65535 {
+		return fmt.Errorf("config: telemetry.otlp_port %d out of range 1-65535", t.OTLPPort)
 	}
 	return nil
 }
