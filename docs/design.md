@@ -1109,11 +1109,15 @@ Flags derived from settings:
 - VictoriaMetrics: `-retentionPeriod=<metrics days>d`,
   `-storage.minFreeDiskSpaceBytes=<build.min_free_mb>`,
   `-promscrape.config=/etc/shed/scrape.yaml`, `-promscrape.configCheckInterval=10s`,
-  `-opentelemetry.usePrometheusNaming`.
+  `-opentelemetry.usePrometheusNaming`, `-search.latencyOffset=5s` (the
+  default 30 s would hold the built-in charts' newest buckets back).
 - VictoriaLogs: `-retentionPeriod=<logs days>d`,
   `-retention.maxDiskSpaceUsageBytes=<60% of the disk limit>`.
 - VictoriaTraces: `-retentionPeriod=<traces days>d`,
   `-retention.maxDiskSpaceUsageBytes=<40% of the disk limit>`.
+
+Each store's disk use is the sum of its `vm_data_size_bytes`,
+`vl_data_size_bytes`, or `vt_data_size_bytes` series on `/metrics`.
 
 Metrics have no disk-based eviction in VictoriaMetrics; they are bounded by
 retention and the per-service series cap, and VictoriaMetrics stops accepting
