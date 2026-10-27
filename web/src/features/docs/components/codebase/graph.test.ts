@@ -14,7 +14,7 @@ describe("package graph", () => {
       "observability",
       "variables",
     ]);
-    expect(importedBy("audit")).toEqual(["api", "auth", "control", "mcp"]);
+    expect(importedBy("audit")).toEqual(["api", "auth", "control", "mcp", "observability"]);
     expect(importedBy("control")).toEqual(["api", "mcp"]);
     expect(importedBy("observability")).toEqual(["api", "control", "mcp"]);
     expect(importedBy("telemetry")).toEqual(["backup", "deploy", "observability"]);

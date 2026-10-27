@@ -73,10 +73,12 @@ export const packages: Package[] = [
   {
     name: "observability",
     imports: [
+      "audit",
       "catalog",
       "docker",
       "firewall",
       "grafana",
+      "host",
       "otlp",
       "proxy",
       "store",
