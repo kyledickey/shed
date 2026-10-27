@@ -51,7 +51,7 @@ export function useDeleteTelemetryData() {
   });
 }
 
-/** serviceTelemetryQuery reads a service's caps and polls whether it is dropping records. */
+/** serviceTelemetryQuery reads a service's caps and dashboards, and polls whether it is dropping records or alerting. */
 export const serviceTelemetryQuery = (serviceId: string) =>
   queryOptions({
     queryKey: keys.serviceTelemetry(serviceId),
@@ -67,4 +67,45 @@ export function useSetServiceCaps(serviceId: string) {
       api.put<ServiceTelemetry>(`/services/${serviceId}/telemetry`, { caps }),
     onSuccess: (t) => qc.setQueryData(keys.serviceTelemetry(serviceId), t),
   });
+}
+
+/** useResetDashboard overwrites one of a service's dashboards with its default. */
+export function useResetDashboard(serviceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (uid: string) => api.post(`/telemetry/dashboards/${uid}/reset`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.serviceTelemetry(serviceId) }),
+  });
+}
+
+/** useRestoreDashboards recreates the default dashboards a user deleted. */
+export function useRestoreDashboards() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post("/telemetry/dashboards/restore"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["services"] }),
+  });
+}
+
+/** projectFolderUrl links to the Grafana folder of a project. */
+export const projectFolderUrl = (grafanaUrl: string, projectId: string) =>
+  `${grafanaUrl}dashboards/f/p-${projectId}/`;
+
+/** OVERVIEW_PAD_MS is how much time a deployment's Overview link shows around it. */
+const OVERVIEW_PAD_MS = 15 * 60_000;
+
+/**
+ * deploymentOverviewUrl links to a service's Overview dashboard around a
+ * deployment, or returns null if the dashboard is not listed.
+ */
+export function deploymentOverviewUrl(
+  t: ServiceTelemetry,
+  deployment: { createdAt: string; startedAt: string | null; finishedAt: string | null },
+  now = Date.now(),
+): string | null {
+  const overview = t.dashboards.find((d) => d.uid.startsWith("svc-overview-"));
+  if (!overview) return null;
+  const from = Date.parse(deployment.startedAt ?? deployment.createdAt) - OVERVIEW_PAD_MS;
+  const end = deployment.finishedAt ? Date.parse(deployment.finishedAt) + OVERVIEW_PAD_MS : now;
+  return `${overview.url}?from=${from}&to=${Math.min(end, now)}`;
 }

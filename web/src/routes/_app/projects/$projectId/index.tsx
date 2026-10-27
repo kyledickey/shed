@@ -1,8 +1,9 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Layers, Plus } from "lucide-react";
+import { ExternalLink, Layers, Plus } from "lucide-react";
 import { projectQuery } from "../../../../api/projects";
-import { Button } from "../../../../components/Button";
+import { projectFolderUrl, telemetryQuery } from "../../../../api/telemetry";
+import { Button, LinkButton } from "../../../../components/Button";
 import { Page } from "../../../../components/Layout";
 import { EmptyState } from "../../../../components/Misc";
 import { PageHeader } from "../../../../components/Shell";
@@ -20,6 +21,7 @@ export const Route = createFileRoute("/_app/projects/$projectId/")({
 function ProjectPage() {
   const { projectId } = Route.useParams();
   const { data: project } = useSuspenseQuery(projectQuery(projectId));
+  const { data: telemetry } = useQuery(telemetryQuery);
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const setAdding = (open: boolean) =>
@@ -37,7 +39,21 @@ function ProjectPage() {
       <PageHeader
         title={project.name}
         description={servicesLabel(project.services.length)}
-        actions={project.services.length > 0 && newButton}
+        actions={
+          <>
+            {telemetry?.settings.enabled && (
+              <LinkButton
+                href={projectFolderUrl(telemetry.grafanaUrl, project.id)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ExternalLink size={14} />
+                Open in Grafana
+              </LinkButton>
+            )}
+            {project.services.length > 0 && newButton}
+          </>
+        }
       />
       {project.services.length === 0 ? (
         <EmptyState

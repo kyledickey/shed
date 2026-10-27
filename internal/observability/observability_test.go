@@ -45,6 +45,15 @@ type fakeStore struct {
 	mu             sync.Mutex
 	rows           map[string]string
 	cursorsDeleted bool
+	// dashboardsDeleted is set by DeleteGrafanaDashboards.
+	dashboardsDeleted bool
+}
+
+func (s *fakeStore) DeleteGrafanaDashboards(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dashboardsDeleted = true
+	return nil
 }
 
 func (s *fakeStore) Setting(_ context.Context, key string) (string, error) {
@@ -482,6 +491,9 @@ func TestDeleteData(t *testing.T) {
 	}
 	if _, ok := h.store.rows[auditCursorKey]; ok {
 		t.Error("audit mirror cursor survived DeleteData")
+	}
+	if !h.store.dashboardsDeleted {
+		t.Error("DeleteData kept the dashboard records")
 	}
 	st, err := h.m.Status(ctx)
 	if err != nil {

@@ -115,6 +115,8 @@ type Control interface {
 	SetTelemetry(ctx context.Context, s observability.Settings) (observability.Status, error)
 	RestartTelemetryComponent(ctx context.Context, name string) (observability.Status, error)
 	DeleteTelemetryData(ctx context.Context) error
+	ResetDashboard(ctx context.Context, uid string) error
+	RestoreDashboards(ctx context.Context) error
 	ServiceTelemetry(ctx context.Context, serviceID string) (control.ServiceTelemetry, error)
 	SetServiceTelemetryCaps(ctx context.Context, serviceID string, caps *observability.Caps) (control.ServiceTelemetry, error)
 }
@@ -315,6 +317,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/telemetry", s.putTelemetry)
 	authed("POST /api/telemetry/components/{name}/restart", s.restartTelemetryComponent)
 	authed("DELETE /api/telemetry/data", s.deleteTelemetryData)
+	authed("POST /api/telemetry/dashboards/{uid}/reset", s.resetDashboard)
+	authed("POST /api/telemetry/dashboards/restore", s.restoreDashboards)
 	authed("GET /api/services/{id}/telemetry", s.getServiceTelemetry)
 	authed("PUT /api/services/{id}/telemetry", s.putServiceTelemetry)
 	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))

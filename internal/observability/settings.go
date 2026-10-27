@@ -114,9 +114,9 @@ func (m *Manager) SetSettings(ctx context.Context, s Settings) (Settings, error)
 	return s, nil
 }
 
-// adminPassword returns the Grafana admin password, generating and storing
+// AdminPassword returns the Grafana admin password, generating and storing
 // it the first time.
-func (m *Manager) adminPassword(ctx context.Context) (string, error) {
+func (m *Manager) AdminPassword(ctx context.Context) (string, error) {
 	pw, err := m.cfg.Store.Setting(ctx, passwordKey)
 	if err == nil {
 		return pw, nil

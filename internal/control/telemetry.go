@@ -21,6 +21,20 @@ type Telemetry interface {
 
 var _ Telemetry = (*observability.Manager)(nil)
 
+// Dashboards keeps telemetry's Grafana folders and dashboards in step with
+// projects and services. *observability.Dashboards implements it.
+type Dashboards interface {
+	// Refresh asks for the folders and dashboards to be reconciled soon,
+	// after a project or service was created, renamed, or deleted. It does
+	// not block.
+	Refresh()
+	Reset(ctx context.Context, uid string) error
+	Restore(ctx context.Context) error
+	Service(ctx context.Context, id string) (observability.ServiceDashboards, error)
+}
+
+var _ Dashboards = (*observability.Dashboards)(nil)
+
 // Telemetry returns the telemetry settings and the state of the stack.
 func (p *Plane) Telemetry(ctx context.Context) (observability.Status, error) {
 	return p.telemetry.Status(ctx)
@@ -82,8 +96,22 @@ func (p *Plane) DeleteTelemetryData(ctx context.Context) error {
 	return err
 }
 
-// ServiceTelemetry is a service's telemetry: its caps and whether records
-// are being dropped.
+// ResetDashboard overwrites one of shed's default dashboards with its
+// current template, discarding a user's changes.
+func (p *Plane) ResetDashboard(ctx context.Context, uid string) error {
+	err := p.dashboards.Reset(ctx, uid)
+	p.record(ctx, err, audit.Event{Action: "telemetry.dashboard.reset", Target: uid})
+	return err
+}
+
+// RestoreDashboards recreates the default dashboards a user deleted.
+func (p *Plane) RestoreDashboards(ctx context.Context) error {
+	err := p.dashboards.Restore(ctx)
+	p.record(ctx, err, audit.Event{Action: "telemetry.dashboards.restore"})
+	return err
+}
+
+// ServiceTelemetry is a service's telemetry, as its page shows it.
 type ServiceTelemetry struct {
 	// Caps are the effective caps: the service's override or the defaults.
 	Caps observability.Caps
@@ -91,6 +119,9 @@ type ServiceTelemetry struct {
 	Overridden bool
 	// Dropping is set if records were dropped in the last 5 minutes.
 	Dropping bool
+	// Grafana holds the service's folder, dashboards, and firing alerts;
+	// it is empty while telemetry is off.
+	Grafana observability.ServiceDashboards
 }
 
 // ServiceTelemetry returns a service's telemetry.
@@ -117,6 +148,9 @@ func (p *Plane) ServiceTelemetry(ctx context.Context, serviceID string) (Service
 		return ServiceTelemetry{}, err
 	}
 	out.Dropping = dropping
+	if out.Grafana, err = p.dashboards.Service(ctx, serviceID); err != nil {
+		return ServiceTelemetry{}, err
+	}
 	return out, nil
 }
 

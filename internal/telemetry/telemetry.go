@@ -2,7 +2,8 @@
 // providers. They export OTLP/HTTP to shed's loopback gateway and can be
 // switched on and off at runtime. [Providers.Register] makes them the
 // OpenTelemetry globals, so instrumented packages call otel.Tracer and
-// otel.Meter instead of taking providers as parameters.
+// otel.Meter instead of taking providers as parameters. It also defines the
+// [Event]s that packages report for dashboards to mark.
 package telemetry
 
 import (

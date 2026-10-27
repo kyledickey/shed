@@ -86,6 +86,11 @@ export const docTopics = {
     summary:
       "Per-service limits on spans, log records, and series; records over a cap are dropped.",
   },
+  dashboards: {
+    page: "telemetry",
+    section: "folders-and-dashboards",
+    summary: "Default dashboards shed keeps per service; once you save one, shed leaves it alone.",
+  },
   telemetryDisk: {
     page: "telemetry",
     section: "retention-and-disk",

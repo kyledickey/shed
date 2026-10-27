@@ -182,9 +182,47 @@ func run() error {
 		log.Warn("load 1Password", "err", err)
 	}
 
-	// The telemetry stack is built below; the deployer asks it at deploy time.
-	var stack *observability.Manager
 	otlpEndpoint := fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort)
+	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
+	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
+	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
+	grafanaURL := strings.TrimRight(cfg.Server.URL, "/") + "/grafana/"
+	newGrafana := func(password string) *grafana.Client {
+		return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
+	}
+	stack := observability.New(observability.Config{
+		Store:   st,
+		Docker:  dc,
+		Metrics: vm,
+		Logs:    vl,
+		Traces:  vt,
+		Grafana: func(password string) observability.GrafanaAPI { return newGrafana(password) },
+		Addrs: observability.Addrs{
+			Metrics: cfg.Telemetry.MetricsAddr,
+			Logs:    cfg.Telemetry.LogsAddr,
+			Traces:  cfg.Telemetry.TracesAddr,
+			Grafana: cfg.Telemetry.GrafanaAddr,
+		},
+		Dir:          filepath.Join(dataDir, "telemetry"),
+		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
+		GrafanaURL:   grafanaURL,
+		OTLPEndpoint: otlpEndpoint,
+		Log:          log,
+	})
+
+	dashboards := observability.NewDashboards(observability.DashboardsConfig{
+		Store: st,
+		Grafana: func(ctx context.Context) (observability.DashboardAPI, error) {
+			pw, err := stack.AdminPassword(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return newGrafana(pw), nil
+		},
+		GrafanaURL: grafanaURL,
+		Log:        log,
+	})
+	stack.AddWorker(dashboards.Run)
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
@@ -214,6 +252,7 @@ func run() error {
 			return s.Enabled, err
 		},
 		OTLPEndpoint: otlpEndpoint,
+		Events:       dashboards.Annotate,
 		Log:          log,
 	})
 	defer deployer.Stop()
@@ -225,8 +264,9 @@ func run() error {
 		NewRemote: func(c backup.S3Config) (backup.Remote, error) {
 			return s3.New(s3.Config(c))
 		},
-		Dir: backupDir,
-		Log: log,
+		Dir:    backupDir,
+		Events: dashboards.Annotate,
+		Log:    log,
 	})
 
 	collector := metrics.New(metrics.Config{
@@ -262,31 +302,6 @@ func run() error {
 		return err
 	}
 
-	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
-	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
-	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
-	stack = observability.New(observability.Config{
-		Store:   st,
-		Docker:  dc,
-		Metrics: vm,
-		Logs:    vl,
-		Traces:  vt,
-		Grafana: func(password string) observability.GrafanaAPI {
-			return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
-		},
-		Addrs: observability.Addrs{
-			Metrics: cfg.Telemetry.MetricsAddr,
-			Logs:    cfg.Telemetry.LogsAddr,
-			Traces:  cfg.Telemetry.TracesAddr,
-			Grafana: cfg.Telemetry.GrafanaAddr,
-		},
-		Dir:          filepath.Join(dataDir, "telemetry"),
-		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
-		GrafanaURL:   strings.TrimRight(cfg.Server.URL, "/") + "/grafana/",
-		OTLPEndpoint: otlpEndpoint,
-		Log:          log,
-	})
-
 	plane := control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
@@ -303,6 +318,7 @@ func run() error {
 		Variables:  vars,
 		Audit:      auditLog,
 		Telemetry:  stack,
+		Dashboards: dashboards,
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,

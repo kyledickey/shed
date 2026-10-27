@@ -349,14 +349,6 @@ export type AuditSettings = { retentionDays: number };
 export type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
 
 /** A service's telemetry: its caps and whether records are being dropped. */
-export type ServiceTelemetry = {
-  /** Effective: the service's own caps, or the defaults. */
-  caps: TelemetryCaps;
-  overridden: boolean;
-  /** Records were dropped in the last 5 minutes. */
-  dropping: boolean;
-};
-
 export type TelemetrySettings = {
   enabled: boolean;
   metricsRetentionDays: number;
@@ -380,6 +372,27 @@ export type TelemetryComponent = {
   memoryLimit: number;
   /** From the store's own metrics; null for grafana. */
   diskBytes: number | null;
+};
+
+export type DashboardLink = {
+  uid: string;
+  title: string;
+  url: string;
+  /** Saved by a user since shed wrote it; shed no longer overwrites it. */
+  customized: boolean;
+  /** Customized, and its default has changed since. */
+  outdated: boolean;
+};
+export type ServiceTelemetry = {
+  /** Effective: the service's own caps, or the defaults. */
+  caps: TelemetryCaps;
+  overridden: boolean;
+  /** Records were dropped in the last 5 minutes. */
+  dropping: boolean;
+  /** "" while telemetry is off. */
+  folderUrl: string;
+  dashboards: DashboardLink[];
+  firingAlerts: { name: string; since: string }[];
 };
 
 export type Telemetry = {

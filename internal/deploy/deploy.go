@@ -32,6 +32,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // Docker runs containers. *docker.Client implements it.
@@ -113,7 +114,10 @@ type Config struct {
 	// OTLPEndpoint is the gateway URL apps send telemetry to, such as
 	// http://shed.internal:4318.
 	OTLPEndpoint string
-	Log          *slog.Logger
+	// Events receives deployments starting and ending, stops, and
+	// restarts. It must not block. Nil drops them.
+	Events func(telemetry.Event)
+	Log    *slog.Logger
 }
 
 // Commit identifies the source revision of a deployment.
@@ -176,6 +180,7 @@ type Deployer struct {
 	dashboard proxy.Route
 	telemetry func(ctx context.Context) (bool, error)
 	otlp      string
+	events    func(telemetry.Event)
 	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
@@ -244,6 +249,7 @@ func New(cfg Config) *Deployer {
 		dashboard:        cfg.Dashboard,
 		telemetry:        cfg.Telemetry,
 		otlp:             cfg.OTLPEndpoint,
+		events:           cfg.Events,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
 		ciTimeout:        60 * time.Minute,
@@ -265,6 +271,9 @@ func New(cfg Config) *Deployer {
 	}
 	if d.variables == nil {
 		d.variables = savedVariables{cfg.Store}
+	}
+	if d.events == nil {
+		d.events = func(telemetry.Event) {}
 	}
 	d.instrument()
 	return d

@@ -6,11 +6,12 @@ import { isMetricsRange, metricsQuery, metricsRanges } from "../../../../../../a
 import type { Metrics, MetricsRange } from "../../../../../../api/types";
 import { Button } from "../../../../../../components/Button";
 import { Segmented } from "../../../../../../components/Form";
-import { Grid, Section } from "../../../../../../components/Layout";
+import { Grid, Section, Stack } from "../../../../../../components/Layout";
 import { Callout, EmptyState, Skeleton } from "../../../../../../components/Misc";
 import { ChartCard, ChartValue } from "../../../../../../features/metrics/ChartCard";
 import { formatBytes, formatPercent, formatRate } from "../../../../../../lib/format";
 import { HelpTip } from "../../../../../../features/docs/HelpTip";
+import { ServiceDashboards } from "../../../../../../features/telemetry/ServiceDashboards";
 
 type MetricsSearch = { range?: MetricsRange };
 
@@ -38,55 +39,58 @@ function MetricsPage() {
     void navigate({ search: next === "1h" ? {} : { range: next }, replace: true });
 
   return (
-    <Section
-      title={
-        <>
-          Metrics <HelpTip topic="metrics" />
-        </>
-      }
-      description="Resource usage of the running container."
-      actions={
-        <Segmented
-          label="Range"
-          size="sm"
-          value={range}
-          onChange={setRange}
-          options={metricsRanges}
-        />
-      }
-    >
-      {data ? (
-        hasSamples(data) ? (
-          <Charts metrics={data} />
-        ) : (
-          <EmptyState
-            icon={<ChartArea />}
-            tone="neutral"
-            title="No metrics yet"
-            description="shed samples running containers every 10 seconds. Usage shows up here once this service is running."
+    <Stack gap={6}>
+      <Section
+        title={
+          <>
+            Metrics <HelpTip topic="metrics" />
+          </>
+        }
+        description="Resource usage of the running container."
+        actions={
+          <Segmented
+            label="Range"
+            size="sm"
+            value={range}
+            onChange={setRange}
+            options={metricsRanges}
           />
-        )
-      ) : error ? (
-        <Callout
-          tone="tomato"
-          icon={<CircleX size={16} />}
-          title="Couldn't load metrics"
-          actions={
-            <Button size="sm" onClick={() => void refetch()} loading={isRefetching}>
-              Retry
-            </Button>
-          }
-        >
-          {errorMessage(error)}
-        </Callout>
-      ) : (
-        <Grid min={440}>
-          {Array.from({ length: 4 }, (_, i) => (
-            <Skeleton key={i} height={262} radius={18} />
-          ))}
-        </Grid>
-      )}
-    </Section>
+        }
+      >
+        {data ? (
+          hasSamples(data) ? (
+            <Charts metrics={data} />
+          ) : (
+            <EmptyState
+              icon={<ChartArea />}
+              tone="neutral"
+              title="No metrics yet"
+              description="shed samples running containers every 10 seconds. Usage shows up here once this service is running."
+            />
+          )
+        ) : error ? (
+          <Callout
+            tone="tomato"
+            icon={<CircleX size={16} />}
+            title="Couldn't load metrics"
+            actions={
+              <Button size="sm" onClick={() => void refetch()} loading={isRefetching}>
+                Retry
+              </Button>
+            }
+          >
+            {errorMessage(error)}
+          </Callout>
+        ) : (
+          <Grid min={440}>
+            {Array.from({ length: 4 }, (_, i) => (
+              <Skeleton key={i} height={262} radius={18} />
+            ))}
+          </Grid>
+        )}
+      </Section>
+      <ServiceDashboards serviceId={serviceId} />
+    </Stack>
   );
 }
 

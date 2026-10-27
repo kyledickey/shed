@@ -66,6 +66,7 @@ func (j *job) execute(ctx context.Context) error {
 	now := time.Now()
 	j.dep.StartedAt = &now
 	j.save()
+	j.started()
 	j.log.InfoContext(ctx, "deployment started", "deployment", j.dep.ID, "service", j.svc.Name, "trigger", j.dep.Trigger)
 
 	if j.waitsForCI() {

@@ -105,14 +105,60 @@ func (s *Server) deleteTelemetryData(w http.ResponseWriter, r *http.Request) err
 	return nil
 }
 
-type serviceTelemetryJSON struct {
-	Caps       observability.Caps `json:"caps"`
-	Overridden bool               `json:"overridden"`
-	Dropping   bool               `json:"dropping"`
+func (s *Server) resetDashboard(w http.ResponseWriter, r *http.Request) error {
+	if err := s.control.ResetDashboard(r.Context(), r.PathValue("uid")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
 }
 
-func toServiceTelemetryJSON(st control.ServiceTelemetry) serviceTelemetryJSON {
-	return serviceTelemetryJSON{Caps: st.Caps, Overridden: st.Overridden, Dropping: st.Dropping}
+func (s *Server) restoreDashboards(w http.ResponseWriter, r *http.Request) error {
+	if err := s.control.RestoreDashboards(r.Context()); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+type dashboardLinkJSON struct {
+	UID        string `json:"uid"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	Customized bool   `json:"customized"`
+	Outdated   bool   `json:"outdated"`
+}
+
+type serviceAlertJSON struct {
+	Name  string    `json:"name"`
+	Since time.Time `json:"since"`
+}
+
+type serviceTelemetryJSON struct {
+	Caps         observability.Caps  `json:"caps"`
+	Overridden   bool                `json:"overridden"`
+	Dropping     bool                `json:"dropping"`
+	FolderURL    string              `json:"folderUrl"`
+	Dashboards   []dashboardLinkJSON `json:"dashboards"`
+	FiringAlerts []serviceAlertJSON  `json:"firingAlerts"`
+}
+
+func toServiceTelemetryJSON(t control.ServiceTelemetry) serviceTelemetryJSON {
+	out := serviceTelemetryJSON{
+		Caps:         t.Caps,
+		Overridden:   t.Overridden,
+		Dropping:     t.Dropping,
+		FolderURL:    t.Grafana.FolderURL,
+		Dashboards:   make([]dashboardLinkJSON, 0, len(t.Grafana.Dashboards)),
+		FiringAlerts: make([]serviceAlertJSON, 0, len(t.Grafana.Alerts)),
+	}
+	for _, d := range t.Grafana.Dashboards {
+		out.Dashboards = append(out.Dashboards, dashboardLinkJSON(d))
+	}
+	for _, a := range t.Grafana.Alerts {
+		out.FiringAlerts = append(out.FiringAlerts, serviceAlertJSON{Name: a.Name, Since: a.Since})
+	}
+	return out
 }
 
 func (s *Server) getServiceTelemetry(w http.ResponseWriter, r *http.Request) error {

@@ -7,12 +7,17 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/kyledickey/shed/internal/observability"
+	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/telemetry/telemetrytest"
 )
 
@@ -122,6 +127,106 @@ func TestWebhookDeliveriesAreTracedAndCounted(t *testing.T) {
 	}
 }
 
+// fakeDashboards knows one dashboard, svc-logs-<service>, of every service,
+// and works while f.telemetry is on.
+type fakeDashboards struct {
+	telemetry *fakeTelemetry
+	resets    []string
+	restores  int
+}
+
+func (d *fakeDashboards) Refresh() {}
+
+func (d *fakeDashboards) Reset(_ context.Context, uid string) error {
+	if !d.telemetry.s.Enabled {
+		return observability.ErrDisabled
+	}
+	if !strings.HasPrefix(uid, "svc-logs-") {
+		return observability.ErrNotDashboard
+	}
+	d.resets = append(d.resets, uid)
+	return nil
+}
+
+func (d *fakeDashboards) Restore(context.Context) error {
+	if !d.telemetry.s.Enabled {
+		return observability.ErrDisabled
+	}
+	d.restores++
+	return nil
+}
+
+func (d *fakeDashboards) Service(_ context.Context, id string) (observability.ServiceDashboards, error) {
+	if !d.telemetry.s.Enabled {
+		return observability.ServiceDashboards{}, nil
+	}
+	return observability.ServiceDashboards{
+		FolderURL:  "http://localhost/grafana/dashboards/f/s-" + id + "/",
+		Dashboards: []observability.DashboardLink{{UID: "svc-logs-" + id, Title: "Logs", URL: "http://localhost/grafana/d/svc-logs-" + id, Customized: true, Outdated: true}},
+		Alerts:     []observability.Alert{{Name: "Service restarting", ServiceID: id, Since: time.Date(2026, 10, 27, 11, 0, 0, 0, time.UTC)}},
+	}, nil
+}
+
+func TestDashboardsAPI(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	reset := "/api/telemetry/dashboards/svc-logs-" + svc.ID + "/reset"
+
+	off := f.decode(f.do("GET", "/api/services/"+svc.ID+"/telemetry", ""), http.StatusOK)
+	if off["folderUrl"] != "" || len(off["dashboards"].([]any)) != 0 || len(off["firingAlerts"].([]any)) != 0 {
+		t.Errorf("service telemetry while off = %v, want it empty", off)
+	}
+	f.decode(f.do("POST", reset, ""), http.StatusConflict)
+	f.decode(f.do("POST", "/api/telemetry/dashboards/restore", ""), http.StatusConflict)
+
+	f.telemetry.enable(true)
+	got := f.decode(f.do("GET", "/api/services/"+svc.ID+"/telemetry", ""), http.StatusOK)
+	want := map[string]any{
+		"caps":       map[string]any{"spansPerSecond": 5000.0, "logsPerSecond": 2000.0, "series": 50000.0},
+		"overridden": false,
+		"dropping":   false,
+		"folderUrl":  "http://localhost/grafana/dashboards/f/s-" + svc.ID + "/",
+		"dashboards": []any{map[string]any{
+			"uid": "svc-logs-" + svc.ID, "title": "Logs", "url": "http://localhost/grafana/d/svc-logs-" + svc.ID,
+			"customized": true, "outdated": true,
+		}},
+		"firingAlerts": []any{map[string]any{"name": "Service restarting", "since": "2026-10-27T11:00:00Z"}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("GET service telemetry = %v, want %v", got, want)
+	}
+
+	if rec := f.do("POST", reset, ""); rec.Code != http.StatusNoContent {
+		t.Errorf("reset = %d %s", rec.Code, rec.Body)
+	}
+	f.decode(f.do("POST", "/api/telemetry/dashboards/someone-elses/reset", ""), http.StatusNotFound)
+	if rec := f.do("POST", "/api/telemetry/dashboards/restore", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("restore = %d %s", rec.Code, rec.Body)
+	}
+	if !slices.Equal(f.dashboards.resets, []string{"svc-logs-" + svc.ID}) || f.dashboards.restores != 1 {
+		t.Errorf("resets %v, restores %d", f.dashboards.resets, f.dashboards.restores)
+	}
+
+	page, err := f.st.AuditEvents(context.Background(), store.AuditFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actions []string
+	for _, e := range page {
+		if strings.HasPrefix(e.Action, "telemetry.dashboard") {
+			actions = append(actions, e.Action+" "+e.Outcome)
+		}
+	}
+	slices.Reverse(actions)
+	wantActions := []string{
+		"telemetry.dashboard.reset failed", "telemetry.dashboards.restore failed",
+		"telemetry.dashboard.reset ok", "telemetry.dashboard.reset failed", "telemetry.dashboards.restore ok",
+	}
+	if !slices.Equal(actions, wantActions) {
+		t.Errorf("audit = %q, want %q", actions, wantActions)
+	}
+}
+
 func TestServiceTelemetryRoutes(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
@@ -131,10 +236,10 @@ func TestServiceTelemetryRoutes(t *testing.T) {
 		code         int
 		want         string
 	}{
-		{"GET", "", http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false}`},
-		{"PUT", `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3}}`, http.StatusOK, `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3},"overridden":true,"dropping":false}`},
+		{"GET", "", http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
+		{"PUT", `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3}}`, http.StatusOK, `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3},"overridden":true,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
 		{"PUT", `{"caps":{"spansPerSecond":0,"logsPerSecond":2,"series":3}}`, http.StatusBadRequest, ""},
-		{"PUT", `{"caps":null}`, http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false}`},
+		{"PUT", `{"caps":null}`, http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
 	} {
 		w := f.do(tt.method, path, tt.body)
 		if w.Code != tt.code {

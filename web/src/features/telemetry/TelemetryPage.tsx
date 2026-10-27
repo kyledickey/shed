@@ -6,6 +6,7 @@ import {
   telemetryQuery,
   useDeleteTelemetryData,
   useRestartTelemetryComponent,
+  useRestoreDashboards,
   useSaveTelemetry,
 } from "../../api/telemetry";
 import type {
@@ -59,6 +60,7 @@ export function TelemetryPage() {
         <EnableCard telemetry={data} />
         {data.components.length > 0 && <ComponentsCard telemetry={data} />}
         {data.settings.enabled && <IngestCard telemetry={data} />}
+        {data.settings.enabled && <DashboardsCard />}
         <SettingsForm settings={data.settings} />
         <DeleteCard telemetry={data} />
       </Stack>
@@ -240,6 +242,39 @@ function IngestCard({ telemetry }: { telemetry: Telemetry }) {
             Firing since {relativeTime(a.since)}.
           </Callout>
         ))}
+      </div>
+    </LayerCard>
+  );
+}
+
+function DashboardsCard() {
+  const restore = useRestoreDashboards();
+  const toast = useToast();
+  const onRestore = () =>
+    restore.mutate(undefined, {
+      onSuccess: () => toast.add({ title: "Default dashboards restored", type: "info" }),
+      onError: (err) =>
+        toast.add({ title: "Couldn't restore", description: errorMessage(err), type: "error" }),
+    });
+  return (
+    <LayerCard
+      title={
+        <>
+          Dashboards <HelpTip topic="dashboards" />
+        </>
+      }
+    >
+      <div className={settingsStyles.section}>
+        <div className={settingsStyles.danger}>
+          <p className={settingsStyles.note}>
+            shed keeps default dashboards for itself, each project, and each service. Ones you save
+            in Grafana are left alone, and ones you delete stay deleted until you restore them.
+          </p>
+          <Button loading={restore.isPending} onClick={onRestore}>
+            <RotateCw size={14} />
+            Restore default dashboards
+          </Button>
+        </div>
       </div>
     </LayerCard>
   );

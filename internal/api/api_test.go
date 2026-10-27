@@ -199,6 +199,7 @@ type fixture struct {
 	restarts    int
 	github      *GitHubHolder
 	telemetry   *fakeTelemetry
+	dashboards  *fakeDashboards
 	grafana     *fakeGrafana
 	server      *Server
 	handler     http.Handler
@@ -220,17 +221,19 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
 	f.onePassword = &fakeOnePassword{items: make(map[string]onepassword.Item)}
 	f.telemetry = &fakeTelemetry{s: observability.DefaultSettings()}
+	f.dashboards = &fakeDashboards{telemetry: f.telemetry}
 	f.grafana = newFakeGrafana(t)
 	plane := control.New(control.Config{
-		Store:     st,
-		Deployer:  f.deployer,
-		Backups:   f.backups,
-		Metrics:   f.metrics,
-		Logs:      fakeLogs{},
-		Updates:   f.updates,
-		Variables: variables.New(st, f.onePassword),
-		Audit:     auditLog,
-		Telemetry: f.telemetry,
+		Store:      st,
+		Deployer:   f.deployer,
+		Backups:    f.backups,
+		Metrics:    f.metrics,
+		Logs:       fakeLogs{},
+		Updates:    f.updates,
+		Variables:  variables.New(st, f.onePassword),
+		Audit:      auditLog,
+		Telemetry:  f.telemetry,
+		Dashboards: f.dashboards,
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true
