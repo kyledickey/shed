@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"time"
 
@@ -72,7 +73,7 @@ func (m *Manager) enable(ctx context.Context, s Settings) error {
 	if err != nil {
 		return err
 	}
-	if err := m.step(Metrics, writeScrapeConfig(m.cfg.Dir, m.cfg.Addrs)); err != nil {
+	if err := m.step(Metrics, m.writeScrape()); err != nil {
 		return err
 	}
 	for _, c := range stores {
@@ -200,7 +201,8 @@ func (m *Manager) waitReady(ctx context.Context, timeout time.Duration, ready fu
 	}
 }
 
-// disable stops the workers, then the containers, Grafana first.
+// disable stops the workers, removes the database exporters, and stops the
+// containers, Grafana first.
 func (m *Manager) disable(ctx context.Context) error {
 	m.deactivate()
 	running, err := m.containers(ctx)
@@ -208,6 +210,12 @@ func (m *Manager) disable(ctx context.Context) error {
 		return err
 	}
 	var errs []error
+	if m.dbs != nil {
+		errs = append(errs, m.dbs.removeAll(ctx))
+		m.scrapeMu.Lock()
+		m.targets = nil
+		m.scrapeMu.Unlock()
+	}
 	for _, c := range slices.Backward(order) {
 		cur := running[c]
 		if cur == nil || cur.State == "exited" || cur.State == "created" {
@@ -250,6 +258,11 @@ func (m *Manager) DeleteData(ctx context.Context) error {
 	running, err := m.containers(ctx)
 	if err != nil {
 		return err
+	}
+	if m.dbs != nil {
+		if err := m.dbs.removeAll(ctx); err != nil {
+			return fmt.Errorf("observability: %w", err)
+		}
 	}
 	for _, c := range order {
 		if cur := running[c]; cur != nil {
@@ -300,5 +313,27 @@ func (m *Manager) Restart(ctx context.Context, c Component) error {
 	if err := m.cfg.Docker.Restart(ctx, cur.ID, stopTimeout); err != nil {
 		return fmt.Errorf("observability: %w", err)
 	}
+	return nil
+}
+
+// writeScrape writes scrape.yaml with the current exporters.
+func (m *Manager) writeScrape() error {
+	m.scrapeMu.Lock()
+	defer m.scrapeMu.Unlock()
+	return writeScrapeConfig(m.cfg.Dir, m.cfg.Addrs, m.targets)
+}
+
+// setTargets makes targets the exporters scrape.yaml names, rewriting it
+// if they changed. VictoriaMetrics notices within its config check interval.
+func (m *Manager) setTargets(targets []scrapeTarget) error {
+	m.scrapeMu.Lock()
+	defer m.scrapeMu.Unlock()
+	if reflect.DeepEqual(targets, m.targets) {
+		return nil
+	}
+	if err := writeScrapeConfig(m.cfg.Dir, m.cfg.Addrs, targets); err != nil {
+		return err
+	}
+	m.targets = targets
 	return nil
 }

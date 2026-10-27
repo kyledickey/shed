@@ -202,26 +202,9 @@ func run() error {
 	newGrafana := func(password string) *grafana.Client {
 		return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
 	}
-	stack := observability.New(observability.Config{
-		Store:   st,
-		Docker:  dc,
-		Metrics: vm,
-		Logs:    vl,
-		Traces:  vt,
-		Grafana: func(password string) observability.GrafanaAPI { return newGrafana(password) },
-		Addrs: observability.Addrs{
-			Metrics: cfg.Telemetry.MetricsAddr,
-			Logs:    cfg.Telemetry.LogsAddr,
-			Traces:  cfg.Telemetry.TracesAddr,
-			Grafana: cfg.Telemetry.GrafanaAddr,
-		},
-		Dir:          filepath.Join(dataDir, "telemetry"),
-		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
-		GrafanaURL:   grafanaURL,
-		OTLPEndpoint: otlpEndpoint,
-		Log:          log,
-	})
-
+	// The stack is built after the deployer, which asks it at deploy time
+	// and which it redeploys databases with.
+	var stack *observability.Manager
 	dashboards := observability.NewDashboards(observability.DashboardsConfig{
 		Store: st,
 		Grafana: func(ctx context.Context) (observability.DashboardAPI, error) {
@@ -234,7 +217,6 @@ func run() error {
 		GrafanaURL: grafanaURL,
 		Log:        log,
 	})
-	stack.AddWorker(dashboards.Run)
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
@@ -268,6 +250,29 @@ func run() error {
 		Log:          log,
 	})
 	defer deployer.Stop()
+
+	stack = observability.New(observability.Config{
+		Store:   st,
+		Docker:  dc,
+		Metrics: vm,
+		Logs:    vl,
+		Traces:  vt,
+		Grafana: func(password string) observability.GrafanaAPI { return newGrafana(password) },
+		Addrs: observability.Addrs{
+			Metrics: cfg.Telemetry.MetricsAddr,
+			Logs:    cfg.Telemetry.LogsAddr,
+			Traces:  cfg.Telemetry.TracesAddr,
+			Grafana: cfg.Telemetry.GrafanaAddr,
+		},
+		Dir:          filepath.Join(dataDir, "telemetry"),
+		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
+		GrafanaURL:   grafanaURL,
+		OTLPEndpoint: otlpEndpoint,
+		Databases:    st,
+		Redeployer:   deployer,
+		Log:          log,
+	})
+	stack.AddWorker(dashboards.Run)
 
 	backups := backup.New(backup.Config{
 		Store:    st,

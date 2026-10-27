@@ -308,6 +308,11 @@ func (d *Deployer) Deploy(ctx context.Context, serviceID string, trigger store.T
 // if the deployment has no image to reuse, and ErrImageUnavailable if its
 // image is no longer on this host.
 func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error) {
+	return d.RedeployAs(ctx, deploymentID, store.TriggerRedeploy)
+}
+
+// RedeployAs is Redeploy with the deployment recorded under trigger.
+func (d *Deployer) RedeployAs(ctx context.Context, deploymentID string, trigger store.Trigger) (store.Deployment, error) {
 	old, err := d.store.Deployment(ctx, deploymentID)
 	if err != nil {
 		return store.Deployment{}, err
@@ -322,7 +327,7 @@ func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Dep
 	}
 	return d.enqueue(ctx, store.Deployment{
 		ServiceID:     old.ServiceID,
-		Trigger:       store.TriggerRedeploy,
+		Trigger:       trigger,
 		CommitSHA:     old.CommitSHA,
 		CommitMessage: old.CommitMessage,
 		CommitAuthor:  old.CommitAuthor,

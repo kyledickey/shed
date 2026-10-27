@@ -1111,8 +1111,8 @@ read-only (the directory rather than the file, so a config replaced by rename
 reaches the container), and their files are made world-readable whatever
 shed's umask, since Grafana runs as uid 472. Grafana 13 is OOM-killed at
 256 MiB while it installs its plugins on first start, hence 512 MiB; it idles
-near 300 MiB. Until the database exporters exist, `scrape.yaml` scrapes the
-three stores' own `/metrics` with shed's labels.
+near 300 MiB. `scrape.yaml` scrapes the three stores' own `/metrics` with
+shed's labels and the database exporters (see [Databases](#databases)).
 
 Flags derived from settings:
 
@@ -1457,42 +1457,73 @@ them.
 
 ### Databases
 
-While telemetry is on, every database service with an active deployment gets
-an exporter container `shed-exp-<serviceID>` on its project network (no alias,
-label `shed.exporter=<serviceID>`, 0.1 CPU, 64 MiB, restart `unless-stopped`).
-It connects to `<service name>:<port>` with credentials from the database's
-resolved variables, passed as environment variables:
+While telemetry is on, every database service with an active deployment, that
+is not stopped and recorded its resolved variables, gets an exporter container
+`shed-exp-<serviceID>` on its project network (no alias, label
+`shed.exporter=<serviceID>`, label `shed.exporter.spec` with the hash of its
+spec, 0.1 CPU, 64 MiB, restart `unless-stopped`). It connects to
+`<service name>:<port>` with credentials from the variables the active
+deployment runs with (`DeploymentRuntime.Env`), passed as environment variables
+and never as arguments. A worker registered with the Manager reconciles the
+exporters every 10 s: it creates the missing ones (pulling the image first),
+recreates one whose spec changed, starts one that exited, and removes one
+whose database is deleted, stopped, or has no active deployment. The Manager
+also removes every exporter when telemetry is disabled.
 
-| Kind | Exporter | Notable collectors |
-|---|---|---|
-| postgres | `prometheuscommunity/postgres-exporter` | `stat_statements` (off by default; with `--collector.stat_statements.include_query` for query text), `database`, `locks`, `stat_bgwriter` |
-| mysql | `prom/mysqld-exporter` | `perf_schema.eventsstatements` (per digest; `eventsstatementssum` only has grand totals), `info_schema.innodb_metrics` |
-| mongo | `percona/mongodb_exporter` | `--collect-all` |
-| redis | `oliver006/redis_exporter` | slowlog, keyspace, memory |
+| Kind | Exporter (pinned tag@digest) | Flags | Credentials (env) |
+|---|---|---|---|
+| postgres | `prometheuscommunity/postgres-exporter:v0.20.1` | `--collector.stat_statements --collector.stat_statements.include_query`, only when the database was started with `pg_stat_statements` preloaded | `DATA_SOURCE_URI` (`<target>/<POSTGRES_DB>?sslmode=disable`), `DATA_SOURCE_USER`, `DATA_SOURCE_PASS` |
+| mysql | `prom/mysqld-exporter:v0.21.0` | `--mysqld.address=<target> --mysqld.username=root --collect.perf_schema.eventsstatements --collect.info_schema.innodb_metrics` | `MYSQLD_EXPORTER_PASSWORD` (`MYSQL_ROOT_PASSWORD`) |
+| mongo | `percona/mongodb_exporter:0.54.0` | `--collect-all` | `MONGODB_URI` (`mongodb://<user>:<password>@<target>/admin`) |
+| redis | `oliver006/redis_exporter:v1.96.0` | none (slowlog, keyspace, and memory are default) | `REDIS_ADDR`, `REDIS_PASSWORD` |
 
-The exporter is recreated when its spec (image, target, credentials) changes
-and removed with the database, when the database stops, or when telemetry is
-off. shed rewrites `scrape.yaml` with a static target per exporter
-(`<container address>:<port>`, scrape interval 15 s, `shed.*` labels) whenever
-exporters change. It also scrapes the three stores' own `/metrics` (labels of
-shed itself), which the Telemetry dashboard reads for store disk use
-(`vm_data_size_bytes`, `vl_data_size_bytes`, `vt_data_size_bytes`).
+The default collectors supply the rest (postgres `stat_database`, `locks`,
+`stat_bgwriter`, `wal`; mysql `global_status`; redis slowlog). The exporter
+for a postgres database started without the statistics arguments omits the
+`stat_statements` flags, so that a failing collector does not mark every
+scrape failed; it is recreated after the telemetry redeploy.
+`perf_schema.eventsstatementssum` only has grand totals, so mysql uses
+`eventsstatements` (per digest).
 
-Query statistics are part of each database template's start arguments:
+The Manager owns `scrape.yaml`: a job `shed-telemetry` scrapes the three
+stores' own `/metrics` (labels of shed itself), which the Telemetry dashboard
+reads for store disk use (`vm_data_size_bytes`, `vl_data_size_bytes`,
+`vt_data_size_bytes`), and a job `shed-exporters` has one static config per
+exporter: target `<exporter address on the project network>:<exporter port>`
+(9187, 9104, 9216, 9121), scrape interval 15 s, and the labels
+`shed_project_id`, `shed_project_name`, `shed_service_id`, `shed_service_name`,
+`shed_service_kind`, `shed_deployment_id`, and `shed_source=exporter`. The
+worker hands the Manager the targets whenever they change, and the Manager
+rewrites the file atomically (rename) under the same lock that enable uses,
+so a reconciliation never drops them. VictoriaMetrics notices the new file
+within `-promscrape.configCheckInterval` (10 s). The host's firewall only
+needs to allow the host to reach container addresses, which it does.
 
-- postgres: `shared_preload_libraries=pg_stat_statements`,
-  `pg_stat_statements.track=all`, `log_min_duration_statement=250`; after each
-  activation shed runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` in
-  `POSTGRES_DB`.
-- mysql: `--performance-schema=ON`, `--slow-query-log=ON`,
-  `--long-query-time=0.25`, `--slow-query-log-file=/dev/stderr`.
+Query statistics are part of each database template's start arguments
+(`catalog.Template.Cmd`), whether or not telemetry is on:
+
+- postgres: `-c shared_preload_libraries=pg_stat_statements -c
+  pg_stat_statements.track=all -c log_min_duration_statement=250`; after each
+  activation the worker runs `CREATE EXTENSION IF NOT EXISTS
+  pg_stat_statements` in `POSTGRES_DB` through `docker exec` (once per
+  deployment, retried until it succeeds).
+- mysql: `--performance-schema=ON --slow-query-log=ON --long-query-time=0.25`.
+  mysqld cannot log to `/dev/stderr` or a pipe ("Could not use /dev/stderr for
+  logging" and it turns the log off), so the start command is a script that
+  writes the log to `/tmp/slow.log`, copies it to stderr with `tail -F`, and
+  empties it once it passes 10 MiB, then `exec`s the image entrypoint.
 - mongo: `--profile=1 --slowms=250`.
-- redis: `--slowlog-log-slower-than 250000`.
+- redis: `--slowlog-log-slower-than 250000` after the existing arguments.
 
-Slow-query lines reach the logs through container log shipping. When
-telemetry is enabled, each database whose active deployment was started
-without these arguments is redeployed once, one at a time, as a deployment
-with trigger `telemetry`.
+Slow-query lines reach the logs through container log shipping. Each time
+telemetry is activated (enabled, or at boot while enabled), the worker
+redeploys, one at a time, each database whose active deployment was started
+without these arguments, as a deployment with trigger `telemetry`. "Started
+without" means the active deployment's recorded `Runtime.Cmd` differs from the
+template's `Cmd`. It reuses the deployment's image (`Deployer.RedeployAs`), so
+the database does not change version. A database with a stopped service or a
+start command of its own is skipped, and a failed redeployment is logged and
+leaves the previous deployment running.
 
 ### Folders and dashboards
 

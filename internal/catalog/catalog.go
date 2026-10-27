@@ -15,6 +15,8 @@ type Template struct {
 	// MountPath is where the persistent volume is mounted.
 	MountPath string
 	// Cmd overrides the image's default command. Nil keeps the default.
+	// Every template's command turns on query statistics and the slow query
+	// log, which telemetry reads.
 	Cmd []string
 	// Vars returns fresh default variables, including newly generated
 	// passwords. Values may contain ${{ }} references.
@@ -30,6 +32,11 @@ var templates = []Template{
 		// PostgreSQL 18 images keep data in a version-specific directory
 		// under /var/lib/postgresql, so the volume must cover the parent.
 		MountPath: "/var/lib/postgresql",
+		Cmd: []string{
+			"-c", "shared_preload_libraries=pg_stat_statements",
+			"-c", "pg_stat_statements.track=all",
+			"-c", "log_min_duration_statement=250",
+		},
 		Vars: func() map[string]string {
 			return map[string]string{
 				"POSTGRES_USER":     "postgres",
@@ -44,6 +51,7 @@ var templates = []Template{
 		Image:     "mysql:9",
 		Port:      3306,
 		MountPath: "/var/lib/mysql",
+		Cmd:       []string{"sh", "-c", mysqlScript},
 		Vars: func() map[string]string {
 			return map[string]string{
 				"MYSQL_ROOT_PASSWORD": password(),
@@ -58,6 +66,7 @@ var templates = []Template{
 		Image:     "mongo:8",
 		Port:      27017,
 		MountPath: "/data/db",
+		Cmd:       []string{"--profile=1", "--slowms=250"},
 		Vars: func() map[string]string {
 			return map[string]string{
 				"MONGO_INITDB_ROOT_USERNAME": "mongo",
@@ -73,7 +82,7 @@ var templates = []Template{
 		MountPath: "/data",
 		Cmd: []string{
 			"sh", "-c",
-			`exec redis-server --requirepass "$REDIS_PASSWORD" --appendonly yes`,
+			`exec redis-server --requirepass "$REDIS_PASSWORD" --appendonly yes --slowlog-log-slower-than 250000`,
 		},
 		Vars: func() map[string]string {
 			return map[string]string{
@@ -83,6 +92,16 @@ var templates = []Template{
 		},
 	},
 }
+
+// mysqlScript starts MySQL with the slow query log on. mysqld cannot log to
+// /dev/stderr or a pipe, only to a regular file, so a tail copies the file to
+// the container's stderr, where the logs pipeline reads it, and the file is
+// emptied once it passes 10 MiB.
+const mysqlScript = `f=/tmp/slow.log
+: >$f && chown mysql:mysql $f
+tail -F $f >&2 &
+(while sleep 60; do [ "$(stat -c %s $f)" -gt 10485760 ] && : >$f; done) &
+exec docker-entrypoint.sh mysqld --performance-schema=ON --slow-query-log=ON --long-query-time=0.25 --slow-query-log-file=$f`
 
 // Lookup returns the template for kind.
 func Lookup(kind string) (Template, bool) {
