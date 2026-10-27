@@ -59,7 +59,7 @@ type installationToken struct {
 }
 
 // New returns a Client for app. A nil httpClient means a client with a
-// 30-second timeout. The client is never modified.
+// 30-second timeout whose requests are traced. The client is never modified.
 func New(app App, httpClient *http.Client) (*Client, error) {
 	key, err := jwt.ParseRSAPrivateKeyFromPEM(app.PrivateKey)
 	if err != nil {
@@ -97,7 +97,7 @@ func (c *Client) Lookup(ctx context.Context) (slug, clientID string, err error) 
 
 func orDefault(hc *http.Client) *http.Client {
 	if hc == nil {
-		return &http.Client{Timeout: 30 * time.Second}
+		return &http.Client{Timeout: 30 * time.Second, Transport: tracedTransport(http.DefaultTransport)}
 	}
 	return hc
 }

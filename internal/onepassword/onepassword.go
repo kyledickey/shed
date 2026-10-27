@@ -339,10 +339,11 @@ func (c *Client) client(ctx context.Context, token string) (api, error) {
 	if a, ok := c.clients[token]; ok {
 		return a, nil
 	}
-	a, err := c.open(ctx, token)
+	a, err := traced(ctx, "sign in", func(ctx context.Context) (api, error) { return c.open(ctx, token) })
 	var limited *sdk.RateLimitExceededError
 	switch {
 	case err == nil:
+		a = tracedAPI{a}
 		c.clients[token] = a
 		return a, nil
 	case ctx.Err() != nil, errors.As(err, &limited):
