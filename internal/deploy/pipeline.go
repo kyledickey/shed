@@ -8,11 +8,12 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/store"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // errCIFailed marks a deployment skipped because its commit failed CI.

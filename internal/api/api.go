@@ -18,6 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
@@ -28,8 +31,6 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/internal/variables"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/metric"
 )
 
 // Control carries out the operations behind the API. *control.Plane
