@@ -3,12 +3,9 @@ package control
 import (
 	"context"
 	"errors"
-	"io"
 	"maps"
-	"slices"
 
 	"github.com/kyledickey/shed/internal/audit"
-	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/update"
@@ -51,22 +48,13 @@ func (p *Plane) HostMetrics(ctx context.Context, rng string) (metrics.HostSeries
 // MaxLogLines, with the saved values of every service's variables masked.
 func (p *Plane) ShedLog(ctx context.Context, n int) ([]string, error) {
 	lines := p.logs.Lines(logLines(n))
-	services, err := p.store.AllServices(ctx)
+	mask, err := p.ShedMask(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var values []string
-	for _, svc := range services {
-		vars, err := p.store.Variables(ctx, svc.ID)
-		if err != nil {
-			return nil, err
-		}
-		values = slices.AppendSeq(values, maps.Values(vars))
-	}
-	redactor := build.NewRedactor(io.Discard, values)
 	out := make([]string, len(lines))
 	for i, l := range lines {
-		out[i] = redactor.Redact(l)
+		out[i] = mask(l)
 	}
 	return out, nil
 }

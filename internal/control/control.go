@@ -96,6 +96,7 @@ type Deployer interface {
 	BuildLog(ctx context.Context, deploymentID string, n int) ([]string, error)
 	RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error
 	ResolveVariables(ctx context.Context, serviceID string) (deploy.Resolved, error)
+	RuntimeSecrets(ctx context.Context, dep store.Deployment) ([]string, error)
 }
 
 var _ Deployer = (*deploy.Deployer)(nil)

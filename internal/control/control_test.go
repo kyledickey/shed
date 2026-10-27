@@ -149,6 +149,16 @@ func (f *fakeDeployer) RuntimeLogs(_ context.Context, _ string, _ int, follow bo
 func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
 	return f.resolved, f.resolveErr
 }
+func (f *fakeDeployer) RuntimeSecrets(_ context.Context, dep store.Deployment) ([]string, error) {
+	if dep.Runtime == nil {
+		return nil, nil
+	}
+	var values []string
+	for _, k := range dep.Runtime.SecretKeys {
+		values = append(values, dep.Runtime.Env[k])
+	}
+	return values, nil
+}
 
 // fakeBackups records pauses and the deletions they cover.
 type fakeBackups struct {
