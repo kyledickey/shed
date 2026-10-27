@@ -2,9 +2,11 @@ import { Diagram, Edge, Node, Note, Zone } from "../../diagram";
 
 /** Packages that control drives, below it. */
 const driven = [
-  { x: 230, title: "deploy", sub: "7 leaf packages" },
-  { x: 420, title: "metrics", sub: "docker host store" },
-  { x: 610, title: "backup", sub: "docker store" },
+  { x: 230, title: "deploy", sub: "8 leaf packages" },
+  { x: 342, title: "metrics", sub: "4 leaf packages" },
+  { x: 454, title: "backup", sub: "3 leaf packages" },
+  { x: 566, title: "variables", sub: "2 leaf packages" },
+  { x: 678, title: "observability", sub: "9 leaf packages" },
 ];
 
 const leaves = [
@@ -20,12 +22,18 @@ const leaves = [
   "config",
   "logtail",
   "update",
+  "firewall",
+  "telemetry",
+  "otlp",
+  "victoria",
+  "grafana",
+  "onepassword",
 ];
 
 /** DependencyDiagram shows which internal packages import which. */
 export function DependencyDiagram() {
   return (
-    <Diagram width={800} height={440} label="Which internal packages import which">
+    <Diagram width={800} height={494} label="Which internal packages import which">
       <Node
         x={10}
         y={8}
@@ -86,19 +94,19 @@ export function DependencyDiagram() {
       />
       {driven.map((c) => (
         <g key={c.title}>
-          <Node x={c.x} y={176} w={150} h={44} title={c.title} sub={c.sub} />
+          <Node x={c.x} y={176} w={104} h={44} title={c.title} sub={c.sub} />
           <Edge
             points={[
               [495, 132],
               [495, 154],
-              [c.x + 75, 154],
-              [c.x + 75, 176],
+              [c.x + 52, 154],
+              [c.x + 52, 176],
             ]}
           />
           <Edge
             points={[
-              [c.x + 75, 220],
-              [c.x + 75, 250],
+              [c.x + 52, 220],
+              [c.x + 52, 250],
             ]}
           />
         </g>
@@ -107,19 +115,19 @@ export function DependencyDiagram() {
         x={10}
         y={250}
         w={780}
-        h={150}
+        h={204}
         label="leaf packages · import nothing from internal/"
         tone="grass"
       />
       {leaves.map((name, i) => {
-        const row = i < 6 ? 0 : 1;
-        const col = i < 6 ? i : i - 6;
+        const row = Math.floor(i / 6);
+        const col = i % 6;
         return (
           <Node key={name} x={24 + col * 126} y={282 + row * 54} w={110} h={40} title={name} />
         );
       })}
-      <Note x={400} y={424} anchor="middle">
-        api, control, and mcp also import audit, store, github, update, and other leaf packages.
+      <Note x={400} y={478} anchor="middle">
+        api, control, and mcp also import audit, observability, store, and other leaf packages.
       </Note>
     </Diagram>
   );

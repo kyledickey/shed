@@ -131,15 +131,15 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/grafana` | Grafana container config, provisioning files, HTTP API (folders, dashboards, annotations, alerts), dashboard templates | — |
 | `internal/onepassword` | 1Password vault and item operations with a service account token (official Go SDK) | — |
 | `internal/variables` | where services' variables live: shed.db, or one 1Password item per service while connected; connecting and disconnecting | interfaces only + store/onepassword types |
-| `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
-| `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
-| `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
+| `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker/telemetry types |
+| `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars/telemetry types |
+| `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store/victoria types |
 | `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
-| `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/host/proxy/telemetry types |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability types |
-| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/deploy/github/metrics/update/store/audit |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/audit/observability |
+| `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/firewall/proxy/telemetry types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability/grafana/victoria types |
+| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/github/metrics/update/store/audit/observability/victoria |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/onepassword/audit/observability |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -1921,10 +1921,14 @@ JSON cannot carry NaN or infinity, so `query_metrics` encodes them as `null`
 (a series' values are `[unix seconds, number | null]`). VictoriaMetrics itself drops NaN points from results (`0/0` answers an empty series), so `null` shows up only for infinities and for NaN a store does return. A range query's
 `step` is raised to the larger of 1 s and what keeps it within 500 points;
 the result's `stepSeconds` says which was used. `top_queries` reads
-`pg_stat_statements_{calls,seconds,rows}_total` (Postgres, by `query`) or
+`pg_stat_statements_{calls,seconds,rows}_total` (Postgres, keyed by
+`queryid` and joined with `pg_stat_statements_query_id{queryid, query}`,
+which `--collector.stat_statements.include_query` adds, for the text) or
 `mysql_perf_schema_events_statements_{total,seconds_total,rows_sent_total}`
-(MySQL, by `digest_text`) summed per statement for the service; other kinds
-are rejected. `slow_requests` reads the `shed.source=edge` records (`duration`
+(MySQL, by `digest_text`), summed per statement text for the service; other
+kinds are rejected. `list_dashboards` lists Grafana's dashboards through the
+dashboards worker, which marks shed's defaults `customized` or `outdated`
+from its `grafana_dashboards` records. `slow_requests` reads the `shed.source=edge` records (`duration`
 in seconds) with `quantile` and `sort by (duration desc)`. `search_traces`
 with a `service_id` filters on the resource attribute `shed.service.id` (Jaeger tag `resource_attr:shed.service.id`) and, since the Jaeger API searches one service name at a time, asks about each known service (at most 50).
 
