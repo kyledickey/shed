@@ -200,7 +200,7 @@ func appHTTP(b *board, id string) {
 func appTraces(b *board, id string) {
 	s := eq("shed_service_id", id)
 	count := sel("shed_span_duration_seconds_count", s)
-	b.metricVar("service_name", "service.name", count, false)
+	b.metricVar("service_name", "service_name", count, false)
 
 	b.add(12, 8, timeseries("Span rate by name", "ops",
 		metric(fmt.Sprintf("topk(10, sum by (span_name) (%s))", rate(count)), "{{span_name}}")))

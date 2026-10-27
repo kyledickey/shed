@@ -123,6 +123,13 @@ func TestUnfilteredMetrics(t *testing.T) {
 	}
 }
 
+var (
+	labelValues = regexp.MustCompile(`^label_values\(.*, *([^,]+)\)$`)
+	// labelName is what a stored metric label looks like: VictoriaMetrics
+	// turns the dots of OTLP attribute names into underscores.
+	labelName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+)
+
 func TestTemplates(t *testing.T) {
 	known := map[datasourceRef]bool{metricsDS: true, logsDS: true, tracesDS: true}
 	seen := map[string]bool{}
@@ -158,6 +165,9 @@ func TestTemplates(t *testing.T) {
 				for _, v := range m.Templating.List {
 					if v.Type == "query" && sc.metrics != "" && len(unfilteredMetrics(v.Definition, sc.metrics)) > 0 {
 						t.Errorf("%s: variable query %q is not filtered by %s", d.UID, v.Definition, sc.metrics)
+					}
+					if m := labelValues.FindStringSubmatch(v.Definition); m != nil && !labelName.MatchString(m[1]) {
+						t.Errorf("%s: variable query %q reads %q, not a metric label name", d.UID, v.Definition, m[1])
 					}
 				}
 				checkLayout(t, d.UID, m)

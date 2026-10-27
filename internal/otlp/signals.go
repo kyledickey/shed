@@ -111,6 +111,7 @@ func (h *Handler) traces(ctx context.Context, req *coltracepb.ExportTraceService
 
 		mask := h.masker(src)
 		rs.Resource = stamp(rs.Resource, src, mask)
+		serviceName, _ := Attrs{rs.Resource.Attributes}.Lookup(serviceNameKey)
 		for _, ss := range rs.ScopeSpans {
 			maskAttrs(ss.Scope.GetAttributes(), mask)
 			for _, span := range ss.Spans {
@@ -126,10 +127,11 @@ func (h *Handler) traces(ctx context.Context, req *coltracepb.ExportTraceService
 				}
 				if span.Kind == tracepb.Span_SPAN_KIND_SERVER || span.Kind == tracepb.Span_SPAN_KIND_CONSUMER {
 					o.spans = append(o.spans, spanSample{
-						serviceID: src.ServiceID,
-						name:      span.Name,
-						status:    span.GetStatus().GetCode(),
-						seconds:   spanSeconds(span),
+						src:         src,
+						serviceName: serviceName,
+						name:        span.Name,
+						status:      span.GetStatus().GetCode(),
+						seconds:     spanSeconds(span),
 					})
 				}
 			}

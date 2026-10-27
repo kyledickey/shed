@@ -1351,8 +1351,10 @@ live in `telemetry_caps`; the gateway reloads them and the default caps every
 
 Span metrics: for spans of kind server or consumer the gateway records
 `shed_span_duration_seconds` (histogram) labeled with the service's `shed.*`
-labels, `service_name` (the span's `service.name`), `span_name` (at most 200
-names per service, the rest `other`), and `status_code` (`unset`, `ok`, or
+labels (project and service IDs, names, and kind), `service_name` (the
+`service.name` of the span's resource, masked; at most 20 per service, the
+rest `other`), `span_name` (at most 200 names per service, the rest `other`),
+and `status_code` (`unset`, `ok`, or
 `error`). These drive the Traces dashboards, whose trace search takes its
 `service.name` from `service_name`. Span metrics and
 `shed_telemetry_ingested_total` are recorded only once the store accepted the

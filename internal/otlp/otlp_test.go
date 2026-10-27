@@ -1005,9 +1005,14 @@ func TestSpanMetrics(t *testing.T) {
 			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
 				name, _ := dp.Attributes.Value("span_name")
 				status, _ := dp.Attributes.Value("status_code")
-				svc, _ := dp.Attributes.Value("shed_service_id")
-				if svc.AsString() != app.ServiceID {
-					t.Errorf("shed_service_id = %q", svc.AsString())
+				for k, want := range map[attribute.Key]string{
+					"shed_project_id": app.ProjectID, "shed_project_name": app.ProjectName,
+					"shed_service_id": app.ServiceID, "shed_service_name": app.ServiceName,
+					"shed_service_kind": app.ServiceKind, "service_name": "checkout",
+				} {
+					if got, _ := dp.Attributes.Value(k); got.AsString() != want {
+						t.Errorf("%s = %q, want %q", k, got.AsString(), want)
+					}
 				}
 				counts[name.AsString()] += dp.Count
 				if status.AsString() != "unset" {
@@ -1033,6 +1038,44 @@ func TestSpanMetrics(t *testing.T) {
 	}
 	if fmt.Sprint(statuses) != "[span 0=error]" {
 		t.Errorf("non-unset statuses = %v", statuses)
+	}
+}
+
+func TestSpanMetricsServiceNames(t *testing.T) {
+	f := newFixture(t, func(c *otlp.Config) {
+		c.Mask = func(otlp.Source) func(string) string {
+			return func(s string) string { return strings.ReplaceAll(s, "hunter2", "***") }
+		}
+	})
+	req := &coltracepb.ExportTraceServiceRequest{}
+	for i := range 25 {
+		rs := spans("GET /").ResourceSpans[0]
+		rs.Resource.Attributes = []*commonpb.KeyValue{str("service.name", fmt.Sprintf("svc %d hunter2", i))}
+		req.ResourceSpans = append(req.ResourceSpans, rs)
+	}
+	if w := f.post("/v1/traces", req); w.Code != 200 {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var rm metricdata.ResourceMetrics
+	if err := f.reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]uint64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != "shed_span_duration_seconds" {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+				v, _ := dp.Attributes.Value("service_name")
+				counts[v.AsString()] += dp.Count
+			}
+		}
+	}
+	// The first 20 names keep their own label, masked; the other 5 share
+	// "other".
+	if len(counts) != 21 || counts["other"] != 5 || counts["svc 0 ***"] != 1 {
+		t.Errorf("service_name counts = %v", counts)
 	}
 }
 

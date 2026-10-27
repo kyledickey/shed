@@ -16,10 +16,12 @@ const (
 	// sweepEvery bounds how often a full series set is scanned for
 	// expired entries.
 	sweepEvery = time.Minute
-	// maxSpanNames is the number of span names per service that span
-	// metrics label by name; later names become otherSpanName.
-	maxSpanNames  = 200
-	otherSpanName = "other"
+	// maxSpanNames and maxServiceNames are the number of span names and
+	// sender service.names per service that span metrics label by name;
+	// later names become otherName.
+	maxSpanNames    = 200
+	maxServiceNames = 20
+	otherName       = "other"
 )
 
 // service is the per-service state behind caps and span metrics. It is
@@ -30,7 +32,8 @@ type service struct {
 	// never holds more entries than the series cap.
 	series map[uint64]time.Time
 	swept  time.Time
-	names  map[string]bool
+	// spanNames and serviceNames are the names span metrics label by.
+	spanNames, serviceNames map[string]bool
 }
 
 // bucket is a token bucket holding at most one second's worth of tokens.
@@ -84,19 +87,18 @@ func (s *service) admit(now time.Time, limit int, h uint64) bool {
 	return true
 }
 
-// spanName returns name, or otherSpanName once the service has
-// maxSpanNames other names.
-func (s *service) spanName(name string) string {
-	if s.names[name] {
+// capped returns name, or otherName once names holds max other names.
+func capped(names *map[string]bool, name string, max int) string {
+	if (*names)[name] {
 		return name
 	}
-	if len(s.names) >= maxSpanNames {
-		return otherSpanName
+	if len(*names) >= max {
+		return otherName
 	}
-	if s.names == nil {
-		s.names = map[string]bool{}
+	if *names == nil {
+		*names = map[string]bool{}
 	}
-	s.names[name] = true
+	(*names)[name] = true
 	return name
 }
 
@@ -112,10 +114,12 @@ func (h *Handler) service(serviceID string) *service {
 
 // spanSample is one span to record in shed_span_duration_seconds.
 type spanSample struct {
-	serviceID string
-	name      string
-	status    tracepb.Status_StatusCode
-	seconds   float64
+	src Source
+	// serviceName is the service.name of the span's resource, masked.
+	serviceName string
+	name        string
+	status      tracepb.Status_StatusCode
+	seconds     float64
 }
 
 var statusCodes = map[tracepb.Status_StatusCode]string{
@@ -130,7 +134,10 @@ func (h *Handler) recordSpans(ctx context.Context, samples []spanSample) {
 	}
 	h.mu.Lock()
 	for i := range samples {
-		samples[i].name = h.service(samples[i].serviceID).spanName(samples[i].name)
+		s := &samples[i]
+		svc := h.service(s.src.ServiceID)
+		s.name = capped(&svc.spanNames, s.name, maxSpanNames)
+		s.serviceName = capped(&svc.serviceNames, s.serviceName, maxServiceNames)
 	}
 	h.mu.Unlock()
 	for _, s := range samples {
@@ -139,7 +146,12 @@ func (h *Handler) recordSpans(ctx context.Context, samples []spanSample) {
 			status = "unset"
 		}
 		h.duration.Record(ctx, s.seconds, metric.WithAttributes(
-			attribute.String("shed_service_id", s.serviceID),
+			attribute.String("shed_project_id", s.src.ProjectID),
+			attribute.String("shed_project_name", s.src.ProjectName),
+			attribute.String("shed_service_id", s.src.ServiceID),
+			attribute.String("shed_service_name", s.src.ServiceName),
+			attribute.String("shed_service_kind", s.src.ServiceKind),
+			attribute.String("service_name", s.serviceName),
 			attribute.String("span_name", s.name),
 			attribute.String("status_code", status),
 		))
