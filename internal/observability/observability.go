@@ -75,6 +75,7 @@ type GrafanaAPI interface {
 	EnsureFolder(ctx context.Context, f grafana.Folder) error
 	ReloadAlertRules(ctx context.Context) error
 	FiringAlerts(ctx context.Context) ([]grafana.Alert, error)
+	SearchDashboards(ctx context.Context, q grafana.SearchQuery) ([]grafana.DashboardHit, error)
 }
 
 var _ GrafanaAPI = (*grafana.Client)(nil)

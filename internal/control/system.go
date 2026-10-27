@@ -51,6 +51,21 @@ func (p *Plane) HostMetrics(ctx context.Context, rng string) (metrics.HostSeries
 // MaxLogLines, with the saved values of every service's variables masked.
 func (p *Plane) ShedLog(ctx context.Context, n int) ([]string, error) {
 	lines := p.logs.Lines(logLines(n))
+	values, err := p.variableValues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	redactor := build.NewRedactor(io.Discard, values)
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = redactor.Redact(l)
+	}
+	return out, nil
+}
+
+// variableValues returns the saved values of every service's variables, the
+// set that shed's own log and the stored telemetry are masked with.
+func (p *Plane) variableValues(ctx context.Context) ([]string, error) {
 	services, err := p.store.AllServices(ctx)
 	if err != nil {
 		return nil, err
@@ -63,12 +78,7 @@ func (p *Plane) ShedLog(ctx context.Context, n int) ([]string, error) {
 		}
 		values = slices.AppendSeq(values, maps.Values(vars))
 	}
-	redactor := build.NewRedactor(io.Discard, values)
-	out := make([]string, len(lines))
-	for i, l := range lines {
-		out[i] = redactor.Redact(l)
-	}
-	return out, nil
+	return values, nil
 }
 
 // FollowShedLog calls emit with the kept lines of shed's own log, then with

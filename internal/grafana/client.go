@@ -176,11 +176,13 @@ type SearchQuery struct {
 
 // DashboardHit is one search result.
 type DashboardHit struct {
-	UID       string   `json:"uid"`
-	Title     string   `json:"title"`
-	URL       string   `json:"url"`
-	FolderUID string   `json:"folderUid"`
-	Tags      []string `json:"tags"`
+	UID       string `json:"uid"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	FolderUID string `json:"folderUid"`
+	// FolderTitle is the title of the folder; empty at the root.
+	FolderTitle string   `json:"folderTitle"`
+	Tags        []string `json:"tags"`
 }
 
 // SearchDashboards returns the dashboards matching q.

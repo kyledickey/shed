@@ -188,6 +188,9 @@ type Config struct {
 	Variables Variables
 	Audit     Audit
 	Telemetry Telemetry
+	// Stores answer telemetry queries; they are not asked while telemetry
+	// is off.
+	Stores TelemetryStores
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -210,6 +213,7 @@ type Plane struct {
 	variables     Variables
 	audit         Audit
 	telemetry     Telemetry
+	stores        TelemetryStores
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -234,6 +238,7 @@ func New(cfg Config) *Plane {
 		variables:  cfg.Variables,
 		audit:      cfg.Audit,
 		telemetry:  cfg.Telemetry,
+		stores:     cfg.Stores,
 		baseDomain: strings.ToLower(cfg.BaseDomain),
 		log:        cfg.Log,
 		routes:     newRouteState(),
