@@ -351,6 +351,26 @@ export const endpointGroups: EndpointGroup[] = [
     ],
   },
   {
+    title: "Audit log",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/audit?before=&limit=&actor=&action=&service=&outcome=",
+        response: "AuditPage",
+        notes:
+          "Newest first. limit default 100, at most 500. actor is a login or kind; action an action or its dotted prefix.",
+      },
+      { method: "GET", path: "/api/audit/settings", response: "AuditSettings" },
+      {
+        method: "PUT",
+        path: "/api/audit/settings",
+        body: "AuditSettings",
+        response: "AuditSettings",
+        notes: "400 unless 1 to 3650 days.",
+      },
+    ],
+  },
+  {
     title: "Agents (OAuth and MCP)",
     endpoints: [
       {

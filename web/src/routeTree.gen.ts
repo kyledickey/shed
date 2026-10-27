@@ -22,6 +22,7 @@ import { Route as AppDocsIndexRouteImport } from './routes/_app/docs/index'
 import { Route as AppDocsSlugRouteImport } from './routes/_app/docs/$slug'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
+import { Route as AppServerAuditRouteImport } from './routes/_app/server/audit'
 import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
 import { Route as AppServerLogsRouteImport } from './routes/_app/server/logs'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
@@ -96,6 +97,11 @@ const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
 const AppServerIndexRoute = AppServerIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppServerRoute,
+} as any)
+const AppServerAuditRoute = AppServerAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
   getParentRoute: () => AppServerRoute,
 } as any)
 const AppServerBackupsRoute = AppServerBackupsRouteImport.update({
@@ -174,6 +180,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/docs/$slug': typeof AppDocsSlugRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
   '/docs/': typeof AppDocsIndexRoute
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
   '/docs/$slug': typeof AppDocsSlugRoute
+  '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
   '/docs': typeof AppDocsIndexRoute
@@ -222,6 +230,7 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/docs/$slug': typeof AppDocsSlugRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/_app/server/audit': typeof AppServerAuditRoute
   '/_app/server/backups': typeof AppServerBackupsRoute
   '/_app/server/logs': typeof AppServerLogsRoute
   '/_app/docs/': typeof AppDocsIndexRoute
@@ -249,6 +258,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/docs/$slug'
     | '/projects/$projectId'
+    | '/server/audit'
     | '/server/backups'
     | '/server/logs'
     | '/docs/'
@@ -271,6 +281,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/'
     | '/docs/$slug'
+    | '/server/audit'
     | '/server/backups'
     | '/server/logs'
     | '/docs'
@@ -296,6 +307,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/docs/$slug'
     | '/_app/projects/$projectId'
+    | '/_app/server/audit'
     | '/_app/server/backups'
     | '/_app/server/logs'
     | '/_app/docs/'
@@ -412,6 +424,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppServerIndexRouteImport
       parentRoute: typeof AppServerRoute
     }
+    '/_app/server/audit': {
+      id: '/_app/server/audit'
+      path: '/audit'
+      fullPath: '/server/audit'
+      preLoaderRoute: typeof AppServerAuditRouteImport
+      parentRoute: typeof AppServerRoute
+    }
     '/_app/server/backups': {
       id: '/_app/server/backups'
       path: '/backups'
@@ -506,12 +525,14 @@ const AppDocsRouteWithChildren =
   AppDocsRoute._addFileChildren(AppDocsRouteChildren)
 
 interface AppServerRouteChildren {
+  AppServerAuditRoute: typeof AppServerAuditRoute
   AppServerBackupsRoute: typeof AppServerBackupsRoute
   AppServerLogsRoute: typeof AppServerLogsRoute
   AppServerIndexRoute: typeof AppServerIndexRoute
 }
 
 const AppServerRouteChildren: AppServerRouteChildren = {
+  AppServerAuditRoute: AppServerAuditRoute,
   AppServerBackupsRoute: AppServerBackupsRoute,
   AppServerLogsRoute: AppServerLogsRoute,
   AppServerIndexRoute: AppServerIndexRoute,

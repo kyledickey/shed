@@ -95,6 +95,7 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `update_status`                        | The running version and whether a newer release exists.                                                                     |
 | `list_repos`                           | The repositories the shed GitHub App can see.                                                                               |
 | `list_branches(owner, repo)`           | The branches of one of them.                                                                                                |
+| `audit_events(actor?, action?, …)`     | The [audit log](/docs/audit), newest first. Filters: `service_id`, `outcome`, and `since` (`24h` or an RFC 3339 time).      |
 
 Results are compact JSON. Metrics come as a summary per metric (latest, average, and maximum over the range) rather than every data point. Log results are capped at 2000 lines, each line at 2000 characters, and 256 KiB in total, keeping the newest lines.
 
@@ -103,6 +104,7 @@ The server also sends the agent a short description of how shed works (projects,
 ## Security
 
 - **Read-only.** There are no write tools in this version. Nothing an agent does can deploy, stop, delete, or change a setting.
+- **Audited.** Every tool call is recorded in the [audit log](/docs/audit) as `mcp.call`, with the user, the client, the tool, and its arguments.
 - **Variable values are never exposed.** `list_variables` returns names. The resolved variables, which include database passwords and connection strings, are not available to agents at all.
 - **Never exposed.** Variable values, 1Password tokens, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
 - **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. shed's own log has the saved values of every service's variables replaced. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.

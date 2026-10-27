@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/github"
 )
 
@@ -77,9 +78,17 @@ type OAuth interface {
 
 var _ OAuth = (*github.Client)(nil)
 
+// Audit records sign-ins, grants, and denials. *audit.Log implements it.
+type Audit interface {
+	Record(ctx context.Context, e audit.Event)
+}
+
+var _ Audit = (*audit.Log)(nil)
+
 // Auth serves the sign-in endpoints and guards routes behind a session.
 type Auth struct {
 	store   Store
+	audit   Audit
 	oauth   func() (OAuth, bool)
 	baseURL string
 	allowed map[string]bool // Lowercase logins.
@@ -95,18 +104,20 @@ type Auth struct {
 	cleanedAt time.Time // Last removal of expired OAuth rows; guarded by cleanMu.
 }
 
-// New returns an Auth that keeps sessions in store. oauth reports the GitHub
-// client, or false until the GitHub App has been configured. baseURL is the
-// public dashboard URL; cookies are marked Secure when it is https.
+// New returns an Auth that keeps sessions in store and records sign-ins,
+// grants, and denials in rec. oauth reports the GitHub client, or false
+// until the GitHub App has been configured. baseURL is the public dashboard
+// URL; cookies are marked Secure when it is https.
 // allowedUsers are the GitHub logins permitted to sign in, compared without
 // regard to case.
-func New(store Store, oauth func() (OAuth, bool), baseURL string, allowedUsers []string, log *slog.Logger) *Auth {
+func New(store Store, rec Audit, oauth func() (OAuth, bool), baseURL string, allowedUsers []string, log *slog.Logger) *Auth {
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, login := range allowedUsers {
 		allowed[strings.ToLower(login)] = true
 	}
 	return &Auth{
 		store:   store,
+		audit:   rec,
 		oauth:   oauth,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		allowed: allowed,
@@ -187,10 +198,14 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errDenied):
 		a.log.Info("sign-in denied", "login", user.Login)
+		a.audit.Record(anonymous(r), audit.Event{
+			Action: "auth.signin.denied", Outcome: audit.Denied, Detail: map[string]any{"login": user.Login},
+		})
 		http.Redirect(w, r, "/login?error=denied", http.StatusFound)
 	case err != nil:
 		a.fail(w, "sign in", err)
 	default:
+		a.audit.Record(withUser(r, user), audit.Event{Action: "auth.signin", Outcome: audit.OK})
 		a.setCookie(w, sessionCookie, token, "/", sessionTTL)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
@@ -199,8 +214,14 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 // Logout ends the current session.
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
+		user, ok, err := a.sessionUser(r)
+		if err != nil {
+			a.log.Error("look up session", "err", err)
+		}
 		if err := a.store.DeleteSession(r.Context(), hashToken(c.Value)); err != nil {
 			a.log.Error("delete session", "err", err)
+		} else if ok {
+			a.audit.Record(withUser(r, user), audit.Event{Action: "auth.logout", Outcome: audit.OK})
 		}
 	}
 	a.clearCookie(w, sessionCookie, "/")
@@ -208,8 +229,8 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Require returns a handler that serves next only for requests with a valid
-// session, making the user available through [UserFrom]. Other requests get a
-// 401 JSON error.
+// session, making the user available through [UserFrom] and the audit actor
+// through [audit.ActorFrom]. Other requests get a 401 JSON error.
 func (a *Auth) Require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok, err := a.sessionUser(r)
@@ -221,7 +242,8 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		ctx := context.WithValue(withUser(r, user), userKey{}, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -261,6 +283,18 @@ func localPath(p string) bool {
 }
 
 type userKey struct{}
+
+// withUser returns the context of r with user, signed in from the client
+// address of r, as the audit actor.
+func withUser(r *http.Request, user User) context.Context {
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.User, Name: user.Login, IP: audit.ClientIP(r)})
+}
+
+// anonymous returns the context of r with an anonymous audit actor at the
+// client address of r.
+func anonymous(r *http.Request) context.Context {
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous, IP: audit.ClientIP(r)})
+}
 
 // UserFrom returns the user that [Auth.Require] attached to ctx.
 func UserFrom(ctx context.Context) (User, bool) {

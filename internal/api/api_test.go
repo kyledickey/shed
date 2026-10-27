@@ -22,6 +22,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
@@ -201,7 +202,8 @@ func newFixture(t *testing.T) *fixture {
 
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
-	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
+	auditLog := audit.New(st, log)
+	authn := auth.New(AuthStore(st), auditLog, func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
 	f.onePassword = &fakeOnePassword{items: make(map[string]onepassword.Item)}
 	plane := control.New(control.Config{
@@ -212,6 +214,7 @@ func newFixture(t *testing.T) *fixture {
 		Logs:      fakeLogs{},
 		Updates:   f.updates,
 		Variables: variables.New(st, f.onePassword),
+		Audit:     auditLog,
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true

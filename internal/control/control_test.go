@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
@@ -257,6 +258,7 @@ type fixture struct {
 	logs     fakeLogs // set by tests after the fixture is built
 	github   bool     // whether GitHub is configured
 	op       *fakeOnePassword
+	audit    *fakeAudit
 	plane    *Plane
 }
 
@@ -267,7 +269,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword()}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword(),
+		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -282,6 +285,7 @@ func newFixture(t *testing.T) *fixture {
 			return nil, false
 		},
 		Variables:  variables.New(st, f.op),
+		Audit:      f.audit,
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

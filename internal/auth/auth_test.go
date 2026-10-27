@@ -67,7 +67,7 @@ func (f fakeOAuth) ExchangeUser(context.Context, string, string) (github.User, e
 
 func newAuth(store Store, oauth OAuth, baseURL string, allowed ...string) *Auth {
 	get := func() (OAuth, bool) { return oauth, oauth != nil }
-	return New(store, get, baseURL, allowed, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return New(store, &recorder{}, get, baseURL, allowed, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // signIn runs Login then Callback and returns the callback response.

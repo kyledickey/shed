@@ -1,0 +1,72 @@
+---
+title: Audit log
+group: Operating
+order: 145
+description: "shed records every change, sign-in, denial, read of a secret, and agent tool call in an audit log in shed.db: who did it, from which address, to what, and whether it worked. It is always on."
+---
+
+## What is recorded
+
+The audit log is a table in `shed.db`, written whether or not anything else is turned on. Each event records:
+
+- **When.** The time, to the millisecond, in UTC.
+- **Who.** An actor kind, a GitHub login for people and agents, and the client IP.
+- **What.** A dotted action such as `service.variables.update`, the project and service it belongs to, and the ID of the thing acted on.
+- **How it went.** `ok`, `failed` (shed refused or could not finish it, including invalid requests), or `denied` (an authentication or signature check failed).
+- **Detail.** Names as they were at the time, such as the service, host, or mount path, plus which fields or variable keys changed.
+
+Detail never holds a value. Saving variables records which keys were `added`, `changed`, and `removed`. A new start command is recorded as `fields: ["startCommand"]`. A new S3 secret is recorded as `fields: ["secretAccessKey"]`. Names stay readable after the service they belong to is deleted.
+
+Open it in the dashboard under **Server, Audit**. Filter by actor (a login or a kind), action group, service, and outcome. Events load newest first, 100 at a time.
+
+## Actors
+
+| Kind        | Who                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| `user`      | Someone signed in to the dashboard, by GitHub login.                                            |
+| `agent`     | An [MCP client](/docs/mcp) acting for a user. The login is the user's; detail names the client. |
+| `github`    | A push webhook with a valid signature.                                                          |
+| `system`    | shed itself, such as a push deployed when it retries.                                           |
+| `anonymous` | A request that has not signed in: denials, first-run setup, and OAuth token requests.           |
+
+The IP is the address the request came from. Behind the built-in proxy it is the client address the proxy put in `X-Forwarded-For`, or `CF-Connecting-IP` with [`proxy.cloudflare`](/docs/networking#cloudflare).
+
+## Actions
+
+| Action                                                                                                                | When                                                                            |
+| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `auth.signin`, `auth.signin.denied`, `auth.logout`                                                                    | Dashboard sign-in. A denied sign-in is a GitHub account not in `allowed_users`. |
+| `setup.github`, `setup.token.invalid`                                                                                 | First-run GitHub App setup.                                                     |
+| `oauth.grant`, `oauth.denied`, `oauth.revoke`                                                                         | Agent consent, a refused token request or bearer token, revoking a client.      |
+| `webhook.signature.invalid`                                                                                           | A webhook delivery whose signature does not match.                              |
+| `project.create`, `.rename`, `.delete`                                                                                |                                                                                 |
+| `service.create`, `.update`, `.delete`, `.stop`, `.start`, `.restart`, `service.fence.clear`                          | `update` lists the changed fields.                                              |
+| `service.variables.update`, `service.variables.read`, `service.variables.resolved.read`                               | Saving, and viewing values in the dashboard or API.                             |
+| `deployment.create`, `.redeploy`, `.cancel`                                                                           | Manual deploys, and each push that deploys.                                     |
+| `domain.create`, `.delete`, `volume.create`, `.delete`                                                                |                                                                                 |
+| `backup.run`, `.download`, `.restore`, `.delete`, `backup.policy.update`, `backup.settings.update`, `backup.key.read` | Scheduled backups are not recorded; they are in the backup list.                |
+| `onepassword.connect`, `.disconnect`                                                                                  |                                                                                 |
+| `update.download`, `.install`, `update.settings.update`                                                               |                                                                                 |
+| `audit.settings.update`                                                                                               | Changing the retention below.                                                   |
+| `mcp.call`                                                                                                            | Every MCP tool call, with the tool and its arguments.                           |
+
+A push that has to wait, for a running backup or a fenced service, is recorded once, when it deploys, not on every retry.
+
+## Repeated denials
+
+Denials from anonymous requests are coalesced: a burst of bad webhook signatures, setup tokens, or OAuth tokens from one address becomes one event per action and IP per minute, with `detail.count` saying how many there were. The dashboard shows the count beside the action. Denials by signed-in users, such as declining an agent's consent, are recorded one by one.
+
+## Retention
+
+Events older than the retention are deleted when shed starts and every hour after. The default is 365 days, and it can be set from 1 to 3650 days on the Audit page or with `PUT /api/audit/settings`. The setting lives in `shed.db`, so it is part of every shed.db backup, and so is the log itself. Changing it is recorded as `audit.settings.update`.
+
+## Reading it from the API and agents
+
+```sh title="the last failed or denied events about one service"
+curl -s 'https://shed.example.com/api/audit?service=<serviceID>&outcome=failed' \
+  -H 'Cookie: shed_session=<your session token>'
+```
+
+`GET /api/audit` takes `actor` (a login or a kind), `action` (an action or its dotted prefix, so `service` matches `service.create` and `service.variables.update`), `service` (a service ID), `outcome`, `limit` (default 100, at most 500), and `before`. It returns `{events, next}`, where `next` is the `before` of the following page and `null` at the end. See the [HTTP API](/docs/api).
+
+Agents use the [`audit_events` tool](/docs/mcp#tools), which takes the same filters plus `since`, either an RFC 3339 time or a duration such as `24h`. It helps an agent answer "what changed before this service broke?"

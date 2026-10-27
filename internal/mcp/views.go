@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"encoding/json"
 	"math"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/update"
@@ -438,4 +440,37 @@ func summarize(points []*float64) stat {
 func round(v float64) *float64 {
 	r := math.Round(v*100) / 100
 	return &r
+}
+
+type auditOut struct {
+	Events []auditEventOut `json:"events"`
+}
+
+type auditEventOut struct {
+	ID        int64          `json:"id"`
+	Time      time.Time      `json:"ts"`
+	ActorKind string         `json:"actorKind" jsonschema:"user, agent, github, system, docker, or anonymous"`
+	Actor     string         `json:"actor,omitempty" jsonschema:"GitHub login of a user or agent"`
+	ActorIP   string         `json:"actorIp,omitempty"`
+	Action    string         `json:"action"`
+	Outcome   string         `json:"outcome" jsonschema:"ok, failed, or denied"`
+	ProjectID string         `json:"projectId,omitempty"`
+	ServiceID string         `json:"serviceId,omitempty"`
+	Target    string         `json:"target,omitempty" jsonschema:"ID of what was acted on"`
+	Detail    map[string]any `json:"detail,omitempty" jsonschema:"names at the time of the event and changed fields or keys; never values"`
+}
+
+func toAudit(p audit.Page) auditOut {
+	out := auditOut{Events: make([]auditEventOut, 0, len(p.Events))}
+	for _, e := range p.Events {
+		ev := auditEventOut{
+			ID: e.ID, Time: e.Time, ActorKind: e.ActorKind, Actor: e.Actor, ActorIP: e.ActorIP,
+			Action: e.Action, Outcome: e.Outcome, ProjectID: e.ProjectID, ServiceID: e.ServiceID, Target: e.Target,
+		}
+		// A detail that does not decode is left out; the store only keeps
+		// what Record encoded.
+		_ = json.Unmarshal([]byte(e.Detail), &ev.Detail)
+		out.Events = append(out.Events, ev)
+	}
+	return out
 }

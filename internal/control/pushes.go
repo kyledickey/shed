@@ -115,7 +115,8 @@ func (p *Plane) deployPushLocked(ctx context.Context, serviceID string) {
 		return
 	}
 	commit := deploy.Commit{SHA: push.CommitSHA, Message: push.CommitMessage, Author: push.CommitAuthor}
-	if _, err := p.deployer.Deploy(ctx, serviceID, store.TriggerPush, commit); err != nil {
+	dep, err := p.deployer.Deploy(ctx, serviceID, store.TriggerPush, commit)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			p.forgetPush(push)
 			return
@@ -124,6 +125,9 @@ func (p *Plane) deployPushLocked(ctx context.Context, serviceID string) {
 		return
 	}
 	p.forgetPush(push)
+	// Only the deployment is recorded: a deferred push is retried, and
+	// recording each try would flood the log.
+	p.recordDeployment(ctx, nil, "deployment.create", serviceID, dep, map[string]any{"branch": push.Branch})
 }
 
 // forgetPush removes a pending push that was deployed or dropped. If that

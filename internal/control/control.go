@@ -1,6 +1,7 @@
 // Package control holds shed's operations on projects, services,
 // deployments, variables, domains, volumes, backups, metrics, and updates:
-// the rules every interface to shed shares. The HTTP API and the MCP server
+// the rules every interface to shed shares. Every operation that changes
+// state, and every read of secrets, is recorded in the audit log. The HTTP API and the MCP server
 // call a [Plane] instead of the store and the deployer directly, so that both
 // validate the same way, serialize deployments under the same lock, and show
 // the same state.
@@ -51,9 +52,11 @@ type Store interface {
 	Variables(ctx context.Context, serviceID string) (map[string]string, error)
 
 	Domains(ctx context.Context, serviceID string) ([]store.Domain, error)
+	Domain(ctx context.Context, id string) (store.Domain, error)
 	CreateDomain(ctx context.Context, serviceID, host string, generated bool) (store.Domain, error)
 	DeleteDomain(ctx context.Context, id string) error
 	Volumes(ctx context.Context, serviceID string) ([]store.Volume, error)
+	Volume(ctx context.Context, id string) (store.Volume, error)
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
 
 	Deployment(ctx context.Context, id string) (store.Deployment, error)
@@ -182,6 +185,7 @@ type Config struct {
 	// configured.
 	GitHub    func() (GitHub, bool)
 	Variables Variables
+	Audit     Audit
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -202,6 +206,7 @@ type Plane struct {
 	updates       Updates
 	github        func() (GitHub, bool)
 	variables     Variables
+	audit         Audit
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -224,6 +229,7 @@ func New(cfg Config) *Plane {
 		updates:    cfg.Updates,
 		github:     cfg.GitHub,
 		variables:  cfg.Variables,
+		audit:      cfg.Audit,
 		baseDomain: strings.ToLower(cfg.BaseDomain),
 		log:        cfg.Log,
 		routes:     newRouteState(),
