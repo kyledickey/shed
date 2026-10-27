@@ -248,6 +248,49 @@ func TestRequire(t *testing.T) {
 	}
 }
 
+func TestRequirePage(t *testing.T) {
+	a := newAuth(newMemStore(), fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x", "alice")
+	h := a.RequirePage(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	tests := []struct {
+		name, method string
+		headers      map[string]string
+		status       int
+	}{
+		{"navigation", "GET", map[string]string{"Sec-Fetch-Mode": "navigate", "Accept": "text/html"}, http.StatusFound},
+		{"old browser navigation", "GET", map[string]string{"Accept": "text/html,application/xhtml+xml"}, http.StatusFound},
+		{"fetch", "GET", map[string]string{"Sec-Fetch-Mode": "cors", "Accept": "text/html"}, http.StatusUnauthorized},
+		{"script", "GET", map[string]string{"Accept": "application/json"}, http.StatusUnauthorized},
+		{"form post", "POST", map[string]string{"Sec-Fetch-Mode": "navigate", "Accept": "text/html"}, http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/grafana/d/abc?orgId=1", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tt.status {
+				t.Fatalf("status %d, want %d", rec.Code, tt.status)
+			}
+			if want := "/api/auth/login?next=%2Fgrafana%2Fd%2Fabc%3ForgId%3D1"; tt.status == http.StatusFound && rec.Header().Get("Location") != want {
+				t.Errorf("Location %q, want %q", rec.Header().Get("Location"), want)
+			}
+		})
+	}
+
+	req := httptest.NewRequest("GET", "/grafana/", nil)
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.AddCookie(cookieNamed(signIn(t, a, "code"), sessionCookie))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("signed in: status %d", rec.Code)
+	}
+}
+
 func TestLogout(t *testing.T) {
 	store := newMemStore()
 	a := newAuth(store, fakeOAuth{user: github.User{ID: 1, Login: "alice"}}, "http://x", "alice")

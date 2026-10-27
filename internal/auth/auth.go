@@ -232,6 +232,23 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 // session, making the user available through [UserFrom] and the audit actor
 // through [audit.ActorFrom]. Other requests get a 401 JSON error.
 func (a *Auth) Require(next http.Handler) http.Handler {
+	return a.require(next, unauthorized)
+}
+
+// RequirePage is [Auth.Require] for pages a browser opens: a navigation
+// without a valid session is redirected to sign in and back, instead of
+// getting a 401.
+func (a *Auth) RequirePage(next http.Handler) http.Handler {
+	return a.require(next, func(w http.ResponseWriter, r *http.Request) {
+		if !navigation(r) {
+			unauthorized(w, r)
+			return
+		}
+		http.Redirect(w, r, "/api/auth/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+	})
+}
+
+func (a *Auth) require(next http.Handler, deny http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok, err := a.sessionUser(r)
 		if err != nil {
@@ -239,12 +256,29 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			deny(w, r)
 			return
 		}
 		ctx := context.WithValue(withUser(r, user), userKey{}, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func unauthorized(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusUnauthorized, "unauthorized")
+}
+
+// navigation reports whether r is a browser opening a page, rather than a
+// script fetching data. Browsers without Fetch Metadata are judged by
+// whether they accept HTML.
+func navigation(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
+		return mode == "navigate"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 // sessionUser returns the permitted user of the request's session cookie,
