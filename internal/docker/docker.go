@@ -258,6 +258,25 @@ func volumeMounts(ms []Mount) []mount.Mount {
 	return mounts
 }
 
+// Bind mounts a host path into a container.
+type Bind struct {
+	Source, Target string
+	ReadOnly       bool
+}
+
+// bindMounts converts bs to Docker bind mounts.
+func bindMounts(bs []Bind) []mount.Mount {
+	mounts := make([]mount.Mount, 0, len(bs))
+	for _, b := range bs {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: b.Source, Target: b.Target, ReadOnly: b.ReadOnly})
+	}
+	return mounts
+}
+
+// HostNetwork is the network of a container that shares the host's network
+// stack.
+const HostNetwork = "host"
+
 // PortBinding publishes a container TCP port on all host interfaces.
 type PortBinding struct {
 	HostPort, ContainerPort int
@@ -265,14 +284,16 @@ type PortBinding struct {
 
 // RunSpec describes a container to create, and usually to start.
 type RunSpec struct {
-	Name    string
-	Image   string
-	Cmd     []string // nil means the image default
-	Env     []string // KEY=VALUE
-	Labels  map[string]string
+	Name   string
+	Image  string
+	Cmd    []string // nil means the image default
+	Env    []string // KEY=VALUE
+	Labels map[string]string
+	// Network is a bridge network or [HostNetwork].
 	Network string
-	Aliases []string // DNS names on Network
+	Aliases []string // DNS names on Network; none on HostNetwork
 	Mounts  []Mount
+	Binds   []Bind
 	Publish []PortBinding
 	// CPUs is the CPU quota in cores and Memory the memory limit in bytes,
 	// with no extra swap. Zero means unlimited.
@@ -331,13 +352,13 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 		HostConfig: &container.HostConfig{
 			NetworkMode:   container.NetworkMode(spec.Network),
 			PortBindings:  bindings,
-			Mounts:        volumeMounts(spec.Mounts),
+			Mounts:        append(volumeMounts(spec.Mounts), bindMounts(spec.Binds)...),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     workloadResources(spec),
 			LogConfig:     container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
 		},
 	}
-	if spec.Network != "" {
+	if spec.Network != "" && spec.Network != HostNetwork {
 		opts.NetworkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				spec.Network: {Aliases: spec.Aliases},
