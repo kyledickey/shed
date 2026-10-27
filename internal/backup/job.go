@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
@@ -50,24 +53,28 @@ func failure(ctx context.Context, err error) string {
 
 // runBackup runs the backup b, which is stored as queued, and records the
 // outcome. It returns the error the backup failed with.
-func (m *Manager) runBackup(ctx context.Context, b store.Backup) error {
+func (m *Manager) runBackup(ctx context.Context, b store.Backup) (err error) {
+	ctx, span := otel.Tracer(scope).Start(ctx, "backup", trace.WithAttributes(
+		attribute.String("shed.backup.id", b.ID), attribute.String("shed.backup.trigger", string(b.Trigger))))
+	start := time.Now()
+	defer func() { m.finish(ctx, span, "backup", b.ServiceID, start, err, b.Size) }()
 	started := m.now()
 	b.Status, b.StartedAt = store.BackupRunning, &started
-	err := m.store.UpdateBackup(ctx, b)
+	err = m.store.UpdateBackup(ctx, b)
 	var p PolicyInput
 	if err == nil {
 		p, err = m.policy(ctx, b.ServiceID)
 	}
 	if err == nil {
-		err = m.produce(ctx, &b, p.Compression)
+		err = step(ctx, "write archive", func(ctx context.Context) error { return m.produce(ctx, &b, p.Compression) })
 	}
 	finished := m.now()
 	b.FinishedAt = &finished
 	if err != nil {
 		b.Status, b.Error = store.BackupFailed, failure(ctx, err)
-		m.log.Error("backup failed", "backup", b.ID, "service", b.ServiceID, "err", b.Error)
+		m.log.ErrorContext(ctx, "backup failed", "backup", b.ID, "service", b.ServiceID, "err", b.Error)
 		if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil && !errors.Is(err, store.ErrNotFound) {
-			m.log.Error("backup: record failure", "backup", b.ID, "err", err)
+			m.log.ErrorContext(ctx, "backup: record failure", "backup", b.ID, "err", err)
 		}
 		return errors.New(b.Error)
 	}
@@ -77,7 +84,7 @@ func (m *Manager) runBackup(ctx context.Context, b store.Backup) error {
 	if p.Upload {
 		if r, dest, err = m.remote(ctx); err != nil {
 			b.RemoteError = err.Error()
-			m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
+			m.log.ErrorContext(ctx, "backup: upload failed", "backup", b.ID, "err", err)
 		} else if r != nil {
 			// The backup stays in progress until the upload's outcome is
 			// recorded.
@@ -87,7 +94,7 @@ func (m *Manager) runBackup(ctx context.Context, b store.Backup) error {
 	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
-	m.log.Info("backup written", "backup", b.ID, "service", b.ServiceID, "method", b.Method, "size", b.Size)
+	m.log.InfoContext(ctx, "backup written", "backup", b.ID, "service", b.ServiceID, "method", b.Method, "size", b.Size)
 
 	if r != nil {
 		if err := m.upload(ctx, b, p, r, *dest); err != nil {
@@ -95,8 +102,8 @@ func (m *Manager) runBackup(ctx context.Context, b store.Backup) error {
 		}
 	}
 	if b.Trigger == store.BackupSchedule {
-		if err := m.prune(ctx, b.ServiceID, p); err != nil {
-			m.log.Error("backup: prune", "service", b.ServiceID, "err", err)
+		if err := step(ctx, "prune", func(ctx context.Context) error { return m.prune(ctx, b.ServiceID, p) }); err != nil {
+			m.log.ErrorContext(ctx, "backup: prune", "service", b.ServiceID, "err", err)
 		}
 	}
 	return nil
@@ -355,12 +362,12 @@ func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput, r R
 	if err := m.store.UpdateBackup(context.WithoutCancel(ctx), b); err != nil {
 		return fmt.Errorf("backup: record upload target: %w", err)
 	}
-	err := m.put(ctx, r, key, m.localPath(b))
+	err := step(ctx, "upload", func(ctx context.Context) error { return m.put(ctx, r, key, m.localPath(b)) })
 	finished := m.now()
 	b.Status, b.FinishedAt = store.BackupSucceeded, &finished
 	if err != nil {
 		b.RemoteKey, b.DestinationID, b.RemoteError = "", "", err.Error()
-		m.log.Error("backup: upload failed", "backup", b.ID, "err", err)
+		m.log.ErrorContext(ctx, "backup: upload failed", "backup", b.ID, "err", err)
 	} else {
 		b.RemoteError = ""
 	}
@@ -371,7 +378,7 @@ func (m *Manager) upload(ctx context.Context, b store.Backup, p PolicyInput, r R
 		return nil
 	}
 	if err := os.Remove(m.localPath(b)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		m.log.Error("backup: remove uploaded archive", "backup", b.ID, "err", err)
+		m.log.ErrorContext(ctx, "backup: remove uploaded archive", "backup", b.ID, "err", err)
 		return nil
 	}
 	b.Local = false
@@ -498,18 +505,22 @@ func (m *Manager) prune(ctx context.Context, serviceID string, p PolicyInput) er
 
 // runRestore runs the restore r of backup b and records the outcome.
 func (m *Manager) runRestore(ctx context.Context, r store.Restore, b store.Backup) {
+	ctx, span := otel.Tracer(scope).Start(ctx, "restore", trace.WithAttributes(
+		attribute.String("shed.restore.id", r.ID), attribute.String("shed.backup.id", b.ID)))
+	start := time.Now()
 	err := m.restore(ctx, r, b)
+	m.finish(ctx, span, "restore", r.ServiceID, start, err, 0)
 	finished := m.now()
 	r.FinishedAt = &finished
 	if err != nil {
 		r.Status, r.Error = store.RestoreFailed, failure(ctx, err)
-		m.log.Error("restore failed", "restore", r.ID, "backup", b.ID, "service", r.ServiceID, "err", r.Error)
+		m.log.ErrorContext(ctx, "restore failed", "restore", r.ID, "backup", b.ID, "service", r.ServiceID, "err", r.Error)
 	} else {
 		r.Status = store.RestoreSucceeded
-		m.log.Info("restore succeeded", "restore", r.ID, "backup", b.ID, "service", r.ServiceID)
+		m.log.InfoContext(ctx, "restore succeeded", "restore", r.ID, "backup", b.ID, "service", r.ServiceID)
 	}
 	if err := m.store.UpdateRestore(context.WithoutCancel(ctx), r); err != nil && !errors.Is(err, store.ErrNotFound) {
-		m.log.Error("backup: record restore", "restore", r.ID, "err", err)
+		m.log.ErrorContext(ctx, "backup: record restore", "restore", r.ID, "err", err)
 	}
 }
 
@@ -540,7 +551,12 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 
 	// 2. Get the archive and check that it decodes, before touching the
 	// service.
-	path, cleanup, err := m.fetch(ctx, b, r.ID)
+	var path string
+	var cleanup func()
+	err = step(ctx, "fetch archive", func(ctx context.Context) (err error) {
+		path, cleanup, err = m.fetch(ctx, b, r.ID)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -555,19 +571,21 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 	}
 	var present []string
 	var size int64
-	err = readArchive(path, identity, func(data io.Reader) error {
-		if b.Method != store.MethodVolume {
-			n, err := io.Copy(io.Discard, data)
-			size = n
+	err = step(ctx, "check archive", func(context.Context) error {
+		return readArchive(path, identity, func(data io.Reader) error {
+			if b.Method != store.MethodVolume {
+				n, err := io.Copy(io.Discard, data)
+				size = n
+				return err
+			}
+			p, unknown, err := scanVolumes(data, mountPaths(vols))
+			present = p
+			if len(unknown) > 0 {
+				m.log.WarnContext(ctx, "restore: skipping archived paths that are no volume of the service",
+					"restore", r.ID, "paths", unknown)
+			}
 			return err
-		}
-		p, unknown, err := scanVolumes(data, mountPaths(vols))
-		present = p
-		if len(unknown) > 0 {
-			m.log.Warn("restore: skipping archived paths that are no volume of the service",
-				"restore", r.ID, "paths", unknown)
-		}
-		return err
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("backup: check archive: %w", err)
@@ -601,54 +619,56 @@ func (m *Manager) restore(ctx context.Context, r store.Restore, b store.Backup) 
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	switch {
-	case b.Method == store.MethodVolume:
-		// 4. Volumes: replace each volume in the archive.
-		var restore []store.Volume
-		for _, v := range vols {
-			if slices.Contains(present, v.MountPath) {
-				restore = append(restore, v)
+	return step(ctx, "replace data", func(ctx context.Context) error {
+		switch {
+		case b.Method == store.MethodVolume:
+			// 4. Volumes: replace each volume in the archive.
+			var restore []store.Volume
+			for _, v := range vols {
+				if slices.Contains(present, v.MountPath) {
+					restore = append(restore, v)
+				}
 			}
-		}
-		return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, restore, func(w io.Writer) error {
-			return readArchive(path, identity, func(data io.Reader) error {
-				return filterVolumes(data, w, present)
-			})
-		})
-	case b.Method == store.MethodDump && sv.Kind == "redis":
-		// 4. Redis: the RDB file replaces the volume's data.
-		i := slices.IndexFunc(vols, func(v store.Volume) bool { return relMount(v.MountPath) == relMount(redisRDBDir) })
-		if i < 0 {
-			return fmt.Errorf("the service has no volume at %s for the RDB file", redisRDBDir)
-		}
-		return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, vols[i:i+1], func(w io.Writer) error {
-			return redisFiles(w, size, m.now(), func(rdb io.Writer) error {
+			return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, restore, func(w io.Writer) error {
 				return readArchive(path, identity, func(data io.Reader) error {
-					_, err := io.Copy(rdb, data)
-					return err
+					return filterVolumes(data, w, present)
 				})
 			})
-		})
-	case b.Method == store.MethodDump:
-		// 5. Dumps: load into the running database.
-		eng, ok := engines[sv.Kind]
-		if !ok || eng.restore == "" {
-			return fmt.Errorf("cannot restore a %s dump into a %s service", b.Method, sv.Kind)
-		}
-		running, err := held.Running(ctx)
-		if err != nil {
-			return fmt.Errorf("backup: %w", err)
-		}
-		if !running {
-			return errors.New("the service is not running; start it to restore a database dump")
-		}
-		return m.loadDump(ctx, held, sv.ID, r.ID, d.ContainerID, sv.Kind, eng, func(cid string) error {
-			return readArchive(path, identity, func(data io.Reader) error {
-				return execScript(ctx, m.docker, cid, sv.Kind+" restore", eng.restore, data, io.Discard)
+		case b.Method == store.MethodDump && sv.Kind == "redis":
+			// 4. Redis: the RDB file replaces the volume's data.
+			i := slices.IndexFunc(vols, func(v store.Volume) bool { return relMount(v.MountPath) == relMount(redisRDBDir) })
+			if i < 0 {
+				return fmt.Errorf("the service has no volume at %s for the RDB file", redisRDBDir)
+			}
+			return m.replaceVolumes(ctx, held, sv.ID, r.ID, d.Image, vols[i:i+1], func(w io.Writer) error {
+				return redisFiles(w, size, m.now(), func(rdb io.Writer) error {
+					return readArchive(path, identity, func(data io.Reader) error {
+						_, err := io.Copy(rdb, data)
+						return err
+					})
+				})
 			})
-		})
-	}
-	return fmt.Errorf("cannot restore a %s backup", b.Method)
+		case b.Method == store.MethodDump:
+			// 5. Dumps: load into the running database.
+			eng, ok := engines[sv.Kind]
+			if !ok || eng.restore == "" {
+				return fmt.Errorf("cannot restore a %s dump into a %s service", b.Method, sv.Kind)
+			}
+			running, err := held.Running(ctx)
+			if err != nil {
+				return fmt.Errorf("backup: %w", err)
+			}
+			if !running {
+				return errors.New("the service is not running; start it to restore a database dump")
+			}
+			return m.loadDump(ctx, held, sv.ID, r.ID, d.ContainerID, sv.Kind, eng, func(cid string) error {
+				return readArchive(path, identity, func(data io.Reader) error {
+					return execScript(ctx, m.docker, cid, sv.Kind+" restore", eng.restore, data, io.Discard)
+				})
+			})
+		}
+		return fmt.Errorf("cannot restore a %s backup", b.Method)
+	})
 }
 
 // readyInterval is how often shed checks whether the isolated database

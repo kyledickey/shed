@@ -82,12 +82,21 @@ func (r *Recorder) Count(t *testing.T, name string, attrs ...attribute.KeyValue)
 	t.Helper()
 	var n uint64
 	for _, m := range r.metrics(t, name) {
-		if h, ok := m.Data.(metricdata.Histogram[float64]); ok {
-			for _, dp := range h.DataPoints {
-				if has(dp.Attributes, attrs) {
-					n += dp.Count
-				}
-			}
+		switch h := m.Data.(type) {
+		case metricdata.Histogram[float64]:
+			n += count(h.DataPoints, attrs)
+		case metricdata.Histogram[int64]:
+			n += count(h.DataPoints, attrs)
+		}
+	}
+	return n
+}
+
+func count[N int64 | float64](dps []metricdata.HistogramDataPoint[N], attrs []attribute.KeyValue) uint64 {
+	var n uint64
+	for _, dp := range dps {
+		if has(dp.Attributes, attrs) {
+			n += dp.Count
 		}
 	}
 	return n

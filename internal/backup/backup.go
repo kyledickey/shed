@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -34,6 +36,7 @@ import (
 // implements it.
 type Store interface {
 	Service(ctx context.Context, id string) (store.Service, error)
+	Project(ctx context.Context, id string) (store.Project, error)
 	SetServiceStopped(ctx context.Context, id string, stopped bool) error
 	Volumes(ctx context.Context, serviceID string) ([]store.Volume, error)
 	ActiveDeployment(ctx context.Context, serviceID string) (store.Deployment, error)
@@ -213,6 +216,10 @@ type Manager struct {
 	// destroying holds the IDs of backups whose archives Delete or prune
 	// is removing. Restore refuses them.
 	destroying map[string]bool
+
+	runs     metric.Int64Counter
+	bytes    metric.Int64Histogram
+	duration metric.Float64Histogram
 }
 
 // New returns a Manager. Call Recover and then Run.
@@ -229,7 +236,7 @@ func New(cfg Config) *Manager {
 	if newRemote == nil {
 		newRemote = func(S3Config) (Remote, error) { return nil, errors.New("S3 is not available") }
 	}
-	return &Manager{
+	m := &Manager{
 		store:        cfg.Store,
 		docker:       cfg.Docker,
 		services:     cfg.Services,
@@ -244,6 +251,8 @@ func New(cfg Config) *Manager {
 		paused:       make(map[string]int),
 		destroying:   make(map[string]bool),
 	}
+	m.instrument()
+	return m
 }
 
 // targetDir returns the local directory of a target's archives.
