@@ -1115,6 +1115,9 @@ Flags derived from settings:
 - VictoriaTraces: `-retentionPeriod=<traces days>d`,
   `-retention.maxDiskSpaceUsageBytes=<40% of the disk limit>`.
 
+Each store's disk use is the sum of its `vm_data_size_bytes`,
+`vl_data_size_bytes`, or `vt_data_size_bytes` series on `/metrics`.
+
 Metrics have no disk-based eviction in VictoriaMetrics; they are bounded by
 retention and the per-service series cap, and VictoriaMetrics stops accepting
 writes rather than fill the disk below `build.min_free_mb`.
@@ -1533,6 +1536,8 @@ VictoriaMetrics (`shed_container_cpu_percent`, `shed_container_memory_bytes`,
 bucket width, with the same alignment and window rules). If the query fails,
 or telemetry is off, they read SQLite, which has a gap for the time telemetry
 was on.
+VictoriaMetrics hides the newest 30 s of data from queries
+(`-search.latencyOffset`), so these charts trail real time by that much.
 
 ### Log history and trace links
 
