@@ -221,7 +221,18 @@ var levelNames = map[string][]string{
 }
 
 // levelFields are the fields that may hold a record's level.
-var levelFields = []string{"level", "severity", "lvl"}
+// severity_text is where VictoriaLogs keeps an OTLP record's.
+var levelFields = []string{"level", "severity", "lvl", "severity_text"}
+
+// severityNumbers are the OTLP severity numbers of each level, inclusive:
+// TRACE through DEBUG4, INFO through INFO4, WARN through WARN4, and ERROR
+// through FATAL4. An SDK need not set severity_text.
+var severityNumbers = map[string][2]int{
+	"debug": {1, 8},
+	"info":  {9, 12},
+	"warn":  {13, 16},
+	"error": {17, 24},
+}
 
 // levelFilter returns the filter that matches records of a level, ""
 // meaning any.
@@ -239,6 +250,8 @@ func levelFilter(level string) (string, error) {
 			terms = append(terms, victoria.Quote(f)+":i("+victoria.Quote(n)+")")
 		}
 	}
+	r := severityNumbers[level]
+	terms = append(terms, fmt.Sprintf(`"severity_number":range[%d, %d]`, r[0], r[1]))
 	return "(" + strings.Join(terms, " OR ") + ")", nil
 }
 
@@ -317,6 +330,13 @@ func toLogRecord(r victoria.Record) LogRecord {
 		if v := r[f]; v != "" {
 			rec.Level = strings.ToLower(v)
 			break
+		}
+	}
+	if n, err := strconv.Atoi(r["severity_number"]); rec.Level == "" && err == nil {
+		for level, rng := range severityNumbers {
+			if rng[0] <= n && n <= rng[1] {
+				rec.Level = level
+			}
 		}
 	}
 	for k, v := range r {

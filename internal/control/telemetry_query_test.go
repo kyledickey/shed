@@ -137,13 +137,55 @@ func TestLogHistory(t *testing.T) {
 	}
 }
 
+// TestNativeOTLPSeverity checks that OTLP records VictoriaLogs stored with
+// only severity_text and severity_number are filtered and shown by level.
+func TestNativeOTLPSeverity(t *testing.T) {
+	filters := map[string]string{
+		"debug": `"severity_number":range[1, 8]`,
+		"info":  `"severity_number":range[9, 12]`,
+		"warn":  `"severity_number":range[13, 16]`,
+		"error": `"severity_number":range[17, 24]`,
+	}
+	for level, want := range filters {
+		f, err := levelFilter(level)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(f, `"severity_text":i(`) || !strings.HasSuffix(f, " OR "+want+")") {
+			t.Errorf("%s: filter %s, want severity_text terms and %s", level, f, want)
+		}
+	}
+
+	tests := []struct {
+		rec  victoria.Record
+		want string
+	}{
+		{victoria.Record{"severity_text": "ERROR", "severity_number": "17"}, "error"},
+		{victoria.Record{"severity_text": "Fatal", "severity_number": "21"}, "fatal"},
+		{victoria.Record{"severity_number": "18"}, "error"},
+		{victoria.Record{"severity_number": "23"}, "error"},
+		{victoria.Record{"severity_number": "10"}, "info"},
+		{victoria.Record{"severity_number": "0"}, ""},
+		{victoria.Record{"level": "warn", "severity_number": "17"}, "warn"},
+	}
+	for _, tt := range tests {
+		r := toLogRecord(tt.rec)
+		if r.Level != tt.want {
+			t.Errorf("%v: level %q, want %q", tt.rec, r.Level, tt.want)
+		}
+		if _, ok := r.Fields["severity_text"]; ok {
+			t.Errorf("%v: severity_text left in fields", tt.rec)
+		}
+	}
+}
+
 // TestLogHistoryStaysInsideTheService feeds hostile searches and checks that
 // the query sent to the store is the service's stream filter followed only by
 // quoted literals joined with AND, so no search can reach another service.
 func TestLogHistoryStaysInsideTheService(t *testing.T) {
 	f := newTelFixture(t)
 	ctx := context.Background()
-	shape := regexp.MustCompile(`^_stream:\{Q=Q\}( AND (Q|Q:Q))*( AND \((Q:i\(Q\)( OR )?)+\))?$`)
+	shape := regexp.MustCompile(`^_stream:\{Q=Q\}( AND (Q|Q:Q))*( AND \((Q:i\(Q\) OR )+Q:range\[\d+, \d+\]\))?$`)
 	attacks := []string{
 		`x" OR "a"="a`,
 		`x") OR ("1"="1`,

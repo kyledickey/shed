@@ -56,7 +56,7 @@ While [telemetry](/docs/telemetry) is on, the service's Logs tab has two modes. 
 
 The search box takes words, `"quoted phrases"`, and `field:value` (`user:42`, `level:error`); a record must match every term. There are no operators, wildcards, or pipes: whatever you type is matched as text, and the search never leaves the service. Results come newest first, a hundred at a time; **Load older** fetches the next page. A record with a `trace_id` links to its trace in Grafana.
 
-`GET /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=` is the same search: `from` and `to` are RFC 3339 times, `before` is the `next` cursor of the previous page, `limit` is at most 500 (default 100), and `level` is `debug`, `info`, `warn`, or `error`. It answers 409 while telemetry is off. Agents get the same data from the `error_logs` and `query_logs` [MCP tools](/docs/mcp).
+`GET /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=` is the same search: `from` and `to` are RFC 3339 times, `before` is the `next` cursor of the previous page, `limit` is at most 500 (default 100), and `level` is `debug`, `info`, `warn`, or `error`. A level matches a `level`, `severity`, `lvl`, or OTLP `severity_text` field, or an OTLP severity number in the level's range, so `error` also finds records an SDK sent at `ERROR` or `FATAL` with no text. It answers 409 while telemetry is off. Agents get the same data from the `error_logs` and `query_logs` [MCP tools](/docs/mcp).
 
 ## shed's own log
 

@@ -240,6 +240,20 @@ func checkLayout(t *testing.T, uid string, m model) {
 	}
 }
 
+// TestNativeOTLPSeverity checks that log panels count OTLP records that
+// carry only severity_text and severity_number, as VictoriaLogs stores them.
+func TestNativeOTLPSeverity(t *testing.T) {
+	for _, want := range []string{`severity_text:~"(?i)^(error|fatal)"`, `severity_number:range[17, 24]`} {
+		if !strings.Contains(errorLevels, want) {
+			t.Errorf("errorLevels %s lacks %s", errorLevels, want)
+		}
+	}
+	js := string(ServiceDashboards("abc", "app")[1].JSON)
+	if !strings.Contains(js, "stats by (level, severity, severity_text) count() logs") {
+		t.Errorf("volume by level does not group by severity_text: %s", js)
+	}
+}
+
 func TestServiceDashboardsUnknownKind(t *testing.T) {
 	var got []string
 	for _, d := range ServiceDashboards("abc", "something-new") {

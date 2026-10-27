@@ -1967,8 +1967,14 @@ they read SQLite, which has a gap for the time telemetry was on.
   beyond).
 - The query is always `_stream:{"shed.service.id"="<id>"} AND <terms> AND <level>`.
   `level` (`debug`, `info`, `warn`, `error`) matches the `level`, `severity`,
-  or `lvl` field case-insensitively, with the usual synonyms (`warning`;
-  `err`, `fatal`, `critical`).
+  `lvl`, or `severity_text` field case-insensitively, with the usual synonyms
+  (`warning`; `err`, `fatal`, `critical`), or an OTLP `severity_number` in
+  the level's range (`debug` 1–8, `info` 9–12, `warn` 13–16, `error` 17–24,
+  which takes in fatal). VictoriaLogs stores an OTLP record's severity in
+  `severity_text` and `severity_number`; a record's level is the first of
+  those text fields that is set, else its number's level. The MCP
+  `error_logs` tool uses the same `error` filter, and the Grafana error
+  panels match `severity_text` and `severity_number` alike.
 - `from` and `to` are RFC 3339 times; `limit` defaults to 100, at most 500.
   `next` in the page is the RFC 3339 time of its oldest record when the page
   is full, else `""`; passing it as `before` returns records older than it

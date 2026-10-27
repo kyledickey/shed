@@ -107,8 +107,10 @@ func eq(label, value string) string { return fmt.Sprintf("%s=%q", label, value) 
 
 const (
 	// errorLevels matches error records of container logs (level) and
-	// OTLP logs (severity).
-	errorLevels = `(level:~"(?i)^(err|error|fatal|panic|crit|critical)$" or severity:~"(?i)^(error|fatal)")`
+	// OTLP logs (a severity attribute, or VictoriaLogs' severity_text and
+	// severity_number, whose ERROR through FATAL4 are 17 to 24).
+	errorLevels = `(level:~"(?i)^(err|error|fatal|panic|crit|critical)$" or severity:~"(?i)^(error|fatal)" or ` +
+		`severity_text:~"(?i)^(error|fatal)" or severity_number:range[17, 24])`
 
 	// appLogs are the stream fields of a service's own log records.
 	appLogs = `shed.source in ("container", "otlp")`
@@ -168,7 +170,7 @@ func serviceLogs(b *board, id string) {
 	logs := stream(eq("shed.service.id", id), appLogs)
 	b.textVar("search", "Search (LogsQL)", "*")
 	b.add(16, 8, bars("Volume by level", "short",
-		logSeries(logs+" | stats by (level, severity) count() logs", "{{level}}{{severity}}")))
+		logSeries(logs+" | stats by (level, severity, severity_text) count() logs", "{{level}}{{severity}}{{severity_text}}")))
 	b.add(8, 8, bars("Errors", "short",
 		logSeries(logs+" "+errorLevels+" | stats count() errors", "errors")))
 	b.add(24, 16, logsPanel("Logs", logLines(logs+" $search")))
