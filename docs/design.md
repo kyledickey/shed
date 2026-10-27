@@ -1245,18 +1245,22 @@ was started with (the [build secret handling](#build-secret-handling) limits
 apply). shed's own records are masked with every project's values, like
 `ShedLog`.
 
-Caps: each service has a token bucket per signal (spans/s, log records/s) and
-a series cap (distinct metric name and attribute sets in the last hour).
+Caps: each service has a token bucket per signal (spans/s, log records/s),
+holding one second's worth, and a series cap (distinct sets of resource
+attributes, metric name, and data point attributes in the last hour).
 Records over a cap are dropped and the request is answered with an OTLP
 partial success naming the rejected count, so SDKs do not retry. Overrides
 live in `telemetry_caps`. Every drop increments
-`shed_telemetry_dropped_total{shed_service_id, signal, reason}`; the service
-page shows "dropping telemetry" while it rises.
+`shed_telemetry_dropped_total{shed_service_id, signal, reason}` (signal
+`traces`, `metrics`, or `logs`; reason `unknown_source`, `rate_cap`, or
+`series_cap`); the service page shows "dropping telemetry" while it rises.
 
 Span metrics: for spans of kind server or consumer the gateway records
-`shed_span_duration_seconds` (histogram) labeled with service, span name
-(at most 200 names per service, the rest `other`), and status code. These
-drive the Traces dashboards.
+`shed_span_duration_seconds` (histogram) labeled `shed_service_id`,
+`span_name` (at most 200 names per service, the rest `other`), and
+`status_code` (`unset`, `ok`, `error`). These drive the Traces dashboards.
+Span metrics and `shed_telemetry_ingested_total` are recorded only once the
+store accepted the batch, so a retried request is not counted twice.
 
 Forwarding: traces to VictoriaTraces and logs to VictoriaLogs (OTLP, with
 `VL-Stream-Fields`), metrics to VictoriaMetrics' OTLP endpoint. If a store
