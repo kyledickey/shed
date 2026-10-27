@@ -544,6 +544,11 @@ func TestManagerRunsExporters(t *testing.T) {
 	if got := exporterNames(); !slices.Equal(got, []string{"shed-exp-svcredis"}) {
 		t.Errorf("exporters = %v", got)
 	}
+	var removed string
+	list, _ := h.docker.List(context.Background(), map[string]string{LabelExporter: "svcredis"})
+	for _, ip := range list[0].IPs {
+		removed = ip + ":9121"
+	}
 	if s := scrape(); !strings.Contains(s, "shed_service_id: svcredis") || !strings.Contains(s, "shed-telemetry") {
 		t.Errorf("scrape.yaml:\n%s", s)
 	}
@@ -561,9 +566,11 @@ func TestManagerRunsExporters(t *testing.T) {
 		t.Errorf("exporters after disable: %v", got)
 	}
 
+	// The worker publishes the new exporter right away, so look for the
+	// address of the removed one.
 	h.set(t, enabled())
-	if strings.Contains(scrape(), ":9121") {
-		t.Errorf("scrape.yaml names an exporter that was removed:\n%s", scrape())
+	if strings.Contains(scrape(), removed) {
+		t.Errorf("scrape.yaml names an exporter that was removed, %s:\n%s", removed, scrape())
 	}
 	eventually("the exporter after enabling again", func() bool { return len(exporterNames()) == 1 })
 }

@@ -309,6 +309,9 @@ func newHarness(t *testing.T, opts ...func(*Config)) *harness {
 	}
 	h.m = New(cfg)
 	h.m.poll = time.Millisecond
+	// Workers outlive Reconcile; join them before the temporary directory
+	// they write to is removed.
+	t.Cleanup(h.m.shutdown)
 	return h
 }
 
