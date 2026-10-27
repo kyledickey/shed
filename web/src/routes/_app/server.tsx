@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { Archive, ChartArea, ScrollText, ShieldCheck } from "lucide-react";
+import { Activity, Archive, ChartArea, ScrollText, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Page } from "../../components/Layout";
 import { PageHeader } from "../../components/Shell";
@@ -9,13 +9,14 @@ export const Route = createFileRoute("/_app/server")({
   component: ServerLayout,
 });
 
-type ServerTab = "metrics" | "logs" | "backups" | "audit";
+type ServerTab = "metrics" | "logs" | "backups" | "audit" | "telemetry";
 
 const tabs: { value: ServerTab; label: string; icon: ReactNode }[] = [
   { value: "metrics", label: "Metrics", icon: <ChartArea size={15} /> },
   { value: "logs", label: "Logs", icon: <ScrollText size={15} /> },
   { value: "backups", label: "Backups", icon: <Archive size={15} /> },
   { value: "audit", label: "Audit", icon: <ShieldCheck size={15} /> },
+  { value: "telemetry", label: "Telemetry", icon: <Activity size={15} /> },
 ];
 
 function ServerLayout() {

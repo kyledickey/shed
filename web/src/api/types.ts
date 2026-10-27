@@ -343,3 +343,44 @@ export type AuditEvent = {
 export type AuditPage = { events: AuditEvent[]; next: number | null };
 
 export type AuditSettings = { retentionDays: number };
+
+export type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
+
+export type TelemetrySettings = {
+  enabled: boolean;
+  metricsRetentionDays: number;
+  logsRetentionDays: number;
+  tracesRetentionDays: number;
+  /** Disk for logs and traces together, 60/40. */
+  diskLimitGB: number;
+  defaultCaps: TelemetryCaps;
+};
+
+export type TelemetryComponentName = "metrics" | "logs" | "traces" | "grafana";
+
+export type TelemetryComponent = {
+  name: TelemetryComponentName;
+  state: "running" | "starting" | "stopped" | "failed";
+  version: string;
+  /** The last failure starting it, "" if none. */
+  error: string;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimit: number;
+  /** From the store's own metrics; null for grafana. */
+  diskBytes: number | null;
+};
+
+export type Telemetry = {
+  settings: TelemetrySettings;
+  /** Empty while never enabled. */
+  components: TelemetryComponent[];
+  /** Per second, over the last minute. */
+  ingest: { spans: number; logs: number; points: number };
+  droppedLastHour: { reason: string; signal: string; count: number }[];
+  firingAlerts: { name: string; serviceId: string; since: string }[];
+  /** "<server.url>/grafana/" */
+  grafanaUrl: string;
+  /** "http://shed.internal:4318" */
+  otlpEndpoint: string;
+};
