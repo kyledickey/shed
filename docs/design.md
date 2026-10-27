@@ -678,8 +678,9 @@ volume, or container is created, the error is logged, and the service shows
 `crashed`.
 
 The active deployment's `runtime` stores its command, resolved variables,
-masked variable keys, CPU/memory limits, public port, and volume IDs and mount
-paths. Activation writes it and clears the superseded deployment's runtime
+masked variable keys, CPU/memory limits, public port, volume IDs and mount
+paths, and whether telemetry was on (which adds the `shed.internal` host
+entry). Activation writes it and clears the superseded deployment's runtime
 in the same transaction, so resolved variables remain only on the active record.
 A missing container is recreated from this snapshot, including during boot,
 start, or release of a hold. Saved settings wait for a new deployment. Volumes
@@ -1167,8 +1168,10 @@ Disabling closes the listeners, stops the shippers, and stops the containers.
 Volumes, `<data>/telemetry`, and the `grafana_dashboards` rows are kept, so
 enabling again resumes with history and edited dashboards intact.
 `DELETE /api/telemetry/data` (only while disabled) removes the containers,
-volumes, `<data>/telemetry`, and those rows. The Grafana admin password in
-`settings` is kept.
+volumes, `<data>/telemetry`, and those rows, and clears `log_cursors` and the
+`audit_mirror_cursor` setting: the shipped logs are gone, so container output
+is shipped again from what Docker still holds and the audit mirror starts
+over. The Grafana admin password in `settings` is kept.
 
 Workers that only make sense while telemetry is on (ingest listeners,
 shippers) register with the manager and run from the moment the stack is up
@@ -1268,35 +1271,54 @@ no gRPC and no public endpoint.
 
 Listeners:
 
-- One on each project network's gateway address (`shed-<projectID>`),
-  port `telemetry.otlp_port` (4318), opened and closed as networks come and
-  go. While telemetry is on, every service container gets the host entry
-  `shed.internal` → its network's gateway. Hosts whose firewall drops input
-  from Docker bridges must allow this port from them.
+- One on each project network's gateway address (`shed-<projectID>`, for
+  networks whose suffix is a project ID), port `telemetry.otlp_port` (4318),
+  opened and closed as networks come and go: the gateway lists `shed-*`
+  networks every 5 s and retries a listener that failed to open. While
+  telemetry is on, every service container gets the host entry
+  `shed.internal` → its network's gateway (`ExtraHosts`, resolved when the
+  container is created). Hosts whose firewall drops input from Docker
+  bridges (ufw's default) must allow this port from them; containers
+  otherwise see connection timeouts.
 - One on `127.0.0.1:<otlp_port>` for shed's own telemetry and the proxy's edge
   spans.
 
 Attribution: on a project listener the request's source address is looked up
-in an index of shed's containers (address on that network → service and
-deployment), refreshed on every activation and every 30 s. An unknown source
-answers 403 and is counted as dropped (`unknown_source`). The `shed.*`
-attributes are set from the index; `service.name` is kept if the sender set
-one, else it becomes the service name. On the loopback listener, records are
-attributed to shed, except edge spans, attributed by their `http.host`
-through the domain table.
+in an index of shed's containers (every container labeled `shed.service`,
+from one Docker list: address on its project network → service and the
+deployment in its `shed.deployment` label), refreshed every 30 s and on a
+miss, at most once a second. A container starting a deployment is therefore
+known on its first request, before it is active, without the deployer
+announcing it. A source still unknown, or known on another project's
+network, answers 403 and is counted as dropped (`unknown_source`). The
+`shed.*` attributes are set from the index (`shed.source` = `otlp`);
+`service.name` is kept if the sender set one, else it becomes the service
+name. On the loopback listener, records are attributed to shed
+(`shed.source` = `shed`), except edge spans: spans whose resource has no
+`shed.service.id` (shed's own resource always sets it; Caddy's has
+`webengine.name=Caddy`). An edge span is attributed by its request host,
+read from `server.address` (what Caddy's otelhttp sets), else `http.host`,
+else the host of `url.full`, lowercase without a port, through the domain
+table, with `shed.source` = `edge`; the dashboard host and unrouted hosts go
+to shed with `shed.source` = `edge`.
 
 Masking: string attribute values, span status messages, and log bodies are masked with the saved
 values of every variable in the sender's project and the values its container
 was started with (the [build secret handling](#build-secret-handling) limits
 apply). shed's own records are masked with every project's values, like
-`ShedLog`.
+`ShedLog`. The value sets come from `internal/control` (`TelemetryMask`,
+`ShedMask`, `RuntimeMask`), the same code `ShedLog` and `RuntimeLogs` use;
+the gateway caches each masking function until the index is next refreshed,
+so a changed value is masked within 30 s. If one cannot be built while a
+request is attributed, the request answers 503.
 
 Caps: each service has a token bucket per signal (spans/s, log records/s),
 holding one second's worth, and a series cap (distinct sets of resource
 attributes, metric name, and data point attributes in the last hour).
 Records over a cap are dropped and the request is answered with an OTLP
 partial success naming the rejected count, so SDKs do not retry. Overrides
-live in `telemetry_caps`. Every drop increments
+live in `telemetry_caps`; the gateway reloads them and the default caps every
+5 s. shed itself has the default caps. Every drop increments
 `shed_telemetry_dropped_total{shed_service_id, signal, reason}` (signal
 `traces`, `metrics`, or `logs`; reason `unknown_source`, `rate_cap`, or
 `series_cap`); the service page shows "dropping telemetry" while it rises.
@@ -1324,6 +1346,15 @@ OTEL_SERVICE_NAME=<service name>
 OTEL_RESOURCE_ATTRIBUTES=service.version=<commit sha or image>
 ```
 
+The deployer asks the telemetry settings (`enabled`, the operator's intent,
+not whether the stack is up yet) when it resolves a deployment's variables,
+so variable listings show these as injected while telemetry is on, and the
+same answer decides the host entry. `OTEL_RESOURCE_ATTRIBUTES` is left out
+when there is neither a commit nor an image. `ServiceTelemetry.dropping`
+comes from `sum(increase(shed_telemetry_dropped_total{shed_service_id=…}[5m])) > 0`
+in VictoriaMetrics, false while telemetry is off or the store does not
+answer.
+
 ### Container logs
 
 While telemetry is on, `internal/observability` follows the Docker logs
@@ -1340,9 +1371,21 @@ line to VictoriaLogs (`shed.source=container`) in batches of up to 1 s or
 - Lines are masked like `RuntimeLogs` and count against the service's log cap.
 
 `log_cursors` holds the timestamp of each container's last acknowledged
-line; after a restart of shed, following resumes from it (lines sharing that
-exact timestamp may repeat). Lines Docker rotated away while shed was down are
-lost.
+line (nanoseconds, as Docker reports it); after a restart of shed, following
+resumes 1 ns after it, so the last shipped line is not repeated (an unshipped
+line with exactly the same timestamp would be skipped). Lines Docker rotated
+away while shed was down are lost.
+
+The shipper lists `shed.service` containers every 5 s, follows each running
+one it does not follow yet, and stops following and deletes the cursor of
+containers that are gone. A follower ends when its container stops and starts
+again from where it read if the container runs again. A JSON line without
+`msg` or `message` keeps the whole line as the message; JSON fields named
+like the record's own (`_time`, `_msg`, `stream`, `level`, `shed.*`) are
+overwritten, and fields starting with `_` are dropped. Lines over the log cap
+are dropped (counted as `rate_cap`) but still advance the cursor. A batch the
+store refuses is retried every 5 s, holding the followers back; Docker keeps
+the output meanwhile.
 
 ### Edge
 
@@ -1614,6 +1657,7 @@ command is recorded as `fields: ["startCommand"]`, a new S3 secret as
 | `update.download`, `.install`, `update.settings.update` | |
 | `audit.settings.update` | retention changed |
 | `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` | |
+| `telemetry.caps.update` (`overridden`) | a service's own caps set or cleared |
 | `mcp.call` (tool and arguments) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
@@ -1624,7 +1668,11 @@ IP per minute, with `detail.count`. Rows older than the audit retention
 lists them with filters. While telemetry is on, a shipper copies rows
 with an `id` above the `audit_mirror_cursor` setting into VictoriaLogs
 (`shed.source=audit`, the columns as fields) and advances the cursor after each acknowledged batch,
-so the mirror catches up after any outage.
+so the mirror catches up after any outage. It reads up to 500 rows at a time,
+every 5 s (at once while a batch is full), and retries 5 s after a failure.
+A record's `_time` is the row's `ts`, its message `<action> <outcome>`, and
+its `shed.project.id` and `shed.service.id` the row's IDs (`shed` for rows
+without a service).
 
 ### Docker events
 
@@ -1993,7 +2041,7 @@ POST   /api/update/install                      202 → UpdateStatus  (state res
 
 GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → LogPage  (409 if telemetry is off)
 GET    /api/services/{id}/telemetry             → ServiceTelemetry
-PUT    /api/services/{id}/telemetry  {caps: TelemetryCaps | null} → ServiceTelemetry  (null = defaults)
+PUT    /api/services/{id}/telemetry  {caps: TelemetryCaps | null} → ServiceTelemetry  (null = defaults; 400 if a cap is below 1)
 GET    /api/telemetry                           → Telemetry
 PUT    /api/telemetry           TelemetrySettings → Telemetry  (enable, disable, retention, caps; 400 if out of bounds; reconciles in the background)
 POST   /api/telemetry/components/{name}/restart → Telemetry  (409 if telemetry is off or the container does not exist yet; 404 for an unknown name)
