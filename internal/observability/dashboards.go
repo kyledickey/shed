@@ -42,6 +42,7 @@ type DashboardAPI interface {
 	PutDashboard(ctx context.Context, folderUID string, dashboard json.RawMessage, replaces int) (int, error)
 	CreateAnnotation(ctx context.Context, a grafana.Annotation) (int64, error)
 	FiringAlerts(ctx context.Context) ([]grafana.Alert, error)
+	SearchDashboards(ctx context.Context, q grafana.SearchQuery) ([]grafana.DashboardHit, error)
 }
 
 var _ DashboardAPI = (*grafana.Client)(nil)
@@ -430,6 +431,69 @@ func (d *Dashboards) Service(ctx context.Context, id string) (ServiceDashboards,
 			if a.ServiceID == id {
 				out.Alerts = append(out.Alerts, a)
 			}
+		}
+	}
+	return out, nil
+}
+
+// Dashboard is a dashboard in Grafana, shed's or a user's.
+type Dashboard struct {
+	UID, Title string
+	// Folder is the title of the folder holding the dashboard.
+	Folder string
+	URL    string
+	// Customized and Outdated are as in [DashboardLink], and false for
+	// dashboards shed did not create.
+	Customized, Outdated bool
+}
+
+// List returns the dashboards in Grafana, or only those in folder folderUID
+// when it is not empty. It fails with ErrDisabled while telemetry is off.
+func (d *Dashboards) List(ctx context.Context, folderUID string) ([]Dashboard, error) {
+	l, err := d.current()
+	if err != nil {
+		return nil, err
+	}
+	var q grafana.SearchQuery
+	if folderUID != "" {
+		q.FolderUIDs = []string{folderUID}
+	}
+	hits, err := l.api.SearchDashboards(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := d.records(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var versions map[string]int // rendered only if a dashboard is customized
+	out := make([]Dashboard, 0, len(hits))
+	for _, h := range hits {
+		db := Dashboard{UID: h.UID, Title: h.Title, Folder: h.FolderTitle, URL: d.cfg.GrafanaURL + "d/" + h.UID}
+		if rec, ok := recs[h.UID]; ok && rec.Customized {
+			if versions == nil {
+				if versions, err = d.templateVersions(ctx); err != nil {
+					return nil, err
+				}
+			}
+			db.Customized, db.Outdated = true, versions[h.UID] > rec.TemplateVersion
+		}
+		out = append(out, db)
+	}
+	return out, nil
+}
+
+// templateVersions returns the current template version of every default
+// dashboard, by UID.
+func (d *Dashboards) templateVersions(ctx context.Context) (map[string]int, error) {
+	all, err := d.scopes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, s := range all {
+		for _, db := range s.dashboards {
+			out[db.UID] = db.Version
 		}
 	}
 	return out, nil

@@ -31,6 +31,7 @@ type Dashboards interface {
 	Reset(ctx context.Context, uid string) error
 	Restore(ctx context.Context) error
 	Service(ctx context.Context, id string) (observability.ServiceDashboards, error)
+	List(ctx context.Context, folderUID string) ([]observability.Dashboard, error)
 }
 
 var _ Dashboards = (*observability.Dashboards)(nil)

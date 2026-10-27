@@ -222,7 +222,6 @@ type Plane struct {
 	dashboards    Dashboards
 	stores        TelemetryStores
 	dashboardHost string
-	baseURL       string
 	baseDomain    string
 	log           *slog.Logger
 
@@ -248,7 +247,6 @@ func New(cfg Config) *Plane {
 		telemetry:  cfg.Telemetry,
 		dashboards: cfg.Dashboards,
 		stores:     cfg.Stores,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		baseDomain: strings.ToLower(cfg.BaseDomain),
 		log:        cfg.Log,
 		routes:     newRouteState(),

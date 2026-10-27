@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -273,20 +272,6 @@ func (g fakeGrafana) ReloadAlertRules(context.Context) error {
 
 func (g fakeGrafana) FiringAlerts(context.Context) ([]grafana.Alert, error) {
 	return []grafana.Alert{{Labels: map[string]string{"alertname": "Service restarting", "shed_service_id": "svc1"}}}, nil
-}
-
-func (g fakeGrafana) SearchDashboards(_ context.Context, q grafana.SearchQuery) ([]grafana.DashboardHit, error) {
-	all := []grafana.DashboardHit{
-		{UID: "svc-overview-s1", Title: "Overview", FolderUID: "s-s1", FolderTitle: "web"},
-		{UID: "shed-deploys", Title: "Deploys", FolderUID: "shed", FolderTitle: "shed"},
-	}
-	var out []grafana.DashboardHit
-	for _, h := range all {
-		if len(q.FolderUIDs) == 0 || q.FolderUIDs[0] == h.FolderUID {
-			out = append(out, h)
-		}
-	}
-	return out, nil
 }
 
 type harness struct {
@@ -737,23 +722,5 @@ func TestSpec(t *testing.T) {
 	}
 	if l2, _ := spec(Logs, longer); l2.Labels[labelSpec] != logs.Labels[labelSpec] {
 		t.Error("changing metrics retention changed the logs spec")
-	}
-}
-
-func TestDashboards(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	if _, err := h.m.Dashboards(ctx, ""); !errors.Is(err, ErrDisabled) {
-		t.Fatalf("Dashboards while off = %v, want ErrDisabled", err)
-	}
-	h.set(t, Settings{Enabled: true, MetricsRetentionDays: 30, LogsRetentionDays: 14, TracesRetentionDays: 14, DiskLimitGB: 20, DefaultCaps: DefaultSettings().DefaultCaps})
-	all, err := h.m.Dashboards(ctx, "")
-	if err != nil || len(all) != 2 {
-		t.Fatalf("Dashboards() = %+v, %v", all, err)
-	}
-	one, err := h.m.Dashboards(ctx, "s-s1")
-	want := []Dashboard{{UID: "svc-overview-s1", Title: "Overview", Folder: "web", Path: "/grafana/d/svc-overview-s1"}}
-	if err != nil || !reflect.DeepEqual(one, want) {
-		t.Errorf("Dashboards(s-s1) = %+v, %v; want %+v", one, err, want)
 	}
 }

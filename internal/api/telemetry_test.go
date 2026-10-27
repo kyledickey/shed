@@ -137,6 +137,10 @@ type fakeDashboards struct {
 
 func (d *fakeDashboards) Refresh() {}
 
+func (d *fakeDashboards) List(context.Context, string) ([]observability.Dashboard, error) {
+	return nil, nil
+}
+
 func (d *fakeDashboards) Reset(_ context.Context, uid string) error {
 	if !d.telemetry.s.Enabled {
 		return observability.ErrDisabled

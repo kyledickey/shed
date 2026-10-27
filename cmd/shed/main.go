@@ -347,7 +347,7 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
-		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt, Dashboards: stack},
+		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt},
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,

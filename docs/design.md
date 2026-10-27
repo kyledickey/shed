@@ -2316,7 +2316,7 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `error_logs` | `service_id`, `since?` (default 1h), `limit?` (default 200, at most 2000) | text: error-level records of the service as `query_logs` returns them |
 | `slow_requests` | `service_id`, `since?` (default 1h), `limit?` (default 20, at most 100) | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, clientIp, traceId}]}` |
 | `top_queries` | `service_id` (a database) | `{queries: [{query, calls, totalMs, meanMs, rows}]}` from the exporter's statement statistics |
-| `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url}]}`; `url` is absolute under `server.url` |
+| `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url, customized?, outdated?}]}`; `url` is absolute under `server.url`; `customized` marks a default dashboard a user saved, `outdated` one whose default changed since |
 
 Times accept RFC 3339 or a duration before now (`15m`, `24h`). Telemetry
 tool instructions describe the [label schema](#label-schema) and sample

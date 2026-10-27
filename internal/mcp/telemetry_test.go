@@ -160,12 +160,12 @@ func (f *fakeBackend) TopQueries(_ context.Context, id string, _ int) ([]control
 	return []control.QueryStat{{Query: "SELECT $1", Calls: 10, TotalMs: 3000, MeanMs: 300, Rows: 10}}, nil
 }
 
-func (f *fakeBackend) Dashboards(_ context.Context, folder string) ([]control.Dashboard, error) {
+func (f *fakeBackend) Dashboards(_ context.Context, folder string) ([]observability.Dashboard, error) {
 	if err := f.gate(); err != nil {
 		return nil, err
 	}
 	f.tel.folder = folder
-	return []control.Dashboard{{UID: "svc-overview-svc1", Title: "Overview", Folder: "web", URL: "https://shed.example.com/grafana/d/svc-overview-svc1"}}, nil
+	return []observability.Dashboard{{UID: "svc-overview-svc1", Title: "Overview", Folder: "web", URL: "https://shed.example.com/grafana/d/svc-overview-svc1", Customized: true}}, nil
 }
 
 func TestTelemetryTools(t *testing.T) {
@@ -198,7 +198,7 @@ func TestTelemetryTools(t *testing.T) {
 		{"error_logs", map[string]any{"service_id": "svc1", "since": "2h", "limit": 5}, []string{`"_msg":"boom"`}},
 		{"slow_requests", map[string]any{"service_id": "svc1"}, []string{`"p50Ms":10.12`, `"p99Ms":1500`, `"durationMs":1250.46`, `"clientIp":"203.0.113.9"`, `"traceId":"t1"`}},
 		{"top_queries", map[string]any{"service_id": "db1"}, []string{`"query":"SELECT $1"`, `"calls":10`, `"totalMs":3000`, `"meanMs":300`}},
-		{"list_dashboards", map[string]any{"folder_uid": "s-svc1"}, []string{`"uid":"svc-overview-svc1"`, `"folder":"web"`, `"url":"https://shed.example.com/grafana/d/svc-overview-svc1"`}},
+		{"list_dashboards", map[string]any{"folder_uid": "s-svc1"}, []string{`"uid":"svc-overview-svc1"`, `"folder":"web"`, `"url":"https://shed.example.com/grafana/d/svc-overview-svc1"`, `"customized":true`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

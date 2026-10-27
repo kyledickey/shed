@@ -28,7 +28,7 @@ type telemetryBackend interface {
 	ErrorLogs(ctx context.Context, serviceID string, since time.Time, limit int) ([]victoria.Record, error)
 	SlowRequests(ctx context.Context, serviceID string, since time.Time, limit int) (control.SlowRequests, error)
 	TopQueries(ctx context.Context, serviceID string, limit int) ([]control.QueryStat, error)
-	Dashboards(ctx context.Context, folderUID string) ([]control.Dashboard, error)
+	Dashboards(ctx context.Context, folderUID string) ([]observability.Dashboard, error)
 }
 
 // Bounds on what the telemetry tools return.
@@ -510,6 +510,11 @@ type dashboardOut struct {
 	Title  string `json:"title"`
 	Folder string `json:"folder,omitempty"`
 	URL    string `json:"url" jsonschema:"opens in Grafana for a signed-in user"`
+	// Customized marks a default dashboard a user saved; shed no longer
+	// updates it.
+	Customized bool `json:"customized,omitempty"`
+	// Outdated marks a customized dashboard whose default changed since.
+	Outdated bool `json:"outdated,omitempty"`
 }
 
 func (s *Server) listDashboards(ctx context.Context, _ *sdk.CallToolRequest, in dashboardsArgs) (*sdk.CallToolResult, dashboardsOut, error) {
@@ -519,7 +524,7 @@ func (s *Server) listDashboards(ctx context.Context, _ *sdk.CallToolRequest, in 
 	}
 	out := dashboardsOut{Dashboards: make([]dashboardOut, 0, len(list))}
 	for _, d := range list {
-		out.Dashboards = append(out.Dashboards, dashboardOut{UID: d.UID, Title: d.Title, Folder: d.Folder, URL: d.URL})
+		out.Dashboards = append(out.Dashboards, dashboardOut{UID: d.UID, Title: d.Title, Folder: d.Folder, URL: d.URL, Customized: d.Customized, Outdated: d.Outdated})
 	}
 	return nil, out, nil
 }

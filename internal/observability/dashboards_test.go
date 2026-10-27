@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -110,6 +111,26 @@ func (g *fakeDashboardAPI) FiringAlerts(context.Context) ([]grafana.Alert, error
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.alerts, nil
+}
+
+func (g *fakeDashboardAPI) SearchDashboards(_ context.Context, q grafana.SearchQuery) ([]grafana.DashboardHit, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []grafana.DashboardHit
+	for _, uid := range slices.Sorted(maps.Keys(g.dashboards)) {
+		d := g.dashboards[uid]
+		if len(q.FolderUIDs) > 0 && !slices.Contains(q.FolderUIDs, d.folder) {
+			continue
+		}
+		var m struct {
+			Title string `json:"title"`
+		}
+		if err := json.Unmarshal([]byte(d.json), &m); err != nil {
+			return nil, err
+		}
+		out = append(out, grafana.DashboardHit{UID: uid, Title: m.Title, FolderUID: d.folder, FolderTitle: g.folders[d.folder].Title})
+	}
+	return out, nil
 }
 
 // userSave saves dashboard uid as a user would in Grafana.
@@ -350,6 +371,18 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 	}
 	if len(sd.Dashboards) != len(ds) {
 		t.Errorf("%d dashboards listed, want %d", len(sd.Dashboards), len(ds))
+	}
+
+	list, err := h.d.List(ctx, grafana.ServiceFolder(h.app.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantList := []Dashboard{
+		{UID: logs.UID, Title: "mine", Folder: "web", URL: "https://shed.example.com/grafana/d/" + logs.UID, Customized: true, Outdated: true},
+		{UID: overview.UID, Title: "Overview", Folder: "web", URL: "https://shed.example.com/grafana/d/" + overview.UID},
+	}
+	if len(list) != len(ds) || !slices.Equal(list[1:3], wantList) {
+		t.Errorf("List = %+v, want %+v", list, wantList)
 	}
 
 	if err := h.d.Reset(ctx, logs.UID); err != nil {

@@ -188,6 +188,18 @@ func TestIntegrationAgents(t *testing.T) {
 		Addrs: addrs, Dir: filepath.Join(t.TempDir(), "telemetry"),
 		GrafanaURL: shed.URL + "/grafana/", OTLPEndpoint: "http://shed.internal:4318", Log: log,
 	})
+	dashboards := observability.NewDashboards(observability.DashboardsConfig{
+		Store: st,
+		Grafana: func(ctx context.Context) (observability.DashboardAPI, error) {
+			pw, err := stack.AdminPassword(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second}), nil
+		},
+		GrafanaURL: shed.URL + "/grafana/", Log: log,
+	})
+	stack.AddWorker(dashboards.Run)
 
 	// The service under test and a neighbor whose logs must stay out of its.
 	ctxbg := context.Background()
@@ -237,9 +249,9 @@ func TestIntegrationAgents(t *testing.T) {
 	auditLog := audit.New(st, log)
 	plane := control.New(control.Config{
 		Store: st, Audit: auditLog, Telemetry: stack, Metrics: remoteCollector,
-		Variables: variables.New(st, nil),
-		Stores:    control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt, Dashboards: stack},
-		BaseURL:   shed.URL, Log: log,
+		Variables:  variables.New(st, nil),
+		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt},
+		Dashboards: dashboards, BaseURL: shed.URL, Log: log,
 	})
 	authn := auth.New(api.AuthStore(st), auditLog, func() (auth.OAuth, bool) { return nil, false }, shed.URL, []string{"octocat"}, log)
 	mcpHandler := mcp.New(mcp.Config{Backend: plane, Version: "it", Log: log}).Handler()
@@ -663,9 +675,12 @@ func TestIntegrationAgents(t *testing.T) {
 		if isErr || !strings.Contains(text, `"name":"db"`) || !strings.Contains(text, `"status":"error"`) {
 			t.Errorf("get_trace: %v %s", isErr, text)
 		}
-		text, isErr = tool("list_dashboards", nil)
-		if isErr || !strings.Contains(text, `"dashboards"`) {
-			t.Errorf("list_dashboards: %v %s", isErr, text)
+		eventually("list_dashboards", func() bool {
+			text, isErr = tool("list_dashboards", map[string]any{"folder_uid": grafana.ServiceFolder(svc.ID)})
+			return !isErr && strings.Contains(text, `"uid":"svc-overview-`+svc.ID+`"`)
+		})
+		if want := `"url":"` + shed.URL + `/grafana/d/svc-overview-` + svc.ID + `"`; !strings.Contains(text, want) || !strings.Contains(text, `"folder":"web"`) {
+			t.Errorf("list_dashboards: %s, want %s in folder web", text, want)
 		}
 	})
 

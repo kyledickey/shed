@@ -36,25 +36,17 @@ type TracesStore interface {
 	Trace(ctx context.Context, id string) (*victoria.Trace, error)
 }
 
-// DashboardLister lists Grafana's dashboards. *observability.Manager
-// implements it.
-type DashboardLister interface {
-	Dashboards(ctx context.Context, folderUID string) ([]observability.Dashboard, error)
-}
-
 // TelemetryStores are the stores and Grafana that telemetry queries read.
 type TelemetryStores struct {
-	Metrics    MetricsStore
-	Logs       LogsStore
-	Traces     TracesStore
-	Dashboards DashboardLister
+	Metrics MetricsStore
+	Logs    LogsStore
+	Traces  TracesStore
 }
 
 var (
-	_ MetricsStore    = (*victoria.Metrics)(nil)
-	_ LogsStore       = (*victoria.Logs)(nil)
-	_ TracesStore     = (*victoria.Traces)(nil)
-	_ DashboardLister = (*observability.Manager)(nil)
+	_ MetricsStore = (*victoria.Metrics)(nil)
+	_ LogsStore    = (*victoria.Logs)(nil)
+	_ TracesStore  = (*victoria.Traces)(nil)
 )
 
 // Limits on what telemetry queries return.
@@ -546,25 +538,10 @@ var traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // characters.
 func ValidTraceID(s string) bool { return traceIDPattern.MatchString(s) }
 
-// Dashboard is a Grafana dashboard.
-type Dashboard struct {
-	UID, Title, Folder string
-	// URL is where the dashboard is served, under the dashboard's URL.
-	URL string
-}
-
 // Dashboards lists Grafana's dashboards, only those of folder folderUID when
 // it is not empty.
-func (p *Plane) Dashboards(ctx context.Context, folderUID string) ([]Dashboard, error) {
-	list, err := p.stores.Dashboards.Dashboards(ctx, folderUID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Dashboard, len(list))
-	for i, d := range list {
-		out[i] = Dashboard{UID: d.UID, Title: d.Title, Folder: d.Folder, URL: p.baseURL + d.Path}
-	}
-	return out, nil
+func (p *Plane) Dashboards(ctx context.Context, folderUID string) ([]observability.Dashboard, error) {
+	return p.dashboards.List(ctx, folderUID)
 }
 
 // TraceExploreURL returns the Grafana Explore URL, relative to the server,
