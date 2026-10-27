@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/url"
 	"regexp"
@@ -15,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/victoria"
@@ -164,14 +162,13 @@ func (p *Plane) queryLogs(ctx context.Context, logsql string, start, end time.Ti
 	if err != nil {
 		return nil, p.storeError("logs query", err)
 	}
-	values, err := p.variableValues(ctx)
+	mask, err := p.ShedMask(ctx)
 	if err != nil {
 		return nil, err
 	}
-	redactor := build.NewRedactor(io.Discard, values)
 	for _, r := range records {
 		for k, v := range r {
-			r[k] = redactor.Redact(v)
+			r[k] = mask(v)
 		}
 	}
 	return records, nil
