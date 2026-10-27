@@ -54,6 +54,10 @@ func (f *fakeTelemetry) Restart(_ context.Context, c observability.Component) er
 	return nil
 }
 
+func (f *fakeTelemetry) Dropping(_ context.Context, serviceID string) (bool, error) {
+	return serviceID == "dropping", nil
+}
+
 func (f *fakeTelemetry) DeleteData(context.Context) error {
 	if f.s.Enabled {
 		return observability.ErrEnabled

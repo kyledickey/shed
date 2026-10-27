@@ -121,3 +121,31 @@ func TestWebhookDeliveriesAreTracedAndCounted(t *testing.T) {
 		t.Errorf("got %d webhook spans, want 3", deliveries)
 	}
 }
+
+func TestServiceTelemetryRoutes(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	path := "/api/services/" + svc.ID + "/telemetry"
+	for _, tt := range []struct {
+		method, body string
+		code         int
+		want         string
+	}{
+		{"GET", "", http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false}`},
+		{"PUT", `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3}}`, http.StatusOK, `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3},"overridden":true,"dropping":false}`},
+		{"PUT", `{"caps":{"spansPerSecond":0,"logsPerSecond":2,"series":3}}`, http.StatusBadRequest, ""},
+		{"PUT", `{"caps":null}`, http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false}`},
+	} {
+		w := f.do(tt.method, path, tt.body)
+		if w.Code != tt.code {
+			t.Errorf("%s %s: %d %s, want %d", tt.method, tt.body, w.Code, w.Body, tt.code)
+			continue
+		}
+		if tt.want != "" && strings.TrimSpace(w.Body.String()) != tt.want {
+			t.Errorf("%s %s: %s, want %s", tt.method, tt.body, w.Body, tt.want)
+		}
+	}
+	if w := f.do("GET", "/api/services/nope/telemetry", ""); w.Code != http.StatusNotFound {
+		t.Errorf("unknown service: %d, want 404", w.Code)
+	}
+}

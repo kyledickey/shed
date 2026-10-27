@@ -2,9 +2,11 @@ package control
 
 import (
 	"context"
+	"errors"
 
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/observability"
+	"github.com/kyledickey/shed/internal/store"
 )
 
 // Telemetry runs the telemetry stack. *observability.Manager implements it.
@@ -14,6 +16,7 @@ type Telemetry interface {
 	SetSettings(ctx context.Context, s observability.Settings) (observability.Settings, error)
 	Restart(ctx context.Context, c observability.Component) error
 	DeleteData(ctx context.Context) error
+	Dropping(ctx context.Context, serviceID string) (bool, error)
 }
 
 var _ Telemetry = (*observability.Manager)(nil)
@@ -77,4 +80,69 @@ func (p *Plane) DeleteTelemetryData(ctx context.Context) error {
 	err := p.telemetry.DeleteData(ctx)
 	p.record(ctx, err, audit.Event{Action: "telemetry.data.delete"})
 	return err
+}
+
+// ServiceTelemetry is a service's telemetry: its caps and whether records
+// are being dropped.
+type ServiceTelemetry struct {
+	// Caps are the effective caps: the service's override or the defaults.
+	Caps observability.Caps
+	// Overridden is set if the service has its own caps.
+	Overridden bool
+	// Dropping is set if records were dropped in the last 5 minutes.
+	Dropping bool
+}
+
+// ServiceTelemetry returns a service's telemetry.
+func (p *Plane) ServiceTelemetry(ctx context.Context, serviceID string) (ServiceTelemetry, error) {
+	if _, err := p.store.Service(ctx, serviceID); err != nil {
+		return ServiceTelemetry{}, err
+	}
+	var out ServiceTelemetry
+	switch c, err := p.store.TelemetryCaps(ctx, serviceID); {
+	case err == nil:
+		out.Caps = observability.Caps{SpansPerSecond: c.SpansPerSecond, LogsPerSecond: c.LogsPerSecond, Series: c.Series}
+		out.Overridden = true
+	case errors.Is(err, store.ErrNotFound):
+		s, err := p.telemetry.Settings(ctx)
+		if err != nil {
+			return ServiceTelemetry{}, err
+		}
+		out.Caps = s.DefaultCaps
+	default:
+		return ServiceTelemetry{}, err
+	}
+	dropping, err := p.telemetry.Dropping(ctx, serviceID)
+	if err != nil {
+		return ServiceTelemetry{}, err
+	}
+	out.Dropping = dropping
+	return out, nil
+}
+
+// SetServiceTelemetryCaps sets a service's own caps, or with nil returns it
+// to the defaults. Each cap must be at least 1. The gateway and the log
+// shipper apply them within seconds.
+func (p *Plane) SetServiceTelemetryCaps(ctx context.Context, serviceID string, caps *observability.Caps) (ServiceTelemetry, error) {
+	err := p.setServiceTelemetryCaps(ctx, serviceID, caps)
+	p.recordService(ctx, err, "telemetry.caps.update", serviceID, map[string]any{"overridden": caps != nil})
+	if err != nil {
+		return ServiceTelemetry{}, err
+	}
+	return p.ServiceTelemetry(ctx, serviceID)
+}
+
+func (p *Plane) setServiceTelemetryCaps(ctx context.Context, serviceID string, caps *observability.Caps) error {
+	if _, err := p.store.Service(ctx, serviceID); err != nil {
+		return err
+	}
+	if caps == nil {
+		return p.store.DeleteTelemetryCaps(ctx, serviceID)
+	}
+	if caps.SpansPerSecond < 1 || caps.LogsPerSecond < 1 || caps.Series < 1 {
+		return errorf(ErrInvalid, "every cap must be at least 1")
+	}
+	return p.store.SetTelemetryCaps(ctx, serviceID, store.TelemetryCaps{
+		SpansPerSecond: caps.SpansPerSecond, LogsPerSecond: caps.LogsPerSecond, Series: caps.Series,
+	})
 }

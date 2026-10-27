@@ -72,6 +72,10 @@ type Store interface {
 	PendingPush(ctx context.Context, serviceID string) (store.PendingPush, error)
 	PendingPushes(ctx context.Context) ([]store.PendingPush, error)
 	DeletePendingPush(ctx context.Context, serviceID, id string) error
+
+	TelemetryCaps(ctx context.Context, serviceID string) (store.TelemetryCaps, error)
+	SetTelemetryCaps(ctx context.Context, serviceID string, c store.TelemetryCaps) error
+	DeleteTelemetryCaps(ctx context.Context, serviceID string) error
 }
 
 var _ Store = (*store.Store)(nil)

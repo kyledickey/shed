@@ -40,6 +40,10 @@ func (f *fakeTelemetry) Restart(_ context.Context, c observability.Component) er
 	return nil
 }
 
+func (f *fakeTelemetry) Dropping(_ context.Context, serviceID string) (bool, error) {
+	return serviceID == "dropping", nil
+}
+
 func (f *fakeTelemetry) DeleteData(context.Context) error {
 	if f.s.Enabled {
 		return observability.ErrEnabled
@@ -118,5 +122,45 @@ func TestTelemetryAudit(t *testing.T) {
 				t.Errorf("%s: fields %v, want %v", step.name, e.Detail["fields"], w.fields)
 			}
 		}
+	}
+}
+
+func TestServiceTelemetryCaps(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	svc := createApp(t, f.st)
+	defaults := observability.DefaultSettings().DefaultCaps
+
+	got, err := f.plane.ServiceTelemetry(ctx, svc.ID)
+	if err != nil || got != (ServiceTelemetry{Caps: defaults}) {
+		t.Fatalf("defaults: %+v, %v", got, err)
+	}
+	f.audit.take()
+
+	own := observability.Caps{SpansPerSecond: 10, LogsPerSecond: 20, Series: 30}
+	got, err = f.plane.SetServiceTelemetryCaps(ctx, svc.ID, &own)
+	if err != nil || got != (ServiceTelemetry{Caps: own, Overridden: true}) {
+		t.Fatalf("override: %+v, %v", got, err)
+	}
+	if _, err := f.plane.SetServiceTelemetryCaps(ctx, svc.ID, &observability.Caps{SpansPerSecond: 1, LogsPerSecond: 0, Series: 1}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("zero cap: %v, want ErrInvalid", err)
+	}
+	got, err = f.plane.SetServiceTelemetryCaps(ctx, svc.ID, nil)
+	if err != nil || got != (ServiceTelemetry{Caps: defaults}) {
+		t.Fatalf("reset: %+v, %v", got, err)
+	}
+	if _, err := f.plane.ServiceTelemetry(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown service: %v, want ErrNotFound", err)
+	}
+
+	var outcomes []string
+	for _, e := range f.audit.take() {
+		if e.Action != "telemetry.caps.update" || e.ServiceID != svc.ID {
+			t.Errorf("recorded %s on %s", e.Action, e.ServiceID)
+		}
+		outcomes = append(outcomes, string(e.Outcome))
+	}
+	if want := []string{"ok", "failed", "ok"}; !slices.Equal(outcomes, want) {
+		t.Errorf("outcomes %v, want %v", outcomes, want)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/observability"
 )
 
@@ -102,4 +103,36 @@ func (s *Server) deleteTelemetryData(w http.ResponseWriter, r *http.Request) err
 	}
 	w.WriteHeader(http.StatusNoContent)
 	return nil
+}
+
+type serviceTelemetryJSON struct {
+	Caps       observability.Caps `json:"caps"`
+	Overridden bool               `json:"overridden"`
+	Dropping   bool               `json:"dropping"`
+}
+
+func toServiceTelemetryJSON(st control.ServiceTelemetry) serviceTelemetryJSON {
+	return serviceTelemetryJSON{Caps: st.Caps, Overridden: st.Overridden, Dropping: st.Dropping}
+}
+
+func (s *Server) getServiceTelemetry(w http.ResponseWriter, r *http.Request) error {
+	st, err := s.control.ServiceTelemetry(r.Context(), r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, toServiceTelemetryJSON(st))
+}
+
+func (s *Server) putServiceTelemetry(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Caps *observability.Caps `json:"caps"`
+	}
+	if err := decodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	st, err := s.control.SetServiceTelemetryCaps(r.Context(), r.PathValue("id"), in.Caps)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, toServiceTelemetryJSON(st))
 }
