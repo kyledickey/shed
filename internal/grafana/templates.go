@@ -361,8 +361,11 @@ func projectOverview(b *board, id string) {
 }
 
 const (
-	// shedSelf matches shed's own metrics.
+	// shedSelf matches shed's own metrics about itself.
 	shedSelf = `shed_service_id="shed"`
+	// shedRecorded matches every metric shed records itself, including
+	// those about a service, whose shed_service_id names that service.
+	shedRecorded = `shed_source="shed"`
 	// shedLogs is the stream of shed's own log records.
 	shedLogs = `{shed.service.id="shed", shed.source="shed"}`
 )
@@ -380,7 +383,7 @@ func shedOverview(b *board, _ string) {
 	b.add(8, 4, stat("Host memory", "percentunit", metricNow("max(shed_host_memory_bytes) / max(shed_host_memory_total_bytes)", ""), "-"))
 	b.add(8, 4, stat("Host disk", "percentunit", metricNow("max(shed_host_disk_used_bytes) / max(shed_host_disk_total_bytes)", ""), "-"))
 	b.add(12, 8, bars("Deployments by outcome", "short",
-		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_deployments_total", shedSelf), "$__rate_interval")), "{{outcome}}")))
+		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_deployments_total", shedRecorded), "$__rate_interval")), "{{outcome}}")))
 	b.add(12, 8, timeseries("Edge requests/s by status", "reqps", metric(statusClass("shed_http_requests_total"), "{{class}}")))
 	hostUsage(b)
 	b.add(24, 12, logsPanel("shed log", logLines(shedLogs)))
@@ -388,12 +391,12 @@ func shedOverview(b *board, _ string) {
 
 func shedDeploys(b *board, _ string) {
 	b.add(12, 8, timeseries("Stage duration p95", "s",
-		metric(quantile(0.95, "stage, le", sel("shed_deploy_stage_duration_seconds_bucket", shedSelf)), "{{stage}}")))
+		metric(quantile(0.95, "stage, le", sel("shed_deploy_stage_duration_seconds_bucket", shedRecorded)), "{{stage}}")))
 	b.add(12, 8, bars("Outcomes", "short",
-		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_deployments_total", shedSelf), "$__rate_interval")), "{{outcome}}")))
+		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_deployments_total", shedRecorded), "$__rate_interval")), "{{outcome}}")))
 	b.add(8, 8, timeseries("Queue depth", "short", metric(fmt.Sprintf("max(%s)", sel("shed_deploy_queue_depth", shedSelf)), "queued")))
 	b.add(8, 8, timeseries("Build cache hit ratio", "percentunit",
-		metric(fmt.Sprintf("sum(%s) / sum(%s)", rate(sel("shed_build_steps_total", shedSelf, `cached="true"`)), rate(sel("shed_build_steps_total", shedSelf))), "cached")))
+		metric(fmt.Sprintf("sum(%s) / sum(%s)", rate(sel("shed_build_steps_total", shedRecorded, `cached="true"`)), rate(sel("shed_build_steps_total", shedRecorded))), "cached")))
 	b.add(8, 8, timeseries("Image pulls/s", "ops",
 		metric(fmt.Sprintf("sum(%s)", rate(sel("shed_docker_request_duration_seconds_count", shedSelf, `op=~"(?i).*pull.*"`))), "pulls")))
 }
@@ -444,12 +447,12 @@ func shedHost(b *board, _ string) {
 
 func shedBackups(b *board, _ string) {
 	mean := func(name string) string {
-		return fmt.Sprintf("sum(%s) / sum(%s)", rate(sel(name+"_sum", shedSelf)), rate(sel(name+"_count", shedSelf)))
+		return fmt.Sprintf("sum(%s) / sum(%s)", rate(sel(name+"_sum", shedRecorded)), rate(sel(name+"_count", shedRecorded)))
 	}
 	b.add(12, 8, bars("Backups by outcome", "short",
-		metric(fmt.Sprintf("sum by (kind, outcome) (%s)", increase(sel("shed_backups_total", shedSelf), "$__rate_interval")), "{{kind}} {{outcome}}")))
+		metric(fmt.Sprintf("sum by (kind, outcome) (%s)", increase(sel("shed_backups_total", shedRecorded), "$__rate_interval")), "{{kind}} {{outcome}}")))
 	b.add(12, 8, stat("Failures", "short",
-		metricNow(fmt.Sprintf("sum(%s)", increase(sel("shed_backups_total", shedSelf, `outcome="failed"`), "$__range")), ""), "0"))
+		metricNow(fmt.Sprintf("sum(%s)", increase(sel("shed_backups_total", shedRecorded, `outcome="failed"`), "$__range")), ""), "0"))
 	b.add(12, 8, timeseries("Mean duration", "s", metric(mean("shed_backup_duration_seconds"), "duration")))
 	b.add(12, 8, timeseries("Mean size", "bytes", metric(mean("shed_backup_bytes"), "size")))
 	b.add(24, 10, logsPanel("Backup and upload log", logLines(shedLogs+" (backup or upload)")))

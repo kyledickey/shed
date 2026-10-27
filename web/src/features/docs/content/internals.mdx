@@ -18,7 +18,7 @@ import { ResolverTrace } from "../components/internals/ResolverTrace";
 
 ## HTTP handling
 
-`internal/api` uses a plain `http.ServeMux` with method and path patterns, built in `Server.Handler`. There is no router library. Every response passes through `logRequests` (a debug log line with the status) and `securityHeaders`. Then the mux picks a route.
+`internal/api` uses a plain `http.ServeMux` with method and path patterns, built in `Server.Handler`. There is no router library. Every response passes through `logRequests` (a debug log line with the status), `securityHeaders`, `withAnonymous` (the anonymous audit actor), and `traced` (the request's span; see [Instrumentation](/docs/internals#instrumentation)). Then the mux picks a route.
 
 <Figure caption="Session routes are registered through authed(); the rest are wired individually in Handler.">
   <HttpChainDiagram />
@@ -38,7 +38,7 @@ Session routes are wrapped by `authed` in `auth.Require(protectMutations(baseURL
 
 ### The webhook handler
 
-`Server.webhook` (github.go) does its own checks, in this order:
+`Server.receiveWebhook` (github.go) does its own checks, in this order. `Server.webhook` wraps it in the delivery's span and counts the outcome.
 
 1. Set a 10 second read deadline. Require a configured GitHub App.
 2. Check the shape of `X-Hub-Signature-256`: `sha256=` plus 64 hex characters, else 401. This happens before the body is read.
@@ -240,3 +240,15 @@ Operator pages: [Archive pipeline](/docs/backups#archive-pipeline), [How a resto
 | `backup.ErrNoVolumes` | The service has no volumes to back up.                           |
 | `backup.ErrInvalid`   | The request is wrong, such as a service that was never deployed. |
 | `backup.ErrStopped`   | The manager is shutting down.                                    |
+
+## Instrumentation
+
+shed's own telemetry goes through the OpenTelemetry globals. `cmd/shed` registers the providers of `internal/telemetry` once, and every package calls `otel.Tracer` and `otel.Meter` with its import path as the name; no package takes a provider as a parameter. Until the globals are set, and while telemetry is off, the calls are no-ops: the off sampler drops every span, so `span.IsRecording()` is false. The span and metric names are listed under "shed's own telemetry" in `docs/design.md`.
+
+- **HTTP.** `traced` (api/telemetry.go) wraps the mux in `otelhttp.NewHandler`. It sits inside `withAnonymous` because that middleware clones the request: the mux sets `r.Pattern` on the request it receives, and otelhttp renames the span from that pattern after the handler returns. A filter skips event streams and upgrades.
+- **Deployments.** `startDeploy` (deploy/telemetry.go) starts the root span in `Deployer.run`, linked to the span context that `enqueue` kept on the `queued` deployment, and writes the trace ID to `Deployment.TraceID` only when the span records. `job.inStage` runs each stage in a child span and records its duration. `job.finish` counts the outcome. Stage errors go through `job.redact`, like the build log.
+- **Builds.** `steps` (build/steps.go) is an `io.Writer` behind the `Redactor`, so it only sees masked output. It parses buildx's `--progress plain` lines (`#N name`, then `#N DONE`, `CACHED`, `ERROR`, or `CANCELED`) into one span per vertex. `publicURL` strips the token from the clone URL before it becomes an attribute.
+- **Outbound clients.** The Docker client already wraps its transport in otelhttp; `docker.instrument` names spans through the `operations` table and times requests with a request hook that puts the start time in the request's context and a response hook that reads it back. GitHub and S3 wrap their transports in `tracedTransport`, whose inner `publicURL` layer overwrites `url.full` on the active span before the request leaves. 1Password calls go through `tracedAPI`.
+- **Store.** `store.Open` opens the database through `connector` (store/trace.go), which wraps each modernc.org/sqlite connection in `tracedConn`. It overrides `ExecContext` and `QueryContext` only, and `tracedRows` ends a query's span when its rows are closed. Prepared statements are not traced; the store does not use them.
+- **Service labels.** Metrics about a service take `telemetry.Service.Labels()`, spans `Attributes()`, so the label names live in one place.
+- **Tests.** `telemetrytest.Install` swaps in recording providers until the test ends. Instruments are created in constructors, so call it before building what you test, and don't mark such tests parallel. Leaf packages, which may not import `internal/`, set up the providers inline.
