@@ -94,7 +94,7 @@ func (j *job) execute(ctx context.Context) error {
 			j.secrets = append(j.secrets, secretValues(r.Env, j.masked)...)
 		}
 	}
-	if err := j.inStage(ctx, stageStart, func(ctx context.Context) error { return j.start(ctx, r.Env) }); err != nil {
+	if err := j.inStage(ctx, stageStart, func(ctx context.Context) error { return j.start(ctx, r) }); err != nil {
 		return err
 	}
 	if err := j.inStage(ctx, stageHealthCheck, j.checkHealth); err != nil {
@@ -239,7 +239,7 @@ func (j *job) detectPort(ctx context.Context) (bool, error) {
 // start runs the new container. Services with volumes or a published port
 // cannot run two containers at once, so every other container of the
 // service is stopped first.
-func (j *job) start(ctx context.Context, env map[string]string) error {
+func (j *job) start(ctx context.Context, r Resolved) error {
 	j.setStatus(store.StatusDeploying)
 	vols, err := j.store.Volumes(ctx, j.svc.ID)
 	if err != nil {
@@ -255,14 +255,14 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	j.dep.Port = j.svc.Port
 	// The runtime is recorded on activation, so a missing container is
 	// recreated as it runs now, whatever is saved later.
-	rt := runtimeOf(j.svc, env, j.masked, vols)
+	rt := runtimeOf(j.svc, r, j.masked, vols)
 	j.dep.Runtime = &rt
 	spec := containerSpec(j.svc, j.dep, rt)
 	// Private traffic must not reach the new container before it is healthy,
 	// so it gets the service's hostname only in switchOver.
 	spec.Aliases = nil
 	j.describe(spec)
-	id, err := j.runContainer(ctx, spec)
+	id, err := j.runContainer(ctx, spec, rt.Telemetry)
 	// A failed start may still leave the container behind, so fail must
 	// remove it.
 	j.container = id

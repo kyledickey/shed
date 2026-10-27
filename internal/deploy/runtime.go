@@ -22,8 +22,12 @@ import (
 // keepImages is how many built images are kept per service.
 const keepImages = 5
 
-// injected returns the variables shed provides to every service.
-func injected(project store.Project, svc store.Service, domains []store.Domain, sha string) map[string]string {
+// telemetryHost is the host name containers reach the telemetry gateway at.
+const telemetryHost = "shed.internal"
+
+// injected returns the variables shed provides to every service. otlp is
+// the gateway URL apps send telemetry to, "" while telemetry is off.
+func injected(project store.Project, svc store.Service, domains []store.Domain, sha, otlp string) map[string]string {
 	m := map[string]string{
 		"SHED_PROJECT_NAME":   project.Name,
 		"SHED_SERVICE_NAME":   svc.Name,
@@ -41,14 +45,43 @@ func injected(project store.Project, svc store.Service, domains []store.Domain, 
 	if svc.Branch != "" {
 		m["SHED_GIT_BRANCH"] = svc.Branch
 	}
+	if otlp != "" && svc.Kind == "app" {
+		m["OTEL_EXPORTER_OTLP_ENDPOINT"] = otlp
+		m["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+		m["OTEL_SERVICE_NAME"] = svc.Name
+		if v := cmp.Or(sha, svc.Image); v != "" {
+			m["OTEL_RESOURCE_ATTRIBUTES"] = "service.version=" + v
+		}
+	}
 	return m
 }
 
+// telemetryOn reports whether telemetry is on.
+func (d *Deployer) telemetryOn(ctx context.Context) (bool, error) {
+	if d.telemetry == nil {
+		return false, nil
+	}
+	on, err := d.telemetry(ctx)
+	if err != nil {
+		return false, fmt.Errorf("deploy: telemetry settings: %w", err)
+	}
+	return on, nil
+}
+
 // runContainer creates and starts the container described by spec, creating
-// its network and volumes as needed.
-func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (string, error) {
+// its network and volumes as needed. A container run with telemetry on gets
+// the host entry shed.internal, pointing at its network's gateway, where the
+// telemetry gateway listens.
+func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec, telemetry bool) (string, error) {
 	if err := d.docker.EnsureNetwork(ctx, spec.Network); err != nil {
 		return "", err
+	}
+	if telemetry {
+		gw, err := d.docker.NetworkGateway(ctx, spec.Network)
+		if err != nil {
+			return "", err
+		}
+		spec.ExtraHosts = append(spec.ExtraHosts, telemetryHost+":"+gw.String())
 	}
 	for _, m := range spec.Mounts {
 		if err := d.docker.EnsureVolume(ctx, m.Volume); err != nil {
@@ -59,13 +92,14 @@ func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (strin
 }
 
 // runtimeOf returns the container configuration of svc with the resolved
-// variables env, masking the variables under secretKeys in logs, and the
+// variables r, masking the variables under secretKeys in logs, and the
 // volumes vols.
-func runtimeOf(svc store.Service, env map[string]string, secretKeys []string, vols []store.Volume) store.DeploymentRuntime {
+func runtimeOf(svc store.Service, r Resolved, secretKeys []string, vols []store.Volume) store.DeploymentRuntime {
 	rt := store.DeploymentRuntime{
 		Cmd:        command(svc),
-		Env:        env,
+		Env:        r.Env,
 		SecretKeys: secretKeys,
+		Telemetry:  r.Telemetry,
 		CPUs:       svc.CPULimit,
 		Memory:     svc.MemoryLimit,
 		PublicPort: svc.PublicPort,
@@ -485,7 +519,7 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return "", fmt.Errorf("recreate container of %s: %w", svc.Name, err)
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
-	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt))
+	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt), rt.Telemetry)
 	if err != nil {
 		return "", err
 	}
@@ -511,7 +545,7 @@ func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep s
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		return runtimeOf(svc, r.Env, secretKeys(r), vols), nil
+		return runtimeOf(svc, r, secretKeys(r), vols), nil
 	}
 	rt := *dep.Runtime
 	rt.Volumes = nil

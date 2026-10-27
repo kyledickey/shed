@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,6 +56,7 @@ type Docker interface {
 	Inspect(ctx context.Context, id string) (docker.Container, error)
 	List(ctx context.Context, labels map[string]string) ([]docker.Container, error)
 	Logs(ctx context.Context, id string, tail int, follow bool, w io.Writer) error
+	NetworkGateway(ctx context.Context, name string) (netip.Addr, error)
 }
 
 // Builder builds images from source. *build.Builder implements it.
@@ -104,7 +106,14 @@ type Config struct {
 	KeepDeployments int
 	// Dashboard, if its Host is set, is included in every route set.
 	Dashboard proxy.Route
-	Log       *slog.Logger
+	// Telemetry reports whether telemetry is on. While it is, apps get the
+	// OTEL_* variables and every container gets the shed.internal host
+	// entry. Nil means off.
+	Telemetry func(ctx context.Context) (bool, error)
+	// OTLPEndpoint is the gateway URL apps send telemetry to, such as
+	// http://shed.internal:4318.
+	OTLPEndpoint string
+	Log          *slog.Logger
 }
 
 // Commit identifies the source revision of a deployment.
@@ -165,6 +174,8 @@ type Deployer struct {
 	logLimit  int64
 	keep      int // deployments kept per service; 0 keeps all
 	dashboard proxy.Route
+	telemetry func(ctx context.Context) (bool, error)
+	otlp      string
 	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
@@ -231,6 +242,8 @@ func New(cfg Config) *Deployer {
 		logLimit:         cfg.LogLimit,
 		keep:             cfg.KeepDeployments,
 		dashboard:        cfg.Dashboard,
+		telemetry:        cfg.Telemetry,
+		otlp:             cfg.OTLPEndpoint,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
 		ciTimeout:        60 * time.Minute,

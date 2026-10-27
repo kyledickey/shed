@@ -20,6 +20,9 @@ type Resolved struct {
 	// Saved holds the service's own variables as saved, with references
 	// unexpanded.
 	Saved map[string]string
+	// Telemetry is set if telemetry is on, which added the OTEL_* variables
+	// to apps and gives every container the shed.internal host entry.
+	Telemetry bool
 }
 
 // readVariables returns the own variables of a service.
@@ -67,6 +70,14 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 	if err != nil {
 		return Resolved{}, err
 	}
+	telemetry, err := d.telemetryOn(ctx)
+	if err != nil {
+		return Resolved{}, err
+	}
+	otlp := ""
+	if telemetry {
+		otlp = d.otlp
+	}
 	type layers struct {
 		svc      store.Service
 		injected map[string]string
@@ -84,7 +95,7 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 			commit = sha
 			s.Port = svc.Port
 		}
-		byName[s.Name] = &layers{svc: s, injected: injected(project, s, domains, commit)}
+		byName[s.Name] = &layers{svc: s, injected: injected(project, s, domains, commit, otlp)}
 	}
 	own := func(l *layers) (map[string]string, error) {
 		if !l.read {
@@ -129,9 +140,9 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		return v, ok, nil
 	})
 	if err != nil {
-		return Resolved{Own: ownKeys, Saved: selfOwn}, fmt.Errorf("deploy: resolve variables: %w", err)
+		return Resolved{Own: ownKeys, Saved: selfOwn, Telemetry: telemetry}, fmt.Errorf("deploy: resolve variables: %w", err)
 	}
-	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn}, nil
+	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn, Telemetry: telemetry}, nil
 }
 
 // ResolveVariables returns the variables of a service with references
