@@ -6,13 +6,15 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/kyledickey/shed/internal/audit"
 )
 
 // RequireBearer returns middleware that serves next only for requests with
 // an OAuth access token, in the Authorization header, that was issued for
 // resource and belongs to a permitted user. It makes the user available
-// through [UserFrom] and the token's scopes through [ScopesFrom]. Cookies are
-// ignored. Other requests get a 401 whose WWW-Authenticate header points
+// through [UserFrom], the token's scopes through [ScopesFrom], and the agent
+// through [audit.ActorFrom]. Cookies are ignored. Other requests get a 401 whose WWW-Authenticate header points
 // clients at the resource's metadata.
 func (a *Auth) RequireBearer(resource string) func(http.Handler) http.Handler {
 	metadata := a.baseURL + "/.well-known/oauth-protected-resource"
@@ -32,13 +34,20 @@ func (a *Auth) RequireBearer(resource string) func(http.Handler) http.Handler {
 				return
 			}
 			if !ok || grant.Resource != resource || !a.permits(user.Login) {
+				a.audit.Record(anonymous(r), audit.Event{
+					Action: "oauth.denied", Outcome: audit.Denied, Detail: map[string]any{"reason": "invalid_token"},
+				})
 				challenge(w, metadata, "invalid_token")
 				return
 			}
 			if err := a.store.TouchGrant(r.Context(), grant.ID, time.Now()); err != nil {
 				a.log.Warn("record oauth grant use", "grant", grant.ID, "err", err)
 			}
-			ctx := context.WithValue(r.Context(), userKey{}, user)
+			ctx := audit.WithActor(r.Context(), audit.Actor{
+				Kind: audit.Agent, Name: user.Login, ClientID: grant.ClientID, ClientName: grant.ClientName,
+				IP: audit.ClientIP(r),
+			})
+			ctx = context.WithValue(ctx, userKey{}, user)
 			ctx = context.WithValue(ctx, scopesKey{}, strings.Fields(grant.Scope))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

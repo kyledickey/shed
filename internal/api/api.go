@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/control"
@@ -98,6 +99,11 @@ type Control interface {
 
 	Repos(ctx context.Context) ([]github.Repo, error)
 	Branches(ctx context.Context, owner, repo string) ([]string, error)
+
+	Record(ctx context.Context, e audit.Event)
+	AuditEvents(ctx context.Context, f store.AuditFilter) (audit.Page, error)
+	AuditSettings(ctx context.Context) (audit.Settings, error)
+	SetAuditSettings(ctx context.Context, s audit.Settings) (audit.Settings, error)
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -276,6 +282,10 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/update/settings", s.putUpdateSettings)
 	authed("POST /api/update/install", s.installUpdate)
 
+	authed("GET /api/audit", s.listAudit)
+	authed("GET /api/audit/settings", s.getAuditSettings)
+	authed("PUT /api/audit/settings", s.putAuditSettings)
+
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)
 
@@ -284,7 +294,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.Handle("/", spa(s.web))
 
-	return s.logRequests(securityHeaders(mux))
+	return s.logRequests(securityHeaders(withAnonymous(mux)))
 }
 
 // logRequests logs every request at debug level.

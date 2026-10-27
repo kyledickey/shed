@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/catalog"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
@@ -48,12 +49,29 @@ type NewService struct {
 // deployment. Database kinds get their template's image, port, volume, and
 // variables; repo apps deploy the head of their branch.
 func (p *Plane) CreateService(ctx context.Context, projectID string, req NewService) (ServiceView, error) {
-	project, err := p.store.Project(ctx, projectID)
+	svc, err := p.createService(ctx, projectID, req)
+	detail := map[string]any{"name": req.Name, "kind": req.Kind}
+	for k, v := range map[string]string{"repo": req.Repo, "branch": req.Branch, "image": req.Image} {
+		if v != "" {
+			detail[k] = v
+		}
+	}
+	p.record(ctx, err, audit.Event{
+		Action: "service.create", ProjectID: projectID, ServiceID: svc.ID, Target: svc.ID, Detail: detail,
+	})
 	if err != nil {
 		return ServiceView{}, err
 	}
+	return p.withStatus(ctx, svc)
+}
+
+func (p *Plane) createService(ctx context.Context, projectID string, req NewService) (store.Service, error) {
+	project, err := p.store.Project(ctx, projectID)
+	if err != nil {
+		return store.Service{}, err
+	}
 	if !dnsLabel.MatchString(req.Name) {
-		return ServiceView{}, errorf(ErrInvalid, "service name must be a DNS label: lowercase letters, digits, and hyphens")
+		return store.Service{}, errorf(ErrInvalid, "service name must be a DNS label: lowercase letters, digits, and hyphens")
 	}
 
 	svc := store.Service{
@@ -70,33 +88,33 @@ func (p *Plane) CreateService(ctx context.Context, projectID string, req NewServ
 	case isDB:
 		svc.Image, svc.Port = tmpl.Image, tmpl.Port
 	case req.Kind != "app":
-		return ServiceView{}, errorf(ErrInvalid, "unknown service kind %q", req.Kind)
+		return store.Service{}, errorf(ErrInvalid, "unknown service kind %q", req.Kind)
 	case req.Repo != "":
 		svc.Repo, svc.Branch, svc.Port = req.Repo, req.Branch, defaultAppPort
 		if err := validateService(svc); err != nil {
-			return ServiceView{}, err
+			return store.Service{}, err
 		}
 		if commit, err = p.branchHead(ctx, svc); err != nil {
-			return ServiceView{}, err
+			return store.Service{}, err
 		}
 	case req.Image != "":
 		svc.Image = strings.TrimSpace(req.Image)
 	default:
-		return ServiceView{}, errorf(ErrInvalid, "an app needs a repository and branch, or an image")
+		return store.Service{}, errorf(ErrInvalid, "an app needs a repository and branch, or an image")
 	}
 
 	svc, err = p.store.CreateService(ctx, svc)
 	if errors.Is(err, store.ErrConflict) {
-		return ServiceView{}, errorf(ErrConflict, "a service named %q already exists in this project", req.Name)
+		return store.Service{}, errorf(ErrConflict, "a service named %q already exists in this project", req.Name)
 	}
 	if err != nil {
-		return ServiceView{}, err
+		return store.Service{}, err
 	}
 	if err := p.initService(ctx, svc, tmpl, isDB); err != nil {
 		if derr := p.store.DeleteService(ctx, svc.ID); derr != nil {
 			p.log.Error("delete half-created service", "service", svc.ID, "err", derr)
 		}
-		return ServiceView{}, err
+		return store.Service{}, err
 	}
 	p.pushMu.Lock()
 	_, err = p.deployer.Deploy(ctx, svc.ID, store.TriggerCreate, commit)
@@ -104,7 +122,7 @@ func (p *Plane) CreateService(ctx context.Context, projectID string, req NewServ
 	if err != nil {
 		p.log.Error("start first deployment", "service", svc.ID, "err", err)
 	}
-	return p.withStatus(ctx, svc)
+	return svc, nil
 }
 
 // initService saves the variables of a new service, which creates its
@@ -171,10 +189,12 @@ type ServicePatch struct {
 // UpdateService saves settings of a service. They apply from its next
 // deployment.
 func (p *Plane) UpdateService(ctx context.Context, id string, patch ServicePatch) (ServiceView, error) {
-	svc, err := p.store.Service(ctx, id)
+	old, err := p.store.Service(ctx, id)
 	if err != nil {
+		p.recordService(ctx, err, "service.update", id, nil)
 		return ServiceView{}, err
 	}
+	svc := old
 	set(&svc.Repo, patch.Repo)
 	set(&svc.Branch, patch.Branch)
 	set(&svc.RootDir, patch.RootDir)
@@ -188,13 +208,35 @@ func (p *Plane) UpdateService(ctx context.Context, id string, patch ServicePatch
 	set(&svc.MemoryLimit, patch.MemoryLimit)
 	set(&svc.AutoDeploy, patch.AutoDeploy)
 	set(&svc.WaitForCI, patch.WaitForCI)
-	if err := validateService(svc); err != nil {
-		return ServiceView{}, err
+	err = validateService(svc)
+	if err == nil {
+		err = p.store.UpdateService(ctx, svc)
 	}
-	if err := p.store.UpdateService(ctx, svc); err != nil {
+	p.record(ctx, err, serviceEvent("service.update", old, map[string]any{"fields": changedFields(old, svc)}))
+	if err != nil {
 		return ServiceView{}, err
 	}
 	return p.withStatus(ctx, svc)
+}
+
+// changedFields returns the names of the editable settings that differ
+// between a and b.
+func changedFields(a, b store.Service) []string {
+	return changed([]field{
+		{"repo", a.Repo != b.Repo},
+		{"branch", a.Branch != b.Branch},
+		{"rootDir", a.RootDir != b.RootDir},
+		{"image", a.Image != b.Image},
+		{"dockerfilePath", a.DockerfilePath != b.DockerfilePath},
+		{"startCommand", a.StartCommand != b.StartCommand},
+		{"port", a.Port != b.Port},
+		{"healthcheckPath", a.HealthcheckPath != b.HealthcheckPath},
+		{"publicPort", a.PublicPort != b.PublicPort},
+		{"cpuLimit", a.CPULimit != b.CPULimit},
+		{"memoryLimit", a.MemoryLimit != b.MemoryLimit},
+		{"autoDeploy", a.AutoDeploy != b.AutoDeploy},
+		{"waitForCi", a.WaitForCI != b.WaitForCI},
+	})
 }
 
 func set[T any](dst *T, v *T) {
@@ -242,8 +284,16 @@ func relative(p string) bool {
 func (p *Plane) DeleteService(ctx context.Context, id string) error {
 	svc, err := p.store.Service(ctx, id)
 	if err != nil {
-		return err
+		svc = store.Service{ID: id}
+	} else {
+		err = p.deleteService(ctx, svc)
 	}
+	p.record(ctx, err, serviceEvent("service.delete", svc, nil))
+	return err
+}
+
+func (p *Plane) deleteService(ctx context.Context, svc store.Service) error {
+	id := svc.ID
 	resume, err := p.pauseBackups(ctx, id)
 	if err != nil {
 		return err
@@ -281,23 +331,31 @@ func (p *Plane) archive(ctx context.Context, items []variables.Item) {
 
 // StopService stops a service's container and keeps it stopped.
 func (p *Plane) StopService(ctx context.Context, id string) error {
-	return p.deployer.StopService(ctx, id)
+	err := p.deployer.StopService(ctx, id)
+	p.recordService(ctx, err, "service.stop", id, nil)
+	return err
 }
 
 // StartService starts a stopped service.
 func (p *Plane) StartService(ctx context.Context, id string) error {
-	return p.deployer.StartService(ctx, id)
+	err := p.deployer.StartService(ctx, id)
+	p.recordService(ctx, err, "service.start", id, nil)
+	return err
 }
 
 // RestartService restarts a service's container.
 func (p *Plane) RestartService(ctx context.Context, id string) error {
-	return p.deployer.RestartService(ctx, id)
+	err := p.deployer.RestartService(ctx, id)
+	p.recordService(ctx, err, "service.restart", id, nil)
+	return err
 }
 
 // ClearRestoreFence lifts the fence a failed restore left on a service,
 // keeping its data as it is.
 func (p *Plane) ClearRestoreFence(ctx context.Context, id string) error {
-	return p.deployer.ClearRestoreFence(ctx, id)
+	err := p.deployer.ClearRestoreFence(ctx, id)
+	p.recordService(ctx, err, "service.fence.clear", id, nil)
+	return err
 }
 
 // withStatus returns the view of svc with the live status of its project.

@@ -23,6 +23,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/kyledickey/shed/internal/api"
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/build"
@@ -218,7 +219,8 @@ func run() error {
 	}
 	var restarting atomic.Bool
 
-	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
+	auditLog := audit.New(st, log)
+	authn := auth.New(api.AuthStore(st), auditLog, func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {
 			return c, true
 		}
@@ -243,6 +245,7 @@ func run() error {
 			return nil, false
 		},
 		Variables:  vars,
+		Audit:      auditLog,
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
@@ -278,6 +281,7 @@ func run() error {
 	}
 	var background sync.WaitGroup
 	background.Go(func() { collector.Run(ctx) })
+	background.Go(func() { auditLog.Run(ctx) })
 	background.Go(func() { backups.Run(ctx) })
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
@@ -97,18 +98,38 @@ func (p *Plane) CheckUpdate(ctx context.Context) (update.Status, error) {
 
 // DownloadUpdate starts downloading the newest release.
 func (p *Plane) DownloadUpdate(ctx context.Context) (update.Status, error) {
-	return p.updates.Download(ctx)
+	st, err := p.updates.Download(ctx)
+	p.record(ctx, err, updateEvent("update.download", st, nil))
+	return st, err
 }
 
 // SetAutoDownload sets whether new releases are downloaded when found.
 func (p *Plane) SetAutoDownload(ctx context.Context, on bool) (update.Status, error) {
-	return p.updates.SetAutoDownload(ctx, on)
+	st, err := p.updates.SetAutoDownload(ctx, on)
+	p.record(ctx, err, updateEvent("update.settings.update", st, map[string]any{"autoDownload": on}))
+	return st, err
 }
 
 // InstallUpdate swaps in the downloaded release. shed runs it once
 // restarted, which is up to the caller.
 func (p *Plane) InstallUpdate(ctx context.Context) (update.Status, error) {
-	return p.updates.Install(ctx)
+	st, err := p.updates.Install(ctx)
+	p.record(ctx, err, updateEvent("update.install", st, nil))
+	return st, err
+}
+
+// updateEvent returns an update event naming the running and latest
+// versions.
+func updateEvent(action string, st update.Status, detail map[string]any) audit.Event {
+	d := map[string]any{}
+	if st.Current != "" {
+		d["current"] = st.Current
+	}
+	if st.Latest != nil {
+		d["latest"] = st.Latest.Version
+	}
+	maps.Copy(d, detail)
+	return audit.Event{Action: action, Detail: d}
 }
 
 // Repos returns the repositories the GitHub App is installed on.

@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
@@ -37,6 +39,15 @@ type fakeBackend struct {
 	fail    error // returned by every method when set
 	repos   int
 	backups int
+
+	mu      sync.Mutex
+	filter  store.AuditFilter // of the last AuditEvents call
+	records []recordedEvent
+}
+
+type recordedEvent struct {
+	audit.Event
+	Actor audit.Actor
 }
 
 func (f *fakeBackend) check(id, want string) error {
@@ -216,10 +227,36 @@ func (f *fakeBackend) Branches(_ context.Context, owner, repo string) ([]string,
 	return []string{"main", "dev"}, nil
 }
 
+func (f *fakeBackend) AuditEvents(_ context.Context, filter store.AuditFilter) (audit.Page, error) {
+	if f.fail != nil {
+		return audit.Page{}, f.fail
+	}
+	f.mu.Lock()
+	f.filter = filter
+	f.mu.Unlock()
+	return audit.Page{Events: []store.AuditEvent{
+		{ID: 7, Time: created, ActorKind: "user", Actor: "octocat", ActorIP: "203.0.113.9", Action: "service.variables.update",
+			Outcome: "ok", ProjectID: "prj1", ServiceID: "svc1", Target: "svc1", Detail: `{"added":["API_TOKEN"],"service":"web"}`},
+		{ID: 6, Time: created, ActorKind: "system", Action: "deployment.create", Outcome: "failed", Detail: "{}"},
+	}}, nil
+}
+
+func (f *fakeBackend) Record(ctx context.Context, e audit.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records = append(f.records, recordedEvent{e, audit.ActorFrom(ctx)})
+}
+
 // connect serves backend over HTTP and returns a connected client session.
 func connect(t *testing.T, backend Backend) *sdk.ClientSession {
 	t.Helper()
-	srv := httptest.NewServer(New(Config{Backend: backend, Version: "test", Log: slog.New(slog.DiscardHandler)}).Handler())
+	return connectWith(t, backend, func(h http.Handler) http.Handler { return h })
+}
+
+// connectWith is connect with the handler wrapped by wrap.
+func connectWith(t *testing.T, backend Backend, wrap func(http.Handler) http.Handler) *sdk.ClientSession {
+	t.Helper()
+	srv := httptest.NewServer(wrap(New(Config{Backend: backend, Version: "test", Log: slog.New(slog.DiscardHandler)}).Handler()))
 	t.Cleanup(srv.Close)
 	client := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
 	cs, err := client.Connect(context.Background(), &sdk.StreamableClientTransport{
@@ -269,7 +306,7 @@ func TestToolList(t *testing.T) {
 	}
 	slices.Sort(names)
 	want := []string{
-		"build_log", "get_deployment", "get_project", "get_service", "host_metrics", "list_backups",
+		"audit_events", "build_log", "get_deployment", "get_project", "get_service", "host_metrics", "list_backups",
 		"list_branches", "list_deployments", "list_projects", "list_repos", "list_variables",
 		"runtime_logs", "service_metrics", "shed_log", "update_status",
 	}
@@ -335,6 +372,8 @@ func TestToolErrors(t *testing.T) {
 		{"invalid repo", nil, "list_branches", map[string]any{"owner": "a b", "repo": "c"}, "repository must be owner/name"},
 		{"bad range", nil, "service_metrics", map[string]any{"service_id": "svc1", "range": "2h"}, "range"},
 		{"missing argument", nil, "get_service", nil, "service_id"},
+		{"bad since", nil, "audit_events", map[string]any{"since": "yesterday"}, "since must be"},
+		{"bad outcome", nil, "audit_events", map[string]any{"outcome": "maybe"}, "outcome"},
 		{"no container", deploy.ErrNoContainer, "runtime_logs", map[string]any{"service_id": "svc1"}, "nothing to run; deploy the service first"},
 		{"conflict", &control.Error{Kind: control.ErrConflict, Msg: "GitHub App is not configured"}, "list_repos", nil, "GitHub App is not configured"},
 		{"internal", errors.New("sqlite: disk I/O error at /var/lib/shed/shed.db"), "list_projects", nil, "internal error"},

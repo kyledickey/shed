@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kyledickey/shed/internal/audit"
 )
 
 // OAuth 2.1 authorization server for agents. GitHub sign-in identifies the
@@ -441,8 +443,13 @@ func (a *Auth) DecideAuthorization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "authorization request not found or expired")
 		return
 	}
+	consent := audit.Event{Action: "oauth.grant", Outcome: audit.OK, Target: req.client.ID, Detail: map[string]any{
+		"client": req.client.Name, "redirectHost": redirectHost(req.redirectURI), "scope": req.scope,
+	}}
 	if !in.Approve {
 		a.log.Info("oauth authorization denied", "client", req.client.ID, "login", user.Login)
+		consent.Action, consent.Outcome = "oauth.denied", audit.Denied
+		a.audit.Record(r.Context(), consent)
 		writeJSONStatus(w, http.StatusOK, map[string]string{
 			"redirect": withQuery(req.redirectURI, "error", "access_denied", "state", req.state),
 		})
@@ -468,6 +475,7 @@ func (a *Auth) DecideAuthorization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.log.Info("oauth authorization approved", "client", req.client.ID, "name", req.client.Name, "login", user.Login)
+	a.audit.Record(r.Context(), consent)
 	writeJSONStatus(w, http.StatusOK, map[string]string{
 		"redirect": withQuery(req.redirectURI, "code", code, "state", req.state),
 	})
@@ -488,11 +496,12 @@ func (a *Auth) Token(w http.ResponseWriter, r *http.Request) {
 	if err := a.cleanUp(r.Context()); err != nil {
 		a.log.Warn("remove expired oauth rows", "err", err)
 	}
+	ctx := anonymous(r)
 	switch form.Get("grant_type") {
 	case "authorization_code":
-		a.exchangeCode(w, r.Context(), form)
+		a.exchangeCode(w, ctx, form)
 	case "refresh_token":
-		a.refresh(w, r.Context(), form)
+		a.refresh(w, ctx, form)
 	case "":
 		oauthError(w, http.StatusBadRequest, "invalid_request", "grant_type is required")
 	default:
@@ -538,7 +547,7 @@ func (a *Auth) exchangeCode(w http.ResponseWriter, ctx context.Context, form url
 			Resource:    c.Resource,
 		}, pair.tokens(), nil
 	})
-	a.writeTokens(w, grant, pair, ok, err)
+	a.writeTokens(w, ctx, clientID, grant, pair, ok, err)
 }
 
 func (a *Auth) refresh(w http.ResponseWriter, ctx context.Context, form url.Values) {
@@ -566,23 +575,31 @@ func (a *Auth) refresh(w http.ResponseWriter, ctx context.Context, form url.Valu
 		}
 		return pair.tokens(), nil
 	})
-	a.writeTokens(w, grant, pair, ok, err)
+	a.writeTokens(w, ctx, clientID, grant, pair, ok, err)
 }
 
-// writeTokens answers a token request with the result of redeeming a code or
-// a refresh token.
-func (a *Auth) writeTokens(w http.ResponseWriter, g Grant, pair tokenPair, ok bool, err error) {
+// writeTokens answers a token request of clientID with the result of
+// redeeming a code or a refresh token, and records refusals.
+func (a *Auth) writeTokens(w http.ResponseWriter, ctx context.Context, clientID string, g Grant, pair tokenPair, ok bool, err error) {
+	deny := func(reason string) {
+		a.audit.Record(ctx, audit.Event{
+			Action: "oauth.denied", Outcome: audit.Denied, Target: clientID, Detail: map[string]any{"reason": reason},
+		})
+	}
 	var te *tokenError
 	switch {
 	case errors.As(err, &te):
+		deny(te.code)
 		oauthError(w, http.StatusBadRequest, te.code, te.desc)
 	case errors.Is(err, ErrReplayed):
 		a.log.Warn("oauth code or refresh token replayed; grant revoked")
+		deny("replayed")
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the grant is invalid, expired, or revoked")
 	case err != nil:
 		a.log.Error("issue oauth tokens", "err", err)
 		oauthError(w, http.StatusInternalServerError, "server_error", "")
 	case !ok:
+		deny("invalid_grant")
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the grant is invalid, expired, or revoked")
 	default:
 		writeJSONStatus(w, http.StatusOK, map[string]any{
@@ -651,6 +668,14 @@ func (a *Auth) Grants(w http.ResponseWriter, r *http.Request) {
 // RevokeGrant revokes one of the signed-in user's grants and all its tokens.
 func (a *Auth) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFrom(r.Context())
+	revoked := audit.Event{Action: "oauth.revoke", Outcome: audit.OK, Target: r.PathValue("id")}
+	if grants, err := a.store.Grants(r.Context(), user.GitHubID); err == nil {
+		for _, g := range grants {
+			if g.ID == revoked.Target {
+				revoked.Detail = map[string]any{"client": g.ClientName}
+			}
+		}
+	}
 	ok, err := a.store.DeleteGrant(r.Context(), r.PathValue("id"), user.GitHubID)
 	if err != nil {
 		a.fail(w, "revoke oauth grant", err)
@@ -661,6 +686,7 @@ func (a *Auth) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.log.Info("oauth grant revoked", "grant", r.PathValue("id"), "login", user.Login)
+	a.audit.Record(r.Context(), revoked)
 	w.WriteHeader(http.StatusNoContent)
 }
 
