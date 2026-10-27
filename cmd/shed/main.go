@@ -159,22 +159,37 @@ func run() error {
 		return err
 	}
 
+	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
+	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
+	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
+
+	var plane *control.Plane // Masks access records once telemetry runs.
+	edge := observability.NewEdge(observability.EdgeConfig{
+		Store:         st,
+		Logs:          vl,
+		Mask:          func(ctx context.Context) (func(string) string, error) { return plane.ShedMask(ctx) },
+		DashboardHost: dashboardRoute(cfg.Server).Host,
+		Log:           log,
+	})
+	var px *proxy.Proxy
 	var routes deploy.Proxy // nil disables routing
 	if cfg.Proxy.Enabled {
-		px := proxy.New(proxy.Config{
+		px = proxy.New(proxy.Config{
 			HTTPPort:   cfg.Proxy.HTTPPort,
 			HTTPSPort:  cfg.Proxy.HTTPSPort,
 			Email:      cfg.Proxy.ACMEEmail,
 			StorageDir: filepath.Join(dataDir, "caddy"),
 			LogFile:    filepath.Join(filepath.Dir(*configPath), "caddy.log"),
 			Cloudflare: cfg.Proxy.Cloudflare,
+			Access:     edge.Handle,
+			TracesURL:  fmt.Sprintf("http://127.0.0.1:%d/v1/traces", cfg.Telemetry.OTLPPort),
 		})
 		defer func() {
 			if err := px.Stop(); err != nil {
 				log.Error("stop proxy", "err", err)
 			}
 		}()
-		routes = px
+		routes = edgeRoutes{px, edge}
 	}
 
 	vars := variables.New(st, onepassword.New(version, log))
@@ -183,9 +198,6 @@ func run() error {
 	}
 
 	otlpEndpoint := fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort)
-	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
-	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
-	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
 	grafanaURL := strings.TrimRight(cfg.Server.URL, "/") + "/grafana/"
 	newGrafana := func(password string) *grafana.Client {
 		return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
@@ -302,7 +314,16 @@ func run() error {
 		return err
 	}
 
-	plane := control.New(control.Config{
+	stack.AddWorker(edge.Run)
+	if px != nil {
+		stack.OnEnabled(func(on bool) {
+			if err := px.SetTelemetry(on); err != nil {
+				log.Error("switch proxy telemetry", "on", on, "err", err)
+			}
+		})
+	}
+
+	plane = control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
 		Backups:  backups,
@@ -430,6 +451,18 @@ func (s updateSettings) Setting(ctx context.Context, key string) (string, bool, 
 
 func (s updateSettings) SetSetting(ctx context.Context, key, value string) error {
 	return s.st.SetSetting(ctx, key, value)
+}
+
+// edgeRoutes tells the edge to read the domain table again whenever routes
+// are applied.
+type edgeRoutes struct {
+	*proxy.Proxy
+	edge *observability.Edge
+}
+
+func (r edgeRoutes) Apply(routes []proxy.Route) error {
+	defer r.edge.Refresh()
+	return r.Proxy.Apply(routes)
 }
 
 // backupServices adapts the deployer to backup.Services.

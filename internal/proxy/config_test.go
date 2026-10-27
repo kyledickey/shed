@@ -45,7 +45,7 @@ func TestBuildConfigRoutes(t *testing.T) {
 		{Host: "b.example.com", Upstream: "10.0.0.2:3000"},
 		{Host: "A.example.com ", Upstream: "10.0.0.1:3000"},
 	}
-	got, err := buildConfig(baseCfg, routes)
+	got, err := buildConfig(baseCfg, routes, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,11 +88,11 @@ func TestBuildConfigRoutes(t *testing.T) {
 func TestBuildConfigDeterministic(t *testing.T) {
 	a := []Route{{"a.example.com", "1:1"}, {"b.example.com", "2:2"}, {"c.example.com", "3:3"}}
 	b := []Route{a[2], a[0], a[1]}
-	ja, err := buildConfig(baseCfg, a)
+	ja, err := buildConfig(baseCfg, a, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	jb, err := buildConfig(baseCfg, b)
+	jb, err := buildConfig(baseCfg, b, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestBuildConfigDeterministic(t *testing.T) {
 
 func TestBuildConfigDoesNotMutateRoutes(t *testing.T) {
 	routes := []Route{{"B.example.com", "1:1"}, {"a.example.com", "2:2"}}
-	if _, err := buildConfig(baseCfg, routes); err != nil {
+	if _, err := buildConfig(baseCfg, routes, false); err != nil {
 		t.Fatal(err)
 	}
 	if routes[0].Host != "B.example.com" || routes[1].Host != "a.example.com" {
@@ -124,7 +124,7 @@ func TestBuildConfigErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := buildConfig(tt.cfg, tt.routes); err == nil {
+			if _, err := buildConfig(tt.cfg, tt.routes, false); err == nil {
 				t.Error("buildConfig() succeeded, want error")
 			}
 		})
@@ -133,7 +133,7 @@ func TestBuildConfigErrors(t *testing.T) {
 
 func TestBuildConfigOptions(t *testing.T) {
 	t.Run("minimal", func(t *testing.T) {
-		got, _ := buildConfig(baseCfg, []Route{{"app.example.com", "1:1"}})
+		got, _ := buildConfig(baseCfg, []Route{{"app.example.com", "1:1"}}, false)
 		conf := decode(t, got)
 		if _, ok := conf["storage"]; ok {
 			t.Error("storage set without StorageDir")
@@ -151,7 +151,7 @@ func TestBuildConfigOptions(t *testing.T) {
 	t.Run("storage and log file", func(t *testing.T) {
 		cfg := baseCfg
 		cfg.StorageDir, cfg.LogFile = "/var/lib/shed/certs", "/var/lib/shed/caddy.log"
-		got, _ := buildConfig(cfg, nil)
+		got, _ := buildConfig(cfg, nil, false)
 		conf := decode(t, got)
 		if r := at(t, conf, "storage", "root"); r != "/var/lib/shed/certs" {
 			t.Errorf("storage root = %v", r)
@@ -164,7 +164,7 @@ func TestBuildConfigOptions(t *testing.T) {
 		for _, on := range []bool{false, true} {
 			cfg := baseCfg
 			cfg.Cloudflare = on
-			got, _ := buildConfig(cfg, []Route{{"app.example.com", "1:1"}})
+			got, _ := buildConfig(cfg, []Route{{"app.example.com", "1:1"}}, false)
 			srv := at(t, decode(t, got), "apps", "http", "servers", "shed").(obj)
 			_, set := at(t, srv, "routes", 0, "handle", 0).(obj)["headers"]
 			if set != on {
@@ -197,7 +197,7 @@ func TestBuildConfigOptions(t *testing.T) {
 		}
 	})
 	t.Run("custom ports", func(t *testing.T) {
-		got, _ := buildConfig(Config{HTTPPort: 8080, HTTPSPort: 8443}, nil)
+		got, _ := buildConfig(Config{HTTPPort: 8080, HTTPSPort: 8443}, nil, false)
 		conf := decode(t, got)
 		if l := at(t, conf, "apps", "http", "servers", "shed", "listen", 0); l != ":8443" {
 			t.Errorf("listen = %v", l)
@@ -247,7 +247,7 @@ func TestBuildConfigTLSPolicies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := baseCfg
 			cfg.Email = tt.email
-			got, err := buildConfig(cfg, routes)
+			got, err := buildConfig(cfg, routes, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,9 +266,52 @@ func TestBuildConfigTLSPolicies(t *testing.T) {
 
 func TestDuplicateRoutesRejected(t *testing.T) {
 	for _, host := range []string{"dashboard.example.com", "DASHBOARD.example.com.", " dashboard.example.com "} {
-		_, err := buildConfig(baseCfg, []Route{{Host: "dashboard.example.com", Upstream: "127.0.0.1:3000"}, {Host: host, Upstream: "10.0.0.2:8080"}})
+		_, err := buildConfig(baseCfg, []Route{{Host: "dashboard.example.com", Upstream: "127.0.0.1:3000"}, {Host: host, Upstream: "10.0.0.2:8080"}}, false)
 		if err == nil {
 			t.Errorf("duplicate %q accepted", host)
+		}
+	}
+}
+
+func TestBuildConfigEdge(t *testing.T) {
+	routes := []Route{{Host: "app.example.com", Upstream: "10.0.0.1:3000"}}
+	for _, edge := range []bool{false, true} {
+		got, err := buildConfig(Config{HTTPPort: 80, HTTPSPort: 443, LogFile: "/var/log/caddy.log"}, routes, edge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conf := decode(t, got)
+		srv := at(t, conf, "apps", "http", "servers", "shed")
+		logs := at(t, conf, "logging", "logs").(map[string]any)
+		if w := at(t, logs, "default", "writer", "filename"); w != "/var/log/caddy.log" {
+			t.Errorf("edge=%v: Caddy's own log writes to %v", edge, w)
+		}
+		handlers := at(t, srv, "routes", 0, "handle").([]any)
+		if !edge {
+			if _, ok := srv.(map[string]any)["logs"]; ok {
+				t.Error("access logs on without telemetry")
+			}
+			if len(logs) != 1 || len(handlers) != 1 {
+				t.Errorf("without telemetry: logs %v, handlers %v", logs, handlers)
+			}
+			continue
+		}
+		name := at(t, srv, "logs", "default_logger_name")
+		if w := at(t, logs, name.(string), "writer", "output"); w != "shed_access" {
+			t.Errorf("access log writer = %v, want shed_access", w)
+		}
+		if inc := at(t, logs, name.(string), "include", 0); inc != "http.log.access."+name.(string) {
+			t.Errorf("access log includes %v", inc)
+		}
+		if exc := at(t, logs, "default", "exclude", 0); exc != "http.log.access."+name.(string) {
+			t.Errorf("Caddy's own log excludes %v, want the access logger", exc)
+		}
+		if h := at(t, handlers, 0, "handler"); h != "tracing" || at(t, handlers, 1, "handler") != "reverse_proxy" {
+			t.Errorf("handlers = %v, want tracing before reverse_proxy", handlers)
+		}
+		// The catch-all answers unrouted hosts without a span.
+		if h := at(t, srv, "routes", 1, "handle", 0, "handler"); h != "static_response" {
+			t.Errorf("catch-all handler = %v", h)
 		}
 	}
 }

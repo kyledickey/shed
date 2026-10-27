@@ -74,6 +74,24 @@ Deploys starting (or a redeploy), going active, and failing, restarts, stops, ba
 
 The default alert rules live in the shed folder: a service restarted more than 3 times in 10 minutes, an OOM kill, host disk above 85%, host memory above 90% for 10 minutes, a 5xx ratio above 5% for 5 minutes at more than 1 request a second, p95 latency above 2 seconds for 10 minutes, database connections above 80% of the maximum, a failed deploy or backup, and telemetry dropping records. No contact point is configured; add one in Grafana to get notified. Firing alerts show on the Telemetry page, and alerts about a service (by its `shed_service_id` label) also on that service's Metrics tab.
 
+## Requests at the edge
+
+While telemetry is on, every request the proxy serves is measured, with no change to your apps. shed looks up the request's host in your domains: a service's domain counts for that service, the dashboard's host counts for shed, and any other host counts as `unrouted` under shed.
+
+Metrics, labeled with the service's `shed_*` labels and `shed_source="edge"`:
+
+| Metric                               | Labels                       |
+| ------------------------------------ | ---------------------------- |
+| `shed_http_requests_total`           | `host`, `method`, `code`     |
+| `shed_http_request_duration_seconds` | `host`, `code` (a histogram) |
+| `shed_http_response_bytes_total`     | `host`                       |
+
+The path is never a label. A method other than the standard ones is counted as `other`.
+
+Each request is also an access record in VictoriaLogs, with `shed.source=edge`: `client_ip` (the visitor's address with [`proxy.cloudflare`](/docs/networking#cloudflare) on), `method`, `host`, `path`, `query`, `status`, `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`, `tls_version`, and `trace_id`. The path, query, referer, and user agent have every variable value masked, like shed's own log. No other request header is recorded, so cookies and `Authorization` never are, and neither are bodies. Records wait in a queue of 4096 and ship once a second. When the store falls behind and the queue is full, new records are dropped and counted in `shed_telemetry_dropped_total{reason="edge_queue_full"}`; the metrics still count every request.
+
+Each routed request also gets a trace. The proxy starts a server span named after the method, or continues the `traceparent` the client sent. It passes its own `traceparent` to your app, so spans your app's OpenTelemetry SDK records join the same trace. Requests for unrouted hosts get no span.
+
 ## Retention and disk
 
 | Setting                  | Default | Range          |
