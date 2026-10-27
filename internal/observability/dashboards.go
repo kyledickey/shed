@@ -63,7 +63,8 @@ type DashboardsConfig struct {
 // is on. It is safe for concurrent use.
 type Dashboards struct {
 	cfg   DashboardsConfig
-	every time.Duration
+	every time.Duration // between passes
+	retry time.Duration // after a failed pass
 	now   func() time.Time
 	kick  chan struct{}
 
@@ -90,11 +91,12 @@ const annotationQueue = 256
 // NewDashboards returns Dashboards. Register its Run with
 // [Manager.AddWorker].
 func NewDashboards(cfg DashboardsConfig) *Dashboards {
-	return &Dashboards{cfg: cfg, every: reconcileEvery, now: time.Now, kick: make(chan struct{}, 1)}
+	return &Dashboards{cfg: cfg, every: reconcileEvery, retry: retryEvery, now: time.Now, kick: make(chan struct{}, 1)}
 }
 
-// Run reconciles now, after every [Dashboards.Refresh], and every 10
-// minutes, and writes annotations, until ctx is done.
+// Run reconciles now, after every [Dashboards.Refresh], every 10 minutes,
+// and a minute after a failed pass, and writes annotations, until ctx is
+// done.
 func (d *Dashboards) Run(ctx context.Context) {
 	api, err := d.cfg.Grafana(ctx)
 	if err != nil {
@@ -108,18 +110,21 @@ func (d *Dashboards) Run(ctx context.Context) {
 	defer wg.Wait()
 	wg.Go(func() { d.annotate(ctx, l) })
 
-	tick := time.NewTicker(d.every)
-	defer tick.Stop()
 	for {
+		wait := d.every
 		if err := d.reconcile(ctx, api, false); err != nil && ctx.Err() == nil {
 			d.cfg.Log.Warn("reconcile grafana dashboards", "err", err)
+			wait = min(wait, d.retry)
 		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-d.kick:
-		case <-tick.C:
+		case <-timer.C:
 		}
+		timer.Stop()
 	}
 }
 

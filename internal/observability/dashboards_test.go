@@ -31,6 +31,8 @@ type fakeDashboardAPI struct {
 	dashboards  map[string]*grafanaDashboard
 	annotations []grafana.Annotation
 	alerts      []grafana.Alert
+	// down makes every folder write fail, as while Grafana restarts.
+	down bool
 }
 
 func newFakeDashboardAPI() *fakeDashboardAPI {
@@ -50,6 +52,9 @@ func (g *fakeDashboardAPI) Folder(_ context.Context, uid string) (grafana.Folder
 func (g *fakeDashboardAPI) EnsureFolder(_ context.Context, f grafana.Folder) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.down {
+		return errors.New("connection refused")
+	}
 	if _, ok := g.folders[f.ParentUID]; f.ParentUID != "" && !ok {
 		return errors.New("parent folder not found")
 	}
@@ -458,6 +463,26 @@ func TestDashboardsArchiveAndRename(t *testing.T) {
 			t.Errorf("record %s in %s kept after its project was deleted", r.UID, r.Folder)
 		}
 	}
+}
+
+func TestDashboardsRetryAfterFailure(t *testing.T) {
+	h := newDashboardsHarness(t)
+	h.d.every, h.d.retry = time.Hour, 10*time.Millisecond
+	h.start(t)
+	setDown := func(down bool) {
+		h.api.mu.Lock()
+		defer h.api.mu.Unlock()
+		h.api.down = down
+	}
+	setDown(true)
+	svc, err := h.st.CreateService(context.Background(), store.Service{ProjectID: h.project.ID, Name: "cache", Kind: "redis", Image: "redis"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.d.Refresh()
+	time.Sleep(50 * time.Millisecond)
+	setDown(false)
+	waitFor(t, func() bool { _, ok := h.api.folder(grafana.ServiceFolder(svc.ID)); return ok })
 }
 
 func TestAnnotations(t *testing.T) {
