@@ -26,6 +26,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/otlp"
@@ -122,8 +123,14 @@ func TestIngestIntegration(t *testing.T) {
 	auditLog := audit.New(st, log)
 	plane := control.New(control.Config{Store: st, Deployer: deployer, Audit: auditLog, Telemetry: stack, BaseURL: "http://127.0.0.1", Log: log})
 
+	// As root, the gateway opens its port in the host firewall itself, as
+	// shed does in production; otherwise the host must already allow it.
+	var fw observability.Firewall
+	if os.Geteuid() == 0 {
+		fw = firewall.New()
+	}
 	gateway := observability.NewGateway(observability.GatewayConfig{
-		Store: st, Docker: dc, Masks: plane, Settings: stack.Settings, Port: port, Log: log,
+		Store: st, Docker: dc, Masks: plane, Settings: stack.Settings, Port: port, Firewall: fw, Log: log,
 	})
 	receiver, err := otlp.New(otlp.Config{
 		Attribute: gateway.Attribute, Mask: gateway.Mask, Caps: gateway.Caps,
@@ -296,7 +303,7 @@ sleep 600`, containerLine, port,
 		}
 		if strings.Contains(string(out), "timed out") {
 			return fmt.Errorf("the container cannot reach %s: the host firewall drops input from Docker bridges; "+
-				"allow TCP port %s from them (see the telemetry docs)", listener, portText)
+				"run the test as root so the gateway adds its rule, or allow TCP port %s from them", listener, portText)
 		}
 		return fmt.Errorf("not sent yet:\n%s", out)
 	})
