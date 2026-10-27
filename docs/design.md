@@ -136,9 +136,9 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
 | `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/host types |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/deploy/github/metrics/update/store/audit |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/audit |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/audit/observability |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -1095,7 +1095,7 @@ bumped with shed releases), restart policy `unless-stopped`, label
 | VictoriaMetrics | `shed-telemetry-metrics` | `telemetry.metrics_addr` (127.0.0.1:8428) | 512 MiB | 1 |
 | VictoriaLogs | `shed-telemetry-logs` | `telemetry.logs_addr` (127.0.0.1:9428) | 512 MiB | 1 |
 | VictoriaTraces | `shed-telemetry-traces` | `telemetry.traces_addr` (127.0.0.1:10428) | 384 MiB | 1 |
-| Grafana | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | 256 MiB | 0.5 |
+| Grafana | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | 512 MiB | 0.5 |
 
 Host networking is what lets VictoriaMetrics scrape exporters at their
 container addresses on every project network (Docker isolates bridges from
@@ -1103,7 +1103,13 @@ each other, not from the host); binding to loopback keeps the components
 unreachable from outside and from containers. Volumes are
 `shed-telemetry-<component>`. Grafana's provisioning files are written to
 `<data>/telemetry/grafana/provisioning` and VictoriaMetrics' scrape config to
-`<data>/telemetry/scrape.yaml`, both bind-mounted read-only.
+`<data>/telemetry/scrape/scrape.yaml`; both directories are bind-mounted
+read-only (the directory rather than the file, so a config replaced by rename
+reaches the container), and their files are made world-readable whatever
+shed's umask, since Grafana runs as uid 472. Grafana 13 is OOM-killed at
+256 MiB while it installs its plugins on first start, hence 512 MiB; it idles
+near 300 MiB. Until the database exporters exist, `scrape.yaml` scrapes the
+three stores' own `/metrics` with shed's labels.
 
 Flags derived from settings:
 
@@ -1138,10 +1144,18 @@ edited on the Telemetry page:
 | `diskLimitGB` (logs + traces) | 20 |
 | default per-service caps | 5000 spans/s, 2000 log records/s, 50000 series |
 
-Reconciliation is idempotent and runs at boot and after every settings
-change: each component container is compared with the spec those settings
-produce (a `shed.spec` label holds its hash) and created, recreated on the same
-volume, or left alone. Enabling then waits for each store's `/health`, writes
+Retention is 1 to 3650 days per signal, the disk limit at least 1 GB, and
+each cap at least 1; other values answer 400.
+
+Reconciliation is idempotent and runs at boot, after every settings change,
+and a minute after a failed attempt. `PUT /api/telemetry` saves the settings
+and returns; reconciliation runs in the background, and the page shows
+components `starting` until their health checks pass, or `failed` with the
+error. Each component container is compared with the spec those settings
+produce (a `shed.spec` label holds its hash; Grafana's includes the store
+addresses its data sources name) and created, recreated on the same volume,
+started, or left alone; a pinned image missing locally is pulled before an
+existing container is removed. Enabling then waits for each store's `/health`, writes
 Grafana's data sources file, starts Grafana, reconciles folders, writes the
 alert rules file and reloads it (see [Folders and
 dashboards](#folders-and-dashboards)), reconciles dashboards, opens the ingest
@@ -1153,7 +1167,14 @@ Disabling closes the listeners, stops the shippers, and stops the containers.
 Volumes, `<data>/telemetry`, and the `grafana_dashboards` rows are kept, so
 enabling again resumes with history and edited dashboards intact.
 `DELETE /api/telemetry/data` (only while disabled) removes the containers,
-volumes, `<data>/telemetry`, and those rows.
+volumes, `<data>/telemetry`, and those rows. The Grafana admin password in
+`settings` is kept.
+
+Workers that only make sense while telemetry is on (ingest listeners,
+shippers) register with the manager and run from the moment the stack is up
+until it is disabled or shed shuts down; a hook is told when telemetry turns
+on (stack up, workers started) and off (before the workers stop). shed's own
+providers are switched by that hook once the loopback listener exists.
 
 Injected variables and the `shed.internal` host entry (see
 [Ingest](#ingest)) are part of a container's config, so they appear or
@@ -1161,9 +1182,12 @@ disappear with each service's next deployment; the page says so after a
 toggle.
 
 The Telemetry page shows each component's state, image version, CPU and memory
-(Docker stats), disk used (each store's own `/metrics`), ingest rate per
-signal, records dropped in the last hour by reason, and firing alerts, with a
-restart button per component.
+(Docker stats; CPU from the difference to the previous request's sample),
+disk used (each store's own `/metrics`), ingest rate per signal
+(`shed_telemetry_ingested_total` over the last minute), records dropped in
+the last hour by reason and signal (`shed_telemetry_dropped_total`), and
+firing alerts, with a restart button per component (recorded as
+`telemetry.component.restart`).
 
 ### Grafana
 
@@ -1171,10 +1195,17 @@ Grafana runs with `root_url = <server.url>/grafana/` and
 `serve_from_sub_path`. shed's handler serves `/grafana/` to signed-in users
 only: unauthenticated browser navigations redirect to
 `/api/auth/login?next=<path>`, other requests answer 401, and mutating
-requests must match `server.url`'s origin like `/api`. It drops every
+requests must match `server.url`'s origin like `/api`. A navigation is a
+GET or HEAD with `Sec-Fetch-Mode: navigate`, or, from a browser without Fetch
+Metadata, one that accepts `text/html`. It drops every
 `X-WEBAUTH-*` header the client sent, sets `X-WEBAUTH-USER: <login>` and
 `X-WEBAUTH-NAME: <name>`, and reverse-proxies to `telemetry.grafana_addr`,
-including WebSocket upgrades (Grafana Live). While telemetry is off,
+including WebSocket upgrades (Grafana Live), which must also come from
+`server.url`'s origin. The request keeps its `Host` (Grafana checks a
+mutation's `Origin` against it), and shed's own cookies (`shed_*`, the
+session among them) are removed before it reaches Grafana. shed's security
+headers apply to Grafana's pages as to the dashboard's; Grafana's copies of
+them are dropped so each is sent once. While telemetry is off,
 `/grafana/` redirects to `/server/telemetry`.
 
 Grafana's configuration (environment variables on its container):
@@ -1537,7 +1568,7 @@ command is recorded as `fields: ["startCommand"]`, a new S3 secret as
 | `onepassword.connect`, `.disconnect` | |
 | `update.download`, `.install`, `update.settings.update` | |
 | `audit.settings.update` | retention changed |
-| `telemetry.enable`, `.disable`, `.settings.update`, `.data.delete`, `telemetry.dashboard.reset` | |
+| `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` | |
 | `mcp.call` (tool and arguments) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
@@ -1919,8 +1950,8 @@ GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → L
 GET    /api/services/{id}/telemetry             → ServiceTelemetry
 PUT    /api/services/{id}/telemetry  {caps: TelemetryCaps | null} → ServiceTelemetry  (null = defaults)
 GET    /api/telemetry                           → Telemetry
-PUT    /api/telemetry           TelemetrySettings → Telemetry  (enable, disable, retention, caps; reconciles)
-POST   /api/telemetry/components/{name}/restart → Telemetry  (409 if telemetry is off)
+PUT    /api/telemetry           TelemetrySettings → Telemetry  (enable, disable, retention, caps; 400 if out of bounds; reconciles in the background)
+POST   /api/telemetry/components/{name}/restart → Telemetry  (409 if telemetry is off or the container does not exist yet; 404 for an unknown name)
 DELETE /api/telemetry/data                      204  (containers, volumes, dashboards; 409 while enabled)
 POST   /api/telemetry/dashboards/{uid}/reset    204  (overwrite with the current default; 404 if not shed's)
 POST   /api/telemetry/dashboards/restore        204  (recreate default dashboards the user deleted)
