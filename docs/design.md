@@ -1109,7 +1109,8 @@ Flags derived from settings:
 - VictoriaMetrics: `-retentionPeriod=<metrics days>d`,
   `-storage.minFreeDiskSpaceBytes=<build.min_free_mb>`,
   `-promscrape.config=/etc/shed/scrape.yaml`, `-promscrape.configCheckInterval=10s`,
-  `-opentelemetry.usePrometheusNaming`.
+  `-opentelemetry.usePrometheusNaming`, `-search.latencyOffset=5s` (the
+  default 30 s would hold the built-in charts' newest buckets back).
 - VictoriaLogs: `-retentionPeriod=<logs days>d`,
   `-retention.maxDiskSpaceUsageBytes=<60% of the disk limit>`.
 - VictoriaTraces: `-retentionPeriod=<traces days>d`,
@@ -1536,8 +1537,6 @@ VictoriaMetrics (`shed_container_cpu_percent`, `shed_container_memory_bytes`,
 bucket width, with the same alignment and window rules). If the query fails,
 or telemetry is off, they read SQLite, which has a gap for the time telemetry
 was on.
-VictoriaMetrics hides the newest 30 s of data from queries
-(`-search.latencyOffset`), so these charts trail real time by that much.
 
 ### Log history and trace links
 
