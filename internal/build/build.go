@@ -22,6 +22,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const railpackFrontend = "ghcr.io/railwayapp/railpack-frontend"
@@ -46,6 +48,9 @@ type Request struct {
 	Image string
 	// Env holds build-time variables.
 	Env map[string]string
+	// Labels are added to the build's metrics, naming the service it
+	// builds.
+	Labels []attribute.KeyValue
 }
 
 // Builder builds images in per-build workspaces.
@@ -120,11 +125,17 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 		}
 	}()
 
-	w := NewRedactor(out, append(secrets(req.RepoURL), slices.Collect(maps.Values(req.Env))...))
+	// Build steps are read from the redacted output.
+	st := newSteps(ctx, req.Labels)
+	defer st.close()
+	w := NewRedactor(io.MultiWriter(out, st), append(secrets(req.RepoURL), slices.Collect(maps.Values(req.Env))...))
 	defer w.Flush()
 
 	fmt.Fprintln(w, "==> Cloning")
-	if err := clone(ctx, repo, req, w); err != nil {
+	err = span(ctx, "git clone", func(ctx context.Context) error { return clone(ctx, repo, req, w) },
+		attribute.String("vcs.repository.url.full", publicURL(req.RepoURL)),
+		attribute.String("vcs.ref.head.revision", req.Commit))
+	if err != nil {
 		return err
 	}
 
@@ -153,7 +164,9 @@ func (b *Builder) Build(ctx context.Context, id string, req Request, out io.Writ
 	fmt.Fprintln(w, "==> Building with Railpack")
 	plan := filepath.Join(workspace, "railpack-plan.json")
 	info := filepath.Join(workspace, "railpack-info.json")
-	err = run(ctx, contextDir, prepareEnv(req.Env), w, "railpack", railpackPrepareArgs(req, contextDir, plan, info)...)
+	err = span(ctx, "railpack prepare", func(ctx context.Context) error {
+		return run(ctx, contextDir, prepareEnv(req.Env), w, "railpack", railpackPrepareArgs(req, contextDir, plan, info)...)
+	})
 	if err != nil {
 		return fmt.Errorf("build: railpack prepare: %w", err)
 	}
@@ -265,7 +278,8 @@ func dockerfileArgs(req Request, instance, dockerfile, contextDir, secretDir str
 	if instance != "" {
 		args = append(args, "--builder", instance)
 	}
-	args = append(args, "--load", "-t", req.Image, "-f", dockerfile)
+	// Plain progress is the format steps reads.
+	args = append(args, "--load", "--progress", "plain", "-t", req.Image, "-f", dockerfile)
 	for _, k := range sortedKeys(req.Env) {
 		args = append(args, "--secret", "id="+k+",src="+filepath.Join(secretDir, k))
 	}

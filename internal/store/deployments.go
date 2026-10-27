@@ -8,14 +8,14 @@ import (
 )
 
 const deploymentCols = `id, service_id, status, trigger, commit_sha, commit_message, commit_author,
-	image, port, container_id, error, created_at, started_at, finished_at, runtime`
+	image, port, container_id, error, created_at, started_at, finished_at, runtime, trace_id`
 
 func (s *Store) scanDeployment(r scanner) (Deployment, error) {
 	var d Deployment
 	var runtime string
 	err := r.Scan(&d.ID, &d.ServiceID, &d.Status, &d.Trigger, &d.CommitSHA, &d.CommitMessage,
 		&d.CommitAuthor, &d.Image, &d.Port, &d.ContainerID, &d.Error, (*timestamp)(&d.CreatedAt),
-		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt}, &runtime)
+		nullTimestamp{&d.StartedAt}, nullTimestamp{&d.FinishedAt}, &runtime, &d.TraceID)
 	if err == nil && runtime != "" {
 		if runtime, err = s.crypt.open(runtime, deploymentAD(d.ID)); err != nil {
 			return d, fmt.Errorf("store: runtime of deployment %s: %w", d.ID, err)
@@ -45,11 +45,11 @@ func (s *Store) formatRuntime(id string, rt *DeploymentRuntime) (string, error) 
 // arguments come from updateArgs.
 const updateDeployment = `UPDATE deployments SET status = ?, commit_sha = ?, commit_message = ?,
 	commit_author = ?, image = ?, port = ?, container_id = ?, error = ?, started_at = ?,
-	finished_at = ? WHERE id = ?`
+	finished_at = ?, trace_id = ? WHERE id = ?`
 
 func updateArgs(d Deployment) []any {
 	return []any{d.Status, d.CommitSHA, d.CommitMessage, d.CommitAuthor, d.Image, d.Port,
-		d.ContainerID, d.Error, optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.ID}
+		d.ContainerID, d.Error, optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.TraceID, d.ID}
 }
 
 // CreateDeployment stores d under a new ID and creation time, which it
@@ -60,10 +60,10 @@ func (s *Store) CreateDeployment(ctx context.Context, d Deployment) (Deployment,
 	d.CreatedAt = now()
 	d.Runtime = nil
 	err := s.exec(ctx, `INSERT INTO deployments (`+deploymentCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
 		d.ID, d.ServiceID, d.Status, d.Trigger, d.CommitSHA, d.CommitMessage, d.CommitAuthor,
 		d.Image, d.Port, d.ContainerID, d.Error, formatTime(d.CreatedAt),
-		optionalTime(d.StartedAt), optionalTime(d.FinishedAt))
+		optionalTime(d.StartedAt), optionalTime(d.FinishedAt), d.TraceID)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("store: create deployment for service %s: %w", d.ServiceID, err)
 	}

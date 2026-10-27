@@ -116,6 +116,8 @@ export type Deployment = {
   /** Whether the image is on the server; only set in deployment lists. */
   imageAvailable?: boolean;
   error: string;
+  /** The deploy trace, "" if telemetry was off. */
+  traceId: string;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;

@@ -30,7 +30,11 @@ type Client struct {
 // New returns a Client configured from the standard DOCKER_* environment
 // variables. The API version is negotiated with the daemon on first use.
 func New() (*Client, error) {
-	api, err := client.New(client.FromEnv)
+	opts, err := instrument()
+	if err != nil {
+		return nil, err
+	}
+	api, err := client.New(append([]client.Opt{client.FromEnv}, opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("docker: new client: %w", err)
 	}

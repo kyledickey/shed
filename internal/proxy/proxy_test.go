@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -11,6 +12,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 func freePort(t *testing.T) int {
@@ -44,6 +49,10 @@ func TestApply(t *testing.T) {
 
 	// Cloudflare is on so Caddy validates the trusted proxy config. Loopback
 	// clients are not in its ranges, so requests here are unaffected.
+	reader := sdkmetric.NewManualReader()
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
 	cfg := Config{HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir(), Cloudflare: true}
 	p := New(cfg)
 	t.Cleanup(func() { p.Stop() })
@@ -54,6 +63,9 @@ func TestApply(t *testing.T) {
 	}
 	if err := p.Apply(routes); err != nil {
 		t.Fatalf("second Apply() error = %v", err)
+	}
+	if n := applyCount(t, reader); n != 1 {
+		t.Errorf("shed_route_apply_duration_seconds count = %d, want 1 for one changed route set", n)
 	}
 
 	client := &http.Client{
@@ -105,4 +117,23 @@ func TestApply(t *testing.T) {
 	if err := p.Apply(nil); err != nil {
 		t.Fatalf("Apply(nil) error = %v", err)
 	}
+}
+
+func applyCount(t *testing.T, reader *sdkmetric.ManualReader) uint64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	var n uint64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if h, ok := m.Data.(metricdata.Histogram[float64]); ok && m.Name == "shed_route_apply_duration_seconds" {
+				for _, dp := range h.DataPoints {
+					n += dp.Count
+				}
+			}
+		}
+	}
+	return n
 }

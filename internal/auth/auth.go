@@ -27,6 +27,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/github"
 )
@@ -102,6 +106,8 @@ type Auth struct {
 
 	cleanMu   sync.Mutex
 	cleanedAt time.Time // Last removal of expired OAuth rows; guarded by cleanMu.
+
+	signinCount metric.Int64Counter
 }
 
 // New returns an Auth that keeps sessions in store and records sign-ins,
@@ -115,6 +121,10 @@ func New(store Store, rec Audit, oauth func() (OAuth, bool), baseURL string, all
 	for _, login := range allowedUsers {
 		allowed[strings.ToLower(login)] = true
 	}
+	// Creating an instrument fails only for an invalid name, and the
+	// instrument returned works regardless.
+	signins, _ := otel.Meter("github.com/kyledickey/shed/internal/auth").Int64Counter("shed_signins_total",
+		metric.WithDescription("Dashboard sign-ins through GitHub, by outcome."))
 	return &Auth{
 		store:   store,
 		audit:   rec,
@@ -127,6 +137,7 @@ func New(store Store, rec Audit, oauth func() (OAuth, bool), baseURL string, all
 		requests:      newRequests(),
 		signins:       newRequests(),
 		registrations: newLimiter(registerBurst, registerPeriod, maxRegistrants),
+		signinCount:   signins,
 	}
 }
 
@@ -158,6 +169,10 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 // session and redirects to the dashboard; otherwise it redirects to the login
 // page with an error.
 func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
+	outcome := "failed"
+	defer func() {
+		a.signinCount.Add(r.Context(), 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+	}()
 	oauth, ok := a.oauth()
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "github app is not configured")
@@ -175,6 +190,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(want), []byte(state)) != 1 {
+		outcome = "invalid_state"
 		writeError(w, http.StatusBadRequest, "invalid oauth state")
 		return
 	}
@@ -183,6 +199,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" { // The user declined, or GitHub reported an error.
+		outcome = "declined"
 		http.Redirect(w, r, "/login?error=denied", http.StatusFound)
 		return
 	}
@@ -197,7 +214,8 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	token, err := a.admit(r.Context(), user)
 	switch {
 	case errors.Is(err, errDenied):
-		a.log.Info("sign-in denied", "login", user.Login)
+		outcome = "denied"
+		a.log.InfoContext(r.Context(), "sign-in denied", "login", user.Login)
 		a.audit.Record(anonymous(r), audit.Event{
 			Action: "auth.signin.denied", Outcome: audit.Denied, Detail: map[string]any{"login": user.Login},
 		})
@@ -205,6 +223,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		a.fail(w, "sign in", err)
 	default:
+		outcome = "ok"
 		a.audit.Record(withUser(r, user), audit.Event{Action: "auth.signin", Outcome: audit.OK})
 		a.setCookie(w, sessionCookie, token, "/", sessionTTL)
 		http.Redirect(w, r, next, http.StatusFound)

@@ -9,6 +9,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -16,6 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
@@ -163,11 +167,12 @@ type Server struct {
 	grafana    http.Handler
 	log        *slog.Logger
 
-	webhooks   webhookGuard
-	deliveries deliveryCache
-	setupMu    sync.Mutex // serializes completing the GitHub setup
-	tokenMu    sync.Mutex
-	setupToken string // guarded by tokenMu; empty once GitHub is configured
+	webhooks          webhookGuard
+	deliveries        deliveryCache
+	webhookDeliveries metric.Int64Counter
+	setupMu           sync.Mutex // serializes completing the GitHub setup
+	tokenMu           sync.Mutex
+	setupToken        string // guarded by tokenMu; empty once GitHub is configured
 }
 
 // New returns a Server. It loads the GitHub App from the store, or, if none is
@@ -186,6 +191,12 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		log:        cfg.Log,
 	}
 	s.grafana = s.grafanaProxy(cfg.GrafanaAddr)
+	var err error
+	s.webhookDeliveries, err = otel.Meter(scope).Int64Counter("shed_webhook_deliveries_total",
+		metric.WithDescription("GitHub webhook deliveries, by event and outcome."))
+	if err != nil {
+		return nil, fmt.Errorf("api: webhook deliveries counter: %w", err)
+	}
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err
 	}
@@ -312,7 +323,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.Handle("/", spa(s.web))
 
-	return s.logRequests(securityHeaders(withAnonymous(mux)))
+	return s.logRequests(securityHeaders(withAnonymous(traced(mux))))
 }
 
 // logRequests logs every request at debug level.

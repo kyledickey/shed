@@ -103,6 +103,7 @@ type deploymentJSON struct {
 	CommitAuthor   string                 `json:"commitAuthor"`
 	Image          string                 `json:"image"`
 	Error          string                 `json:"error"`
+	TraceID        string                 `json:"traceId"`
 	CreatedAt      time.Time              `json:"createdAt"`
 	StartedAt      *time.Time             `json:"startedAt"`
 	FinishedAt     *time.Time             `json:"finishedAt"`
@@ -188,6 +189,7 @@ func toDeployment(d control.DeploymentView) deploymentJSON {
 		CommitAuthor:   d.CommitAuthor,
 		Image:          d.Image,
 		Error:          d.Error,
+		TraceID:        d.TraceID,
 		CreatedAt:      d.CreatedAt,
 		StartedAt:      d.StartedAt,
 		FinishedAt:     d.FinishedAt,

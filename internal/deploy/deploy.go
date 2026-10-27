@@ -23,6 +23,9 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
@@ -191,11 +194,22 @@ type Deployer struct {
 	deletingServices map[string]bool
 	deletingProjects map[string]bool
 	held             map[string]string // project ID by held service ID; changes under controlMu
+
+	deployments metric.Int64Counter
+	stages      metric.Float64Histogram
+	queueDepth  metric.Registration
+}
+
+// queued is a deployment waiting for its worker.
+type queued struct {
+	store.Deployment
+	// queuedBy is the span of the request or webhook that queued it.
+	queuedBy trace.SpanContext
 }
 
 // worker runs the deployments of one service, one at a time.
 type worker struct {
-	pending *store.Deployment       // next to run, or nil
+	pending *queued                 // next to run, or nil
 	running string                  // ID of the running deployment, or ""
 	cancel  context.CancelCauseFunc // cancels the running deployment
 	ran     chan struct{}           // closed when the running deployment ends
@@ -239,6 +253,7 @@ func New(cfg Config) *Deployer {
 	if d.variables == nil {
 		d.variables = savedVariables{cfg.Store}
 	}
+	d.instrument()
 	return d
 }
 
@@ -250,6 +265,7 @@ func (d *Deployer) Stop() {
 	d.mu.Unlock()
 	d.shutdown(errShutdown)
 	d.wg.Wait()
+	d.queueDepth.Unregister()
 }
 
 // Deploy queues a new deployment of a service and returns it. Older
@@ -323,12 +339,12 @@ func (d *Deployer) enqueue(ctx context.Context, dep store.Deployment) (store.Dep
 		go d.work(dep.ServiceID, w)
 	}
 	if w.pending != nil {
-		d.abandon(*w.pending, store.StatusCanceled, errSuperseded.Error())
+		d.abandon(w.pending.Deployment, store.StatusCanceled, errSuperseded.Error())
 	}
 	if w.cancel != nil {
 		w.cancel(errSuperseded)
 	}
-	w.pending = &dep
+	w.pending = &queued{dep, trace.SpanContextFromContext(ctx)}
 	return dep, nil
 }
 
@@ -348,7 +364,7 @@ func (d *Deployer) work(serviceID string, w *worker) {
 		w.pending, w.running, w.cancel, w.ran = nil, dep.ID, cancel, make(chan struct{})
 		d.mu.Unlock()
 
-		d.run(ctx, *dep)
+		d.run(ctx, dep.Deployment, dep.queuedBy)
 		cancel(nil)
 		d.pruneHistory(serviceID)
 
@@ -402,7 +418,7 @@ func (d *Deployer) halt(serviceID string, cause error) {
 		return
 	}
 	if w.pending != nil {
-		d.abandon(*w.pending, store.StatusCanceled, cause.Error())
+		d.abandon(w.pending.Deployment, store.StatusCanceled, cause.Error())
 		w.pending = nil
 	}
 	if w.cancel != nil {

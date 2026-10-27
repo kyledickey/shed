@@ -97,6 +97,7 @@ type deploymentOut struct {
 	CommitAuthor  string     `json:"commitAuthor,omitempty"`
 	Image         string     `json:"image,omitempty"`
 	Error         string     `json:"error,omitempty" jsonschema:"why the deployment failed"`
+	TraceID       string     `json:"traceId,omitempty" jsonschema:"the trace of the deployment in shed's telemetry, when telemetry was on"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	StartedAt     *time.Time `json:"startedAt,omitempty"`
 	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
@@ -299,6 +300,7 @@ func toDeployment(d control.DeploymentView) deploymentOut {
 		CommitAuthor:   d.CommitAuthor,
 		Image:          d.Image,
 		Error:          d.Error,
+		TraceID:        d.TraceID,
 		CreatedAt:      d.CreatedAt,
 		StartedAt:      d.StartedAt,
 		FinishedAt:     d.FinishedAt,

@@ -1505,33 +1505,78 @@ records metrics but no spans, so its own work does not feed back into it.
 
 Spans:
 
-- every HTTP request (route pattern as the span name), MCP tool call, and
-  GitHub webhook delivery;
-- one `deploy` root span per deployment with a child per stage (wait for CI,
-  clone, build, push, pull, start, health check, activate), linked to the
-  webhook or request span that queued it; `deployments.trace_id` records it;
-- build steps, from BuildKit's progress (one span per vertex, with `cached`);
-- Docker Engine calls, GitHub API calls, S3 and 1Password calls (instrumented
-  HTTP clients);
-- backup and restore steps;
-- store queries (driver wrapper; statement text, never parameters).
+- every HTTP request, named by its method and route pattern
+  (`GET /api/services/{id}`). Incoming trace context starts a new trace
+  linked to it. Event streams (`GET` with `Accept: text/event-stream`) and
+  protocol upgrades get no span and no HTTP metrics, since they last as long
+  as the client stays;
+- every MCP tool call (`tools/call <tool>`, without its arguments) and GitHub
+  webhook delivery (`github webhook`, with `github.event`,
+  `github.delivery`, and `outcome` once the signature is valid);
+- one `deploy` root span per deployment, linked to the request or webhook
+  span that queued it, with a child per stage that runs: `wait_for_ci`,
+  `build` or `pull`, `start`, `health_check`, and `activate`. Images are
+  loaded into the local engine, so there is no push stage. `build` holds
+  `git clone`, `railpack prepare`, and the build steps.
+  `deployments.trace_id` records the trace while spans are recorded;
+- build steps, read from BuildKit's plain progress output after masking:
+  one span per vertex, named by it, with `cached`;
+- Docker Engine calls, named by operation (`container_inspect`,
+  `image_pull`, …, or method and path without IDs), from the Docker client's
+  own instrumentation;
+- GitHub API and S3 calls, through instrumented HTTP clients that send no
+  trace context out;
+- 1Password calls, one span per SDK call (`1password get items`), since the
+  SDK makes its requests inside its WebAssembly core;
+- backups (`backup`: `write archive`, `upload`, `prune`) and restores
+  (`restore`: the pre-restore `backup`, `fetch archive`, `check archive`,
+  `replace data`);
+- store queries, under a recording span only: a driver wrapper records one
+  span per query, named by its first keyword, with the statement text as
+  `db.query.text`, never its arguments.
+
+Spans never carry secrets. URL attributes of outbound requests drop the user
+info and query, so clone URLs keep their installation token and presigned
+URLs their signature to themselves; the clone span records the repository
+URL without them. Stage and build step errors are recorded with variable
+values masked, as in the build log. 1Password spans carry no arguments,
+results, or error text. Server spans record the path, not the query. The
+GitHub App manifest conversion, whose code is in its URL path, is not
+traced.
 
 Metrics: Go runtime metrics from
 `go.opentelemetry.io/contrib/instrumentation/runtime` (`go_goroutine_count`,
 `go_memory_used_bytes{go_memory_type}`, `go_memory_gc_goal_bytes`,
-`go_memory_allocated_bytes_total`, `go_schedule_duration_seconds`), plus `shed_deployments_total{trigger,
-outcome}`, `shed_deploy_stage_duration_seconds{stage}`,
-`shed_deploy_queue_depth`, `shed_build_steps_total{cached}`,
-`shed_webhook_deliveries_total{event, outcome}`,
-`shed_route_apply_duration_seconds`, `shed_backups_total{kind, outcome}`,
-`shed_backup_bytes` and `shed_backup_duration_seconds` (histograms),
-`shed_docker_request_duration_seconds{op}`, `shed_store_query_duration_seconds`,
-`shed_mcp_tool_calls_total{tool, client}`, `shed_signins_total{outcome}`,
-`shed_telemetry_ingested_total{signal}`, and `shed_telemetry_dropped_total`.
+`go_memory_allocated_bytes_total`, `go_schedule_duration_seconds`), the
+OpenTelemetry HTTP server and client metrics, and:
+
+| Metric | Labels | Records |
+|---|---|---|
+| `shed_deployments_total` | `trigger`, `outcome` | deployments the pipeline ran, by final status (`active`, `failed`, `canceled`, `skipped`); not those canceled while queued |
+| `shed_deploy_stage_duration_seconds` | `stage` | stage durations, with the stage names above |
+| `shed_deploy_queue_depth` | | deployments queued or running |
+| `shed_build_steps_total` | `cached` | build steps that ended |
+| `shed_webhook_deliveries_total` | `event`, `outcome` | deliveries; `event` is `unverified` until the signature is checked; `outcome` is `accepted`, `ignored`, `unauthorized`, `throttled`, `rejected`, or `failed` |
+| `shed_route_apply_duration_seconds` | | loading a changed route set into Caddy |
+| `shed_backups_total` | `kind`, `outcome` | backups and restores (`kind` `backup` or `restore`) that `succeeded` or `failed` |
+| `shed_backup_bytes` | | archive sizes of successful backups (histogram) |
+| `shed_backup_duration_seconds` | `kind` | backup and restore durations (histogram) |
+| `shed_docker_request_duration_seconds` | `op` | Engine API requests until their response headers; requests that fail without a response are not timed |
+| `shed_store_query_duration_seconds` | | store queries, including reading their rows |
+| `shed_mcp_tool_calls_total` | `tool`, `client` | tool calls; `client` is the OAuth client's name |
+| `shed_signins_total` | `outcome` | dashboard sign-ins: `ok`, `denied`, `declined`, `invalid_state`, or `failed` |
+| `shed_telemetry_ingested_total` | `signal` | records the gateway accepted |
+| `shed_telemetry_dropped_total` | `signal`, `reason` | records the gateway dropped, with the sender's `shed_service_id` |
+
+Deployment, stage, build step, and service backup metrics also carry the
+service's `shed_*` labels (see [Label schema](#label-schema)); backups of
+shed.db carry shed's. Dashboards select shed's own metrics with
+`shed_service_id="shed"`, and these with `shed_source="shed"`.
 
 Logs: the slog handler fans out to the log file, stderr, the in-memory tail,
 and an OpenTelemetry bridge that attaches the trace and span IDs of the
-record's context. `shed.log` is unchanged.
+record's context. The deploy pipeline, webhook, and backups log with the
+`*Context` variants, so their records carry them. `shed.log` is unchanged.
 
 ### Audit
 
