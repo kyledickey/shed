@@ -590,7 +590,7 @@ func (p *Plane) TraceExploreURL(ctx context.Context, traceID string) (string, er
 // query's query field. The range reaches back as far as traces are kept.
 func ExploreTraceURL(traceID string, retentionDays int) string {
 	ds := map[string]string{"type": "jaeger", "uid": grafana.TracesUID}
-	panes := map[string]any{"shed": map[string]any{
+	panes := map[string]any{"trc": map[string]any{
 		"datasource": grafana.TracesUID,
 		"queries":    []any{map[string]any{"refId": "A", "datasource": ds, "query": traceID}},
 		"range":      map[string]string{"from": "now-" + strconv.Itoa(max(retentionDays, 1)) + "d", "to": "now"},

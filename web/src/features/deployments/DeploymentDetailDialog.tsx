@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, CircleX, RotateCcw, Square, Undo2 } from "lucide-react";
+import { Ban, CircleX, ExternalLink, RotateCcw, Square, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import { invalidateDeployments } from "../../api/deployments";
 import { useLogStream } from "../../api/events";
 import { keys } from "../../api/keys";
+import { traceHref } from "../../api/logHistory";
 import { isPending, type Deployment, type Service } from "../../api/types";
 import { StatusBadge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -90,6 +91,17 @@ export function DeploymentDetailDialog({
         <CommitMeta service={service} deployment={d}>
           <span>{formatDate(d.createdAt)}</span>
           {d.startedAt && <span>{formatDuration(d.startedAt, d.finishedAt)}</span>}
+          {d.traceId && (
+            <a
+              className={styles.trace}
+              href={traceHref(d.traceId)}
+              target="_blank"
+              rel="noreferrer"
+              title="Open this deployment's trace in Grafana"
+            >
+              View trace <ExternalLink size={12} />
+            </a>
+          )}
         </CommitMeta>
       }
       footer={

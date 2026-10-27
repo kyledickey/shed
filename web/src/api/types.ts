@@ -386,3 +386,18 @@ export type Telemetry = {
   /** "http://shed.internal:4318" */
   otlpEndpoint: string;
 };
+
+/** One stored log record of a service: GET /api/services/{id}/logs/history. */
+export type LogRecord = {
+  time: string;
+  source: "container" | "otlp";
+  stream: "stdout" | "stderr" | "";
+  level: string;
+  message: string;
+  deploymentId: string;
+  traceId: string;
+  fields: Record<string, string>;
+};
+
+/** A page of log records, newest first; next is the before cursor, "" at the end. */
+export type LogPage = { records: LogRecord[]; next: string };

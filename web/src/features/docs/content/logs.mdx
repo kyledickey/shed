@@ -50,6 +50,14 @@ docker ps --filter label=shed.project=<projectID> --format '{{.Names}}'
 
 </Demo>
 
+## Log history
+
+While [telemetry](/docs/telemetry) is on, the service's Logs tab has two modes. **Live** is the stream above. **History** searches what telemetry stored: the container output of every deployment of the service and the logs it sends over OTLP, with the time range (1 hour to 7 days), a level filter, and a search box. History needs telemetry to have been on when the lines were written, and keeps them for the logs retention.
+
+The search box takes words, `"quoted phrases"`, and `field:value` (`user:42`, `level:error`); a record must match every term. There are no operators, wildcards, or pipes: whatever you type is matched as text, and the search never leaves the service. Results come newest first, a hundred at a time; **Load older** fetches the next page. A record with a `trace_id` links to its trace in Grafana.
+
+`GET /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=` is the same search: `from` and `to` are RFC 3339 times, `before` is the `next` cursor of the previous page, `limit` is at most 500 (default 100), and `level` is `debug`, `info`, `warn`, or `error`. It answers 409 while telemetry is off. Agents get the same data from the `error_logs` and `query_logs` [MCP tools](/docs/mcp).
+
 ## shed's own log
 
 shed's own log is structured text (`time=... level=INFO msg=...`), written to three places: standard error (so it is in `journalctl -u shed` under systemd), `shed.log` next to the config file, and an in-memory ring of the last **1000 lines**. The file is rotated by shed: `log.max_size_mb` 20, `log.max_backups` 5, `log.max_age_days` 30 by default, and `log.level` filters what is written at all. Caddy logs separately to `caddy.log` in the same directory, which Caddy rotates itself.

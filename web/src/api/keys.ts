@@ -20,4 +20,6 @@ export const keys = {
   audit: (filters: object) => ["audit", "events", filters] as const,
   auditSettings: ["audit", "settings"] as const,
   telemetry: ["telemetry"] as const,
+  logHistory: (serviceId: string, filters: object) =>
+    ["services", serviceId, "logs", "history", filters] as const,
 };

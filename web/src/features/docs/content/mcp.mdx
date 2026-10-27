@@ -97,6 +97,26 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `list_branches(owner, repo)`           | The branches of one of them.                                                                                                |
 | `audit_events(actor?, action?, …)`     | The [audit log](/docs/audit), newest first. Filters: `service_id`, `outcome`, and `since` (`24h` or an RFC 3339 time).      |
 
+### Telemetry tools
+
+These read what [telemetry](/docs/telemetry) collects. They are read-only like the rest and recorded in the audit log with their arguments. Except `telemetry_status`, which works either way, they fail with `telemetry is off` while telemetry is off. Times (`time`, `start`, `end`, `since`) are RFC 3339 times or durations before now, such as `15m` or `24h`.
+
+| Tool                                                       | Returns                                                                                                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry_status`                                         | Whether telemetry is on, each component's state and version, what the gateway ingests per second, and the records dropped in the last hour.                                       |
+| `query_metrics(query, time? \| start?, end?, step?)`       | A MetricsQL query, instant or over a range: at most 500 series of 500 points (the newest), with `truncated` set when more existed. `NaN` and infinite values are `null`.          |
+| `query_logs(query, start?, end?, limit?)`                  | A LogsQL query as text, one JSON record per line, newest first. Default 200 records, at most 2000. Variable values are masked as `***`.                                           |
+| `search_traces(service_id?, operation?, min_duration?, …)` | Traces, newest first: ID, root service and span name, start, duration, span and error counts. Also `max_duration`, `tags`, `start`, `end`, and `limit` (default 20, at most 100). |
+| `get_trace(trace_id)`                                      | The spans of one trace by start time, with parent, service, kind, duration, status, and attributes. At most 1000 spans.                                                           |
+| `error_logs(service_id, since?, limit?)`                   | A service's error-level records since `since` (default `1h`), as `query_logs` returns them.                                                                                       |
+| `slow_requests(service_id, since?, limit?)`                | The p50, p95, and p99 request duration of an app and its slowest requests, from the edge access records.                                                                          |
+| `top_queries(service_id)`                                  | A Postgres or MySQL service's statements by total time, with calls, mean time, and rows, from its exporter.                                                                       |
+| `list_dashboards(folder_uid?)`                             | Grafana's dashboards with their URLs, optionally of one folder (`s-<serviceID>`, `p-<projectID>`, `shed`).                                                                        |
+
+Every record carries the same labels: `shed_service_id`, `shed_service_name`, `shed_project_id`, `shed_source`, and so on in metrics, `shed.service.id` and the like in logs. The server's instructions list them with sample queries, such as `sum(shed_container_memory_bytes{shed_service_id="…"})` and `_stream:{"shed.service.id"="…"} error`.
+
+`query_metrics` can't put `NaN` or infinity in JSON, so those values come back as `null`. A range query's `step` is raised to keep it within 500 points, and the result says which step it used (`stepSeconds`).
+
 Results are compact JSON. Metrics come as a summary per metric (latest, average, and maximum over the range) rather than every data point. Log results are capped at 2000 lines, each line at 2000 characters, and 256 KiB in total, keeping the newest lines.
 
 The server also sends the agent a short description of how shed works (projects, services, deployments, and how to diagnose a failed one) when it connects, so it uses these in a sensible order.
