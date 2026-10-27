@@ -284,15 +284,14 @@ func TestDashboardsIntegration(t *testing.T) {
 		Title:     "store / web (deleted " + time.Now().Format(time.DateOnly) + ")",
 		ParentUID: grafana.ArchivedFolder,
 	}
-	eventually("the deleted service's folder archived", func() bool {
+	// The worker moves the folder, then forgets its dashboards.
+	eventually("the deleted service's folder archived and forgotten", func() bool {
 		f, err := gf.Folder(ctx, want.UID)
-		return err == nil && f == want
+		_, recorded := record(logsUID)
+		return err == nil && f == want && !recorded
 	})
 	if _, err := gf.Dashboard(ctx, logsUID); err != nil {
 		t.Errorf("archived service's Logs dashboard: %v", err)
-	}
-	if _, ok := record(logsUID); ok {
-		t.Error("the archived service's dashboards are still recorded")
 	}
 	if _, err := gf.Dashboard(ctx, pgUID); err != nil || !strings.HasPrefix(pgUID, "svc-postgres-") {
 		t.Errorf("the remaining service's dashboard: %v", err)
