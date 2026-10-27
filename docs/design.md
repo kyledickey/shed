@@ -124,7 +124,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
-| `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge | — |
+| `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
 | `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
 | `internal/victoria` | VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients: writes, MetricsQL, LogsQL, Jaeger queries, store stats | — |
 | `internal/grafana` | Grafana container config, provisioning files, HTTP API (folders, dashboards, annotations, alerts), dashboard templates | — |
@@ -419,6 +419,7 @@ CREATE TABLE telemetry_caps (             -- absent row = the default caps
 CREATE TABLE grafana_dashboards (         -- dashboards shed created
   uid TEXT PRIMARY KEY,
   template TEXT NOT NULL,
+  folder TEXT NOT NULL,                   -- UID of the folder shed created it in
   template_version INTEGER NOT NULL,      -- version shed last wrote
   grafana_version INTEGER NOT NULL,       -- Grafana's dashboard version after that write
   customized INTEGER NOT NULL DEFAULT 0   -- saved by a user since; never overwritten
@@ -1432,10 +1433,17 @@ most 40 characters, so template names stay short: `svc-overview`,
 `shed-runtime`, `shed-telemetry`, `shed-security`. Dashboard titles are the
 template's ("Overview", "HTTP"), never a service or project name, so renames
 only retitle folders.
-`grafana_dashboards` records, for each dashboard shed created, the template
-version and the Grafana dashboard version that write produced. On
-reconciliation (enable, boot while enabled, service or project created or
-renamed, shed upgrade):
+`grafana_dashboards` records, for each dashboard shed created, its folder,
+the template version, and the Grafana dashboard version that write
+produced. `observability.Dashboards` reconciles folders and dashboards as a
+manager worker, so only while telemetry is on: when the stack comes up
+(enable, boot while enabled, which is also how a shed upgrade's newer
+templates arrive), after `control` creates, renames, or deletes a project or
+service (it calls `Dashboards.Refresh`, which asks for a pass without
+blocking), every 10 minutes as a safety net, and a minute after a pass that
+failed. A pass ensures every folder with its title and parent (recreating
+one a user deleted), then decides each default dashboard with
+`grafana.Reconcile`:
 
 - Missing and never created: create it.
 - Missing but recorded: the user deleted it; leave it gone. The Telemetry page
@@ -1450,8 +1458,29 @@ renamed, shed upgrade):
   default" overwrites it and clears `customized`.
 
 Writes name the Grafana version they replace, so a save that lands between
-reading and writing makes the write fail (409) instead of being lost.
-Grafana keeps the version when a write does not change the dashboard.
+reading and writing makes the write fail (409) instead of being lost; the
+pass then leaves that dashboard to the next pass. Grafana keeps the version
+when a write does not change the dashboard.
+
+Folders of recorded dashboards that no longer belong to a project or service
+are archived: project folders first (their service folders move with them),
+then service folders whose project still exists, titled from Grafana's
+current folder titles. A folder already under Archived, inside an archived
+project folder, or deleted by a user is left alone. Their rows are then
+deleted, so archiving happens once.
+
+`POST /api/telemetry/dashboards/{uid}/reset` writes the current template
+over the dashboard (creating it, and its folder, if missing), records the
+new versions, and clears `customized`; a UID that is not one of the current
+default dashboards answers 404. `POST /api/telemetry/dashboards/restore`
+runs a pass that also creates every default dashboard missing from Grafana,
+recorded or not, and leaves the others to the usual rules. Both answer 409
+while telemetry is off. In `ServiceTelemetry`, `dashboards` lists the
+service's default dashboards with their `/grafana/d/<uid>` URLs;
+`outdated` means customized and the template is newer than the recorded
+template version (unknown, so 0, for a dashboard marked customized without a
+record). `folderUrl` is `<server.url>/grafana/dashboards/f/s-<serviceID>/`.
+While telemetry is off, `folderUrl` is empty and both lists are empty.
 
 Templates:
 
@@ -1468,11 +1497,29 @@ Templates:
 
 Annotations: deploy started, active, and failed, redeploys, restarts,
 crashes, stops, backups, and restores become Grafana annotations tagged
-`shed`, the event kind, `service:<serviceID>`, and `project:<projectID>`.
+`shed`, the event kind, `service:<serviceID>`, and `project:<projectID>`
+(neither for backups of shed.db). Packages report a `telemetry.Event` (kind,
+service, start, end for a span of time, text) through an `Events func`
+in their config, which `cmd/shed` points at `Dashboards.Annotate`:
+
+| Kind | Reported by | Time |
+|---|---|---|
+| `deploy.started`, or `redeploy` for a redeploy's deployment | the deployer, once the pipeline starts a deployment | start |
+| `deploy.active`, `deploy.failed` | the deployer, when the deployment ends (canceled and skipped ones are not marked) | started to finished |
+| `restart`, `stop` | the deployer, after `RestartService` or `StopService` succeeds | now |
+| `backup`, `backup.failed`, `restore`, `restore.failed` | the backup manager, when a job ends, scheduled or not | job start to end |
+| `crash` | the Docker events follower, for a service container's `die` that shed did not cause (not built yet) | the event |
+
+The deployer and the backup manager are the single sources because every
+interface (API, MCP, webhook, schedules, retries) goes through them and
+they alone see outcomes; `control` sees neither asynchronous outcomes nor
+scheduled backups.
 Templates show them through a tag-filtered annotation query (`service:`,
 `project:`, or `shed` for shed's own dashboards); custom dashboards can add
 the same query.
-Writing an annotation is best effort: a failure is logged and dropped.
+Writing an annotation is best effort: `Annotate` never blocks, queues up to
+256 events for one writer, drops events while telemetry is off or the queue
+is full, and a failed write is logged and dropped.
 
 Alert rules are provisioned from a file into folder shed, group
 `shed-defaults`, with no contact point configured: service restarted more
@@ -1485,7 +1532,8 @@ rules under a folder by title and creates a missing one with a random UID, so
 shed writes the rules file only after creating folder `shed`, then calls
 `POST /api/admin/provisioning/alerting/reload`. Firing alerts
 (from Grafana's alert API) appear on the Telemetry page and on the affected
-service.
+service: an alert instance belongs to the service in its `shed_service_id`
+label (the default rules group by it), and has none without one.
 
 ### shed's own telemetry
 
@@ -1613,7 +1661,7 @@ command is recorded as `fields: ["startCommand"]`, a new S3 secret as
 | `onepassword.connect`, `.disconnect` | |
 | `update.download`, `.install`, `update.settings.update` | |
 | `audit.settings.update` | retention changed |
-| `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` | |
+| `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` (target: UID), `telemetry.dashboards.restore` | |
 | `mcp.call` (tool and arguments) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
