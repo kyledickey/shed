@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -61,7 +62,8 @@ const (
 	edgeReloadEvery = 30 * time.Second
 	edgeShipTimeout = 10 * time.Second
 	// unroutedHost is the host label of requests for hosts no domain names,
-	// which clients choose freely.
+	// which clients choose freely. Their service labels are empty, which
+	// VictoriaMetrics drops, so they count under shed's own labels.
 	unroutedHost = "unrouted"
 )
 
@@ -137,7 +139,7 @@ func (e *Edge) Handle(a proxy.AccessEntry) {
 		host = unroutedHost
 	}
 	ctx := context.Background()
-	labels := svc.Labels()
+	labels := slices.Clip(append(svc.Labels(), attribute.String("shed_source", "edge")))
 	code := attribute.String("code", strconv.Itoa(a.Status))
 	hostAttr := attribute.String("host", host)
 	e.requests.Add(ctx, 1, metric.WithAttributes(append(labels, hostAttr, code, attribute.String("method", methodLabel(a.Method)))...))

@@ -190,7 +190,7 @@ func TestEdgeAttributesRequestsToServices(t *testing.T) {
 	reqs := f.points(t, "shed_http_requests_total")
 	for _, want := range []map[string]any{
 		{"shed_service_id": "s1", "shed_service_name": "web", "shed_service_kind": "app", "shed_project_id": "p1", "shed_project_name": "shop",
-			"host": "web.example.com", "method": "GET", "code": "200", "value": int64(1)},
+			"shed_source": "edge", "host": "web.example.com", "method": "GET", "code": "200", "value": int64(1)},
 		{"shed_service_id": "s1", "method": "other", "code": "405"},
 		{"shed_service_id": "shed", "shed_service_kind": "shed", "shed_project_id": "", "host": "shed.example.com", "code": "500"},
 		{"shed_service_id": "", "host": "unrouted", "code": "404"},
