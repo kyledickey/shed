@@ -265,7 +265,12 @@ func (m *Manager) DeleteData(ctx context.Context) error {
 	if err := os.RemoveAll(m.cfg.Dir); err != nil {
 		return fmt.Errorf("observability: delete %s: %w", m.cfg.Dir, err)
 	}
-	return nil
+	// The shipped logs are gone: container output is shipped again from
+	// what Docker still has, and the audit mirror starts over.
+	if err := m.cfg.Store.DeleteLogCursors(ctx); err != nil {
+		return err
+	}
+	return m.cfg.Store.DeleteSetting(ctx, auditCursorKey)
 }
 
 // Restart restarts the container of c. It fails with ErrDisabled while

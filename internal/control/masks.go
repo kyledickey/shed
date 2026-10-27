@@ -10,17 +10,15 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// A Mask replaces secret values in a string. It is safe for concurrent use.
-type Mask func(string) string
-
-// newMask returns a Mask of values, with the limits of build secret handling.
-func newMask(values []string) Mask {
+// newMask returns a function that replaces values in a string, with the
+// limits of build secret handling. It is safe for concurrent use.
+func newMask(values []string) func(string) string {
 	return build.NewRedactor(io.Discard, values).Redact
 }
 
 // ShedMask masks what shed itself writes, as ShedLog does: the saved values
 // of every service's variables.
-func (p *Plane) ShedMask(ctx context.Context) (Mask, error) {
+func (p *Plane) ShedMask(ctx context.Context) (func(string) string, error) {
 	services, err := p.store.AllServices(ctx)
 	if err != nil {
 		return nil, err
@@ -34,7 +32,7 @@ func (p *Plane) ShedMask(ctx context.Context) (Mask, error) {
 
 // RuntimeMask masks the output of a deployment's container, as RuntimeLogs
 // does: the values of the variables it was started with.
-func (p *Plane) RuntimeMask(ctx context.Context, deploymentID string) (Mask, error) {
+func (p *Plane) RuntimeMask(ctx context.Context, deploymentID string) (func(string) string, error) {
 	values, err := p.runtimeValues(ctx, deploymentID)
 	if err != nil {
 		return nil, err
@@ -45,7 +43,7 @@ func (p *Plane) RuntimeMask(ctx context.Context, deploymentID string) (Mask, err
 // TelemetryMask masks what a project's service sends to the telemetry
 // gateway: the saved values of every variable in the project and, given a
 // deployment, the values its container was started with.
-func (p *Plane) TelemetryMask(ctx context.Context, projectID, deploymentID string) (Mask, error) {
+func (p *Plane) TelemetryMask(ctx context.Context, projectID, deploymentID string) (func(string) string, error) {
 	services, err := p.store.Services(ctx, projectID)
 	if err != nil {
 		return nil, err

@@ -42,8 +42,9 @@ func (t *trail) take() []string {
 }
 
 type fakeStore struct {
-	mu   sync.Mutex
-	rows map[string]string
+	mu             sync.Mutex
+	rows           map[string]string
+	cursorsDeleted bool
 }
 
 func (s *fakeStore) Setting(_ context.Context, key string) (string, error) {
@@ -60,6 +61,20 @@ func (s *fakeStore) SetSetting(_ context.Context, key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rows[key] = value
+	return nil
+}
+
+func (s *fakeStore) DeleteSetting(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.rows, key)
+	return nil
+}
+
+func (s *fakeStore) DeleteLogCursors(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cursorsDeleted = true
 	return nil
 }
 
@@ -450,6 +465,7 @@ func TestDeleteData(t *testing.T) {
 	}
 	h.set(t, DefaultSettings())
 	h.t.take()
+	h.store.rows[auditCursorKey] = "42"
 	if err := h.m.DeleteData(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +476,12 @@ func TestDeleteData(t *testing.T) {
 	}
 	if _, err := os.Stat(h.dir); !os.IsNotExist(err) {
 		t.Errorf("telemetry directory: %v, want it gone", err)
+	}
+	if !h.store.cursorsDeleted {
+		t.Error("log cursors survived DeleteData")
+	}
+	if _, ok := h.store.rows[auditCursorKey]; ok {
+		t.Error("audit mirror cursor survived DeleteData")
 	}
 	st, err := h.m.Status(ctx)
 	if err != nil {

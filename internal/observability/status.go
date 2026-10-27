@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -190,6 +191,25 @@ const (
 	ingestQuery  = `sum by (signal) (rate(shed_telemetry_ingested_total[1m]))`
 	droppedQuery = `sum by (reason, signal) (increase(shed_telemetry_dropped_total[1h])) > 0`
 )
+
+// Dropping reports whether the gateway or the log shipper dropped records
+// of a service in the last 5 minutes. It is false while telemetry is off
+// and when VictoriaMetrics does not answer.
+func (m *Manager) Dropping(ctx context.Context, serviceID string) (bool, error) {
+	s, err := m.Settings(ctx)
+	if err != nil || !s.Enabled {
+		return false, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	q := fmt.Sprintf(`sum(increase(shed_telemetry_dropped_total{shed_service_id=%q}[5m])) > 0`, serviceID)
+	res, err := m.cfg.Metrics.Query(ctx, q, time.Time{})
+	if err != nil {
+		m.cfg.Log.Warn("query telemetry drops", "service", serviceID, "err", err)
+		return false, nil
+	}
+	return len(res.Series) > 0, nil
+}
 
 // rates returns the ingest rate per signal and the drops of the last hour,
 // zero while nothing records them.

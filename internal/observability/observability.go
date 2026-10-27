@@ -27,6 +27,8 @@ type Store interface {
 	Setting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
 	AddSetting(ctx context.Context, key, value string) (bool, error)
+	DeleteSetting(ctx context.Context, key string) error
+	DeleteLogCursors(ctx context.Context) error
 }
 
 var _ Store = (*store.Store)(nil)

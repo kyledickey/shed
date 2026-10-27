@@ -44,7 +44,7 @@ func TestMasks(t *testing.T) {
 	}
 	for _, tt := range []struct {
 		name string
-		mask Mask
+		mask func(string) string
 		want string
 	}{
 		{"telemetry: project values and the container's", telemetry, "*** *** other-saved-secret"},
