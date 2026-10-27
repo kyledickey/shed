@@ -139,6 +139,7 @@ func (s *Server) addTools() {
 	addWithSchema(s, "audit_events", "Audit events",
 		"Lists audit log events, newest first: who (actorKind, actor, actorIp) did what (action, target, detail) to which project and service, and whether it was ok, failed, or denied. Detail holds names and changed fields or keys, never values.",
 		s.auditEvents, outcomeEnum)
+	s.addTelemetryTools()
 }
 
 // add registers a read-only tool.
@@ -361,13 +362,19 @@ func (s *Server) auditEvents(ctx context.Context, _ *sdk.CallToolRequest, in aud
 
 // parseSince parses an RFC 3339 time or a duration before now.
 func parseSince(v string, now time.Time) (time.Time, error) {
+	return parseTime("since", v, now)
+}
+
+// parseTime parses the argument name, an RFC 3339 time or a duration before
+// now.
+func parseTime(name, v string, now time.Time) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
 	}
 	if d, err := time.ParseDuration(v); err == nil && d > 0 {
 		return now.Add(-d), nil
 	}
-	return time.Time{}, fmt.Errorf("since must be an RFC 3339 time or a duration such as 15m or 24h, not %q", v)
+	return time.Time{}, fmt.Errorf("%s must be an RFC 3339 time or a duration such as 15m or 24h, not %q", name, v)
 }
 
 // logLines returns the number of lines to ask for: lines, or the default if

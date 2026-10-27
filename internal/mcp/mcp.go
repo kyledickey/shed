@@ -47,6 +47,7 @@ type Backend interface {
 	Branches(ctx context.Context, owner, repo string) ([]string, error)
 	AuditEvents(ctx context.Context, f store.AuditFilter) (audit.Page, error)
 	Record(ctx context.Context, e audit.Event)
+	telemetryBackend
 }
 
 var _ Backend = (*control.Plane)(nil)
@@ -77,7 +78,7 @@ func New(cfg Config) *Server {
 	s.toolCalls, _ = otel.Meter(scope).Int64Counter("shed_mcp_tool_calls_total",
 		metric.WithDescription("MCP tool calls, by tool and OAuth client."))
 	s.server = sdk.NewServer(&sdk.Implementation{Name: "shed", Title: "shed", Version: cfg.Version}, &sdk.ServerOptions{
-		Instructions: instructions,
+		Instructions: instructions + telemetryInstructions,
 		Logger:       cfg.Log,
 		Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{}},
 	})

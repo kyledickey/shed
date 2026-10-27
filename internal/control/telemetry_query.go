@@ -552,8 +552,8 @@ func ValidTraceID(s string) bool { return traceIDPattern.MatchString(s) }
 // Dashboard is a Grafana dashboard.
 type Dashboard struct {
 	UID, Title, Folder string
-	// Path is where the dashboard is served, relative to the server.
-	Path string
+	// URL is where the dashboard is served, under the dashboard's URL.
+	URL string
 }
 
 // Dashboards lists Grafana's dashboards, only those of folder folderUID when
@@ -565,7 +565,7 @@ func (p *Plane) Dashboards(ctx context.Context, folderUID string) ([]Dashboard, 
 	}
 	out := make([]Dashboard, len(list))
 	for i, d := range list {
-		out[i] = Dashboard(d)
+		out[i] = Dashboard{UID: d.UID, Title: d.Title, Folder: d.Folder, URL: p.baseURL + d.Path}
 	}
 	return out, nil
 }
