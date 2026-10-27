@@ -1224,8 +1224,10 @@ VictoriaLogs stream fields are `shed.project.id`, `shed.service.id`, and
 IDs, which survive renames, and display names.
 
 Metrics shed records about a service (edge requests, span metrics, drops,
-restarts, egress) carry that service's labels, not shed's: `shed_service_id`
-names the service the record is about.
+restarts, egress) carry that service's `shed.*` labels as data point
+attributes. VictoriaMetrics lets a data point attribute override the resource
+attribute of the same name, so `shed_service_id` names the service the record
+is about, not shed.
 
 ### Ingest
 
