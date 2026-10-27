@@ -50,7 +50,8 @@ type component struct {
 	data string
 }
 
-// The pinned images are bumped with shed releases.
+// The pinned images are bumped with shed releases. Grafana 13 needs more than
+// 256 MiB while it installs its plugins on first start.
 var components = map[Component]component{
 	Metrics: {
 		image:   "victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df",
@@ -66,7 +67,7 @@ var components = map[Component]component{
 	},
 	Grafana: {
 		image:   "grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f",
-		version: "13.2.4", memory: 256 << 20, cpus: 0.5, data: "/var/lib/grafana",
+		version: "13.2.4", memory: 512 << 20, cpus: 0.5, data: "/var/lib/grafana",
 	},
 }
 
