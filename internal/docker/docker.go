@@ -25,6 +25,8 @@ import (
 // Client talks to a Docker Engine.
 type Client struct {
 	api *client.Client
+	// execs are the execs Exec started.
+	execs execSet
 }
 
 // New returns a Client configured from the standard DOCKER_* environment
@@ -433,6 +435,10 @@ type Container struct {
 	Labels map[string]string
 	// Volumes lists the named volumes mounted into the container.
 	Volumes []string
+	// HealthCommand is the command line of the image's or spec's health
+	// check as the daemon renders an exec of it, or empty if there is none.
+	// Only Inspect sets it.
+	HealthCommand string
 	// CPULimit is the configured CPU limit in cores; zero means unlimited.
 	// Only Inspect sets it.
 	CPULimit float64
@@ -456,6 +462,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	if info.Config != nil {
 		ctr.Image = info.Config.Image
 		ctr.Labels = info.Config.Labels
+		ctr.HealthCommand = healthCommand(info.Config.Healthcheck)
 	}
 	if info.State != nil {
 		ctr.State = string(info.State.Status)
@@ -471,6 +478,38 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	}
 	ctr.Volumes = volumeNames(info.Mounts)
 	return ctr, nil
+}
+
+// healthCommand renders the command of h as the daemon names it in the
+// exec_create event of a health check run.
+func healthCommand(h *container.HealthConfig) string {
+	if h == nil || len(h.Test) == 0 {
+		return ""
+	}
+	switch h.Test[0] {
+	case "CMD-SHELL":
+		return "/bin/sh -c " + strings.Join(h.Test[1:], " ")
+	case "CMD":
+		return strings.Join(h.Test[1:], " ")
+	}
+	return ""
+}
+
+// NetworkSubnets returns the address ranges of every Docker network.
+func (c *Client) NetworkSubnets(ctx context.Context) ([]netip.Prefix, error) {
+	res, err := c.api.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker: list networks: %w", err)
+	}
+	var out []netip.Prefix
+	for _, n := range res.Items {
+		for _, cfg := range n.IPAM.Config {
+			if cfg.Subnet.IsValid() {
+				out = append(out, cfg.Subnet)
+			}
+		}
+	}
+	return out, nil
 }
 
 // List returns all containers, stopped ones included, that have every one of

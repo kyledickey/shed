@@ -44,6 +44,31 @@ Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Ope
 
 Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
 
+## Docker events
+
+shed follows Docker's event stream for containers it started (those labeled `shed.service`, `shed.exporter`, or `shed.telemetry`). The audit part runs whether telemetry is on or off, and is described under [audit](/docs/audit): a `docker exec` into one of them is `container.exec` with the command, and a kernel OOM kill is `container.oom`. Execs shed starts itself, such as backups, dumps, and database setup, are not recorded, and neither are runs of a container's own health check.
+
+While telemetry is on, `start`, `die` (with the exit code), `kill`, `restart`, `oom`, and image pulls are also log records with `shed.source=docker` in VictoriaLogs, and two counters go to VictoriaMetrics, labeled with the service:
+
+- `shed_container_restarts_total`, every start of a container that had run before: a restart policy, `docker restart`, or a start after a stop.
+- `shed_container_oom_kills_total`, every OOM kill.
+
+If the stream breaks, shed reconnects with a growing delay and resumes after the last event it saw. Events that happened while shed was not running are not recorded.
+
+## Egress
+
+While telemetry is on, shed reads the kernel's connection tracking table over netlink every 10 seconds. It keeps the connections that a service container opened to an address outside the Docker networks and loopback, adds up their traffic since the previous reading, and records, per service, destination address, port, and protocol:
+
+- a log record with `shed.source=egress`: `dst`, `dst_port`, `proto`, `packets` and `bytes` sent, `packets_in` and `bytes_in` received, and `flows`, the connections that were active;
+- the counter `shed_egress_bytes_total`, bytes sent, labeled with the service and `proto`;
+- when a service reaches a destination address and port it has not reached in the last 7 days, an `egress.first_seen` record at level `warn`. The set of known destinations is rebuilt from VictoriaLogs when telemetry is turned on, so a restart doesn't report everything again. The first time telemetry is on, every destination is new.
+
+Destinations are addresses. Containers resolve names through Docker's DNS, which forwards from the host, so lookups are not attributed to a service, and shed records no names. The **Security** dashboard in Grafana lists destinations seen for the first time.
+
+Bytes need connection accounting. Turning telemetry on sets the kernel setting `net.netfilter.nf_conntrack_acct` to 1 (the file `/proc/sys/net/netfilter/nf_conntrack_acct`). It is a host-wide setting and shed does not set it back. It applies to connections that begin afterwards: older ones keep showing no bytes. It takes about 16 bytes more memory per tracked connection. Without it, records still appear for new connections but with zero bytes.
+
+Egress needs `CAP_NET_ADMIN` (the systemd unit shipped with shed runs as root) and the `nf_conntrack` kernel module, which Docker's NAT loads. If either is missing, shed logs a warning once and keeps trying; nothing else is affected.
+
 ## Retention and disk
 
 | Setting                  | Default | Range          |

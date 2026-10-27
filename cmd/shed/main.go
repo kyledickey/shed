@@ -251,11 +251,12 @@ func run() error {
 		return err
 	}
 
+	logs := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
 	stack := observability.New(observability.Config{
 		Store:   st,
 		Docker:  dc,
 		Metrics: victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil),
-		Logs:    victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil),
+		Logs:    logs,
 		Traces:  victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil),
 		Grafana: func(password string) observability.GrafanaAPI {
 			return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
@@ -270,7 +271,14 @@ func run() error {
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   strings.TrimRight(cfg.Server.URL, "/") + "/grafana/",
 		OTLPEndpoint: fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort),
-		Log:          log,
+		Security: &observability.Security{
+			Docker:    dc,
+			Catalog:   st,
+			Audit:     auditLog,
+			Logs:      logs,
+			Conntrack: conntrackTable{},
+		},
+		Log: log,
 	})
 
 	plane := control.New(control.Config{
@@ -344,6 +352,15 @@ func run() error {
 	}
 	return nil
 }
+
+// conntrackTable reads the kernel's connection tracking table.
+type conntrackTable struct{}
+
+func (conntrackTable) Flows(ctx context.Context) ([]host.Flow, error) {
+	return host.ConntrackFlows(ctx)
+}
+
+func (conntrackTable) EnableAccounting() error { return host.EnableConntrackAccounting("") }
 
 // executable returns the path of the running shed binary, with symlinks
 // resolved so an update replaces the file itself.
