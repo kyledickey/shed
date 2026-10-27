@@ -447,7 +447,11 @@ func TestDashboardsArchiveAndRename(t *testing.T) {
 	}
 	h.d.Refresh()
 	wantProj := grafana.Folder{UID: projFolder, Title: "shop (deleted 2026-10-27)", ParentUID: grafana.ArchivedFolder}
-	waitFor(t, func() bool { f, _ := h.api.folder(projFolder); return f == wantProj })
+	waitFor(t, func() bool {
+		f, _ := h.api.folder(projFolder)
+		rows, err := h.st.GrafanaDashboards(ctx)
+		return f == wantProj && err == nil && !slices.ContainsFunc(rows, func(r store.GrafanaDashboard) bool { return r.Folder != grafana.ShedFolder })
+	})
 	if f, _ := h.api.folder(dbFolder); f.ParentUID != projFolder || f.Title != "pg" {
 		t.Errorf("service folder of the deleted project = %+v, want it left inside the project folder", f)
 	}
