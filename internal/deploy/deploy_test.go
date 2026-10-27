@@ -89,7 +89,18 @@ func (f *fakeDocker) resolve(name string) []string {
 
 func (f *fakeDocker) EnsureNetwork(context.Context, string) error { return nil }
 
-func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { return nil }
+// RemoveNetwork fails, as Docker does, while a container is connected.
+func (f *fakeDocker) RemoveNetwork(_ context.Context, network string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, c := range f.containers {
+		if _, ok := c.IPs[network]; ok {
+			return fmt.Errorf("network %s has active endpoint %s", network, id)
+		}
+	}
+	return nil
+}
+
 func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
 
 func (f *fakeDocker) EnsureVolume(_ context.Context, name string) error {

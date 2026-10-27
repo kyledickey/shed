@@ -599,7 +599,8 @@ func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 	return nil
 }
 
-// DeleteProject deletes every service of a project as DeleteService does,
+// DeleteProject removes the containers attached to a project's network (see
+// [Attached]), deletes every service of the project as DeleteService does,
 // then its network, then the project itself. It returns ErrServiceBusy while
 // any of its services is held.
 func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
@@ -617,6 +618,13 @@ func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
 	defer func() { d.mu.Lock(); delete(d.deletingProjects, projectID); d.mu.Unlock() }()
 	if _, err := d.store.Project(ctx, projectID); err != nil {
 		return err
+	}
+	if d.attached != nil {
+		release, err := d.attached.DetachProject(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("deploy: detach project %s: %w", projectID, err)
+		}
+		defer release()
 	}
 	services, err := d.store.Services(ctx, projectID)
 	if err != nil {

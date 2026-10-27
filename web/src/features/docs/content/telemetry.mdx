@@ -103,7 +103,7 @@ While telemetry is on, shed runs a small exporter container next to every databa
 | MongoDB  | `percona/mongodb_exporter`              | operations, connections, WiredTiger cache, latencies, slow operations                   |
 | Redis    | `oliver006/redis_exporter`              | commands, hit ratio, memory, evictions, clients, keys, slowlog                          |
 
-The exporter is named `shed-exp-<service ID>`, has the label `shed.exporter=<service ID>`, joins the project's network without a hostname, and is capped at 0.1 CPU and 64 MiB. It connects to the database by its private hostname and port with the credentials the database runs with, which it gets as environment variables. shed recreates it when its image, target, or credentials change. It is removed when you delete or stop the database, when the database has no active deployment, and when you turn telemetry off. Every series carries the `shed_*` labels of its database, so the service's Postgres, MySQL, MongoDB, or Redis dashboard in Grafana fills in without setup.
+The exporter is named `shed-exp-<service ID>`, has the label `shed.exporter=<service ID>`, joins the project's network without a hostname, and is capped at 0.1 CPU and 64 MiB. It connects to the database by its private hostname and port with the credentials the database runs with, which it gets as environment variables. shed recreates it when its image, target, or credentials change. It is removed when you delete or stop the database or its project, when the database has no active deployment, and when you turn telemetry off. Every series carries the `shed_*` labels of its database, so the service's Postgres, MySQL, MongoDB, or Redis dashboard in Grafana fills in without setup.
 
 ### Query statistics
 

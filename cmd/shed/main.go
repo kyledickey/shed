@@ -247,6 +247,7 @@ func run() error {
 		},
 		OTLPEndpoint: otlpEndpoint,
 		Events:       dashboards.Annotate,
+		Attached:     stackExporters{&stack},
 		Log:          log,
 	})
 	defer deployer.Stop()
@@ -529,6 +530,14 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 		return nil, err
 	}
 	return h, nil
+}
+
+// stackExporters adapts the telemetry stack, built after the deployer, to
+// deploy.Attached.
+type stackExporters struct{ stack **observability.Manager }
+
+func (e stackExporters) DetachProject(ctx context.Context, projectID string) (func(), error) {
+	return (*e.stack).DetachProject(ctx, projectID)
 }
 
 // shedLogTail is how many lines of shed's log the dashboard can replay.

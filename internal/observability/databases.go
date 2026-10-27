@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
@@ -66,6 +67,12 @@ type databases struct {
 	// failed holds the last error logged for each service, so a database
 	// that stays broken is logged once.
 	failed map[string]string
+
+	// mu is held through each reconciliation, so that detach can keep a
+	// project's exporters from being created again. It guards detached.
+	mu sync.Mutex
+	// detached holds the IDs of the projects whose exporters are kept away.
+	detached map[string]bool
 }
 
 func newDatabases(cfg Config, publish func([]scrapeTarget) error) *databases {
@@ -147,10 +154,13 @@ func (d *databases) active(ctx context.Context) ([]database, error) {
 // missing ones, publishes their addresses, and prepares the databases.
 // A failure with one database does not hold up the others.
 func (d *databases) reconcile(ctx context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	dbs, err := d.active(ctx)
 	if err != nil {
 		return err
 	}
+	dbs = slices.DeleteFunc(dbs, func(db database) bool { return d.detached[db.svc.ProjectID] })
 	have, err := d.docker.List(ctx, map[string]string{LabelExporter: ""})
 	if err != nil {
 		return err
@@ -271,6 +281,41 @@ func (d *databases) removeAll(ctx context.Context) error {
 		errs = append(errs, d.remove(ctx, c))
 	}
 	return errors.Join(errs...)
+}
+
+// detach removes the exporters of project projectID's databases and keeps
+// reconcile from creating them again until release is called.
+func (d *databases) detach(ctx context.Context, projectID string) (release func(), err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	services, err := d.store.AllServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	have, err := d.docker.List(ctx, map[string]string{LabelExporter: ""})
+	if err != nil {
+		return nil, err
+	}
+	var errs []error
+	for _, c := range have {
+		if slices.ContainsFunc(services, func(s store.Service) bool {
+			return s.ProjectID == projectID && s.ID == c.Labels[LabelExporter]
+		}) {
+			errs = append(errs, d.remove(ctx, c))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	if d.detached == nil {
+		d.detached = make(map[string]bool)
+	}
+	d.detached[projectID] = true
+	return func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		delete(d.detached, projectID)
+	}, nil
 }
 
 // redeployTimeout is how long one redeployment may take.

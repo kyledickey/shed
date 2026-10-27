@@ -341,6 +341,35 @@ func TestDatabasesRemoveAll(t *testing.T) {
 	}
 }
 
+func TestDatabasesDetach(t *testing.T) {
+	other := testDatabase("redis", true)
+	other.svc.ProjectID, other.project.ID = "prj2", "prj2"
+	h := newDatabasesHarness(testDatabase("postgres", true), testDatabase("mysql", true), other)
+	h.reconcile(t)
+	h.dock.take()
+
+	release, err := h.d.detach(context.Background(), "prj1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := h.dock.take(), []string{"remove shed-exp-svcmysql", "remove shed-exp-svcpostgres"}; !slices.Equal(got, want) {
+		t.Errorf("detach did %v, want %v", got, want)
+	}
+	h.reconcile(t)
+	if got := h.dock.take(); len(got) != 0 {
+		t.Errorf("reconcile while detached did %v", got)
+	}
+	if len(h.published) != 1 || h.published[0].Labels["shed_service_id"] != "svcredis" {
+		t.Errorf("targets while detached = %+v", h.published)
+	}
+
+	release()
+	h.reconcile(t)
+	if got, want := h.dock.take(), []string{"run shed-exp-svcmysql", "run shed-exp-svcpostgres"}; !slices.Equal(got, want) {
+		t.Errorf("reconcile after release did %v, want %v", got, want)
+	}
+}
+
 func TestDatabasesSkipUnrecorded(t *testing.T) {
 	legacy := testDatabase("redis", true)
 	legacy.dep.Runtime = nil

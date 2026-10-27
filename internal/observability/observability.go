@@ -11,6 +11,7 @@ package observability
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -208,6 +209,20 @@ func (m *Manager) OnEnabled(fn func(enabled bool)) {
 // it before Run.
 func (m *Manager) OnServiceContainer(fn func()) {
 	m.containerHooks = append(m.containerHooks, fn)
+}
+
+// DetachProject removes the database exporters on project projectID's
+// network and keeps them from being created again until release is called,
+// so that the network can be removed.
+func (m *Manager) DetachProject(ctx context.Context, projectID string) (release func(), err error) {
+	if m.dbs == nil {
+		return func() {}, nil
+	}
+	release, err = m.dbs.detach(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("observability: remove exporters of project %s: %w", projectID, err)
+	}
+	return release, nil
 }
 
 // retryEvery is how long Run waits after a failed reconciliation before

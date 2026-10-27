@@ -81,6 +81,15 @@ type Variables interface {
 	Get(ctx context.Context, svc store.Service) (map[string]string, error)
 }
 
+// Attached removes containers that join a project's network without being
+// its services, such as database exporters, so that DeleteProject can remove
+// the network. *observability.Manager implements it.
+type Attached interface {
+	// DetachProject removes the containers on project projectID's network
+	// and keeps them from coming back until release is called.
+	DetachProject(ctx context.Context, projectID string) (release func(), err error)
+}
+
 // Config configures a Deployer.
 type Config struct {
 	Store   *store.Store
@@ -115,7 +124,10 @@ type Config struct {
 	// Events receives deployments starting and ending, stops, and
 	// restarts. It must not block. Nil drops them.
 	Events func(telemetry.Event)
-	Log    *slog.Logger
+	// Attached removes other containers from a project's network before
+	// DeleteProject removes it. Nil means there are none.
+	Attached Attached
+	Log      *slog.Logger
 }
 
 // Commit identifies the source revision of a deployment.
@@ -179,6 +191,7 @@ type Deployer struct {
 	telemetry func(ctx context.Context) (bool, error)
 	otlp      string
 	events    func(telemetry.Event)
+	attached  Attached
 	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
@@ -248,6 +261,7 @@ func New(cfg Config) *Deployer {
 		telemetry:        cfg.Telemetry,
 		otlp:             cfg.OTLPEndpoint,
 		events:           cfg.Events,
+		attached:         cfg.Attached,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
 		ciTimeout:        60 * time.Minute,

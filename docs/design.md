@@ -1476,7 +1476,10 @@ and never as arguments. A worker registered with the Manager reconciles the
 exporters every 10 s: it creates the missing ones (pulling the image first),
 recreates one whose spec changed, starts one that exited, and removes one
 whose database is deleted, stopped, or has no active deployment. The Manager
-also removes every exporter when telemetry is disabled.
+also removes every exporter when telemetry is disabled. Deleting a project
+first removes its exporters and holds the worker off that project until the
+deletion ends, because Docker refuses to remove a network with a container
+still attached.
 
 | Kind | Exporter (pinned tag@digest) | Flags | Credentials (env) |
 |---|---|---|---|
