@@ -58,8 +58,10 @@ can be understood, tested, and replaced on its own.
   instead of importing a concrete type. `cmd/shed` wires real
   implementations together, with tiny adapters where needed.
 - Pass dependencies in explicitly: no package-level state, no `init` side
-  effects, no global loggers. The only exception is Caddy's process-global
-  state, which stays contained in `internal/proxy`.
+  effects, no global loggers. There are two exceptions. Caddy's
+  process-global state stays contained in `internal/proxy`. The OpenTelemetry
+  globals are registered once by `cmd/shed` through `internal/telemetry`, and
+  packages instrument through `otel.Tracer` and `otel.Meter`.
 - Keep APIs narrow. Export only what callers need. Prefer plain structs and
   functions over frameworks and abstractions.
 - New functionality goes in the package that owns it, or in a new leaf

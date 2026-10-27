@@ -1421,10 +1421,11 @@ service.
 loopback listener. The providers are switchable and start off: while
 telemetry is off the sampler drops spans, the log processor refuses records,
 and the exporters drop anything already queued, so nothing is exported or
-buffered. Providers also register the Go runtime metrics. Providers are passed
-to the packages that instrument (`trace.TracerProvider`,
-`metric.MeterProvider` from the OpenTelemetry API); no package sets the
-OpenTelemetry globals, and tests pass no-op providers. The gateway itself
+buffered. Providers also register the Go runtime metrics. At startup `cmd/shed`
+registers them as the OpenTelemetry globals (with the W3C trace context and
+baggage propagators), and instrumented packages call `otel.Tracer` and
+`otel.Meter` with their import path as the name. Tests leave the globals
+unset, so instrumentation is a no-op there. The gateway itself
 records metrics but no spans, so its own work does not feed back into it.
 
 Spans:

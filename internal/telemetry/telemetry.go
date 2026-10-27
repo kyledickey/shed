@@ -1,6 +1,8 @@
 // Package telemetry builds shed's own OpenTelemetry tracer, meter, and logger
 // providers. They export OTLP/HTTP to shed's loopback gateway and can be
-// switched on and off at runtime. No provider is registered globally.
+// switched on and off at runtime. [Providers.Register] makes them the
+// OpenTelemetry globals, so instrumented packages call otel.Tracer and
+// otel.Meter instead of taking providers as parameters.
 package telemetry
 
 import (
@@ -11,12 +13,15 @@ import (
 	"sync/atomic"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -99,6 +104,16 @@ func (p *Providers) MeterProvider() metric.MeterProvider { return p.mp }
 
 // LoggerProvider returns the logger provider.
 func (p *Providers) LoggerProvider() log.LoggerProvider { return p.lp }
+
+// Register makes p the global tracer, meter, and logger provider and installs
+// the W3C trace context and baggage propagators. cmd/shed calls it once at
+// startup; tests use the providers directly instead.
+func (p *Providers) Register() {
+	otel.SetTracerProvider(p.tp)
+	otel.SetMeterProvider(p.mp)
+	global.SetLoggerProvider(p.lp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+}
 
 // SetEnabled turns export on or off. While off, spans are not recorded and
 // anything already queued is dropped at export time.
