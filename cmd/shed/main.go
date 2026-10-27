@@ -32,6 +32,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/logtail"
@@ -313,6 +314,7 @@ func run() error {
 		Masks:    plane,
 		Settings: stack.Settings,
 		Port:     cfg.Telemetry.OTLPPort,
+		Firewall: firewall.New(),
 		Log:      log,
 	})
 	receiver, err := otlp.New(otlp.Config{

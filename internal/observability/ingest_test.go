@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/victoria"
@@ -731,5 +732,64 @@ func TestAuditMirror(t *testing.T) {
 	}
 	if got := logs.records[0]["shed.service.id"]; got != "shed" {
 		t.Errorf("event without a service attributed to %q, want shed", got)
+	}
+}
+
+type fakeFirewall struct {
+	mu    sync.Mutex
+	syncs [][]firewall.Rule
+}
+
+func (f *fakeFirewall) Sync(_ context.Context, rules []firewall.Rule) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.syncs = append(f.syncs, rules)
+	return nil
+}
+
+func (f *fakeFirewall) last() ([]firewall.Rule, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.syncs) == 0 {
+		return nil, 0
+	}
+	return f.syncs[len(f.syncs)-1], len(f.syncs)
+}
+
+func TestGatewayFirewallFollowsListeners(t *testing.T) {
+	f := newGatewayFixture(t)
+	fw := &fakeFirewall{}
+	f.g.cfg.Firewall = fw
+	f.g.listen = func(addr string) (net.Listener, error) {
+		return &fakeListener{addr: addr, closed: make(chan struct{})}, nil
+	}
+	f.dc.mu.Lock()
+	f.dc.networks = []docker.Network{
+		{Name: "shed-p1", Gateway: netip.MustParseAddr("172.18.0.1"), Bridge: "br-p1"},
+		{Name: "shed-unknown", Gateway: netip.MustParseAddr("172.30.0.1"), Bridge: "br-unknown"},
+	}
+	f.dc.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.g.Run(ctx, http.NotFoundHandler())
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if rules, _ := fw.last(); len(rules) > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	rules, _ := fw.last()
+	if want := []firewall.Rule{{Iface: "br-p1", Port: 4318}}; !slices.Equal(rules, want) {
+		t.Fatalf("firewall rules while running = %v, want %v", rules, want)
+	}
+	cancel()
+	<-done
+	if rules, n := fw.last(); n < 2 || rules != nil {
+		t.Errorf("firewall rules after Run = %v, want none", rules)
 	}
 }

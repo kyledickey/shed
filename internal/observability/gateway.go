@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -38,6 +40,14 @@ type GatewayDocker interface {
 
 var _ GatewayDocker = (*docker.Client)(nil)
 
+// Firewall opens the gateway's port to containers. *firewall.Firewall
+// implements it.
+type Firewall interface {
+	Sync(ctx context.Context, rules []firewall.Rule) error
+}
+
+var _ Firewall = (*firewall.Firewall)(nil)
+
 // Masks build the functions that mask secret values in telemetry.
 // *control.Plane implements it.
 type Masks interface {
@@ -57,7 +67,11 @@ type GatewayConfig struct {
 	Settings func(ctx context.Context) (Settings, error)
 	// Port is telemetry.otlp_port, the port of every listener.
 	Port int
-	Log  *slog.Logger
+	// Firewall, if set, keeps a rule per project bridge accepting TCP to
+	// Port while the gateway runs, for hosts whose firewall drops input
+	// from bridges.
+	Firewall Firewall
+	Log      *slog.Logger
 }
 
 // Timings of the gateway.
@@ -85,6 +99,8 @@ type Gateway struct {
 
 	loadMu sync.Mutex // serializes reloading the directory
 	loaded time.Time  // when dir was last reloaded; guarded by loadMu
+
+	firewallErr string // last firewall error logged; only Run uses it
 
 	masksMu sync.Mutex
 	masks   map[maskKey]func(string) string // cleared on reload; guarded by masksMu
@@ -126,6 +142,7 @@ type listenerKey struct{}
 type listenerInfo struct {
 	projectID string
 	loopback  bool
+	bridge    string // host interface of the project's network
 }
 
 // Run serves h on the listeners until ctx is done, following the project
@@ -136,6 +153,7 @@ func (g *Gateway) Run(ctx context.Context, h http.Handler) {
 		for _, srv := range servers {
 			srv.Close()
 		}
+		g.syncFirewall(context.WithoutCancel(ctx), nil)
 	}()
 	if err := g.reload(ctx); err != nil {
 		g.cfg.Log.Warn("telemetry gateway: load containers", "err", err)
@@ -151,6 +169,7 @@ func (g *Gateway) Run(ctx context.Context, h http.Handler) {
 			g.cfg.Log.Warn("telemetry gateway: list networks", "err", err)
 		} else {
 			g.reconcile(servers, want, h)
+			g.syncFirewall(ctx, want)
 		}
 		select {
 		case <-ctx.Done():
@@ -188,7 +207,7 @@ func (g *Gateway) listeners(ctx context.Context) (map[string]listenerInfo, error
 	for _, n := range networks {
 		id := strings.TrimPrefix(n.Name, networkPrefix)
 		if known[id] && n.Gateway.IsValid() {
-			want[net.JoinHostPort(n.Gateway.String(), port)] = listenerInfo{projectID: id}
+			want[net.JoinHostPort(n.Gateway.String(), port)] = listenerInfo{projectID: id, bridge: n.Bridge}
 		}
 	}
 	return want, nil
@@ -230,6 +249,33 @@ func (g *Gateway) reconcile(servers map[string]*http.Server, want map[string]lis
 			}
 		}()
 		g.cfg.Log.Info("telemetry gateway: listening", "addr", addr)
+	}
+}
+
+// syncFirewall keeps a firewall rule for each project listener in want and
+// none for others. Failures are logged once per distinct error, since Run
+// retries every few seconds.
+func (g *Gateway) syncFirewall(ctx context.Context, want map[string]listenerInfo) {
+	if g.cfg.Firewall == nil {
+		return
+	}
+	var rules []firewall.Rule
+	for _, info := range want {
+		if info.bridge != "" {
+			rules = append(rules, firewall.Rule{Iface: info.bridge, Port: g.cfg.Port})
+		}
+	}
+	slices.SortFunc(rules, func(a, b firewall.Rule) int { return strings.Compare(a.Iface, b.Iface) })
+	err := g.cfg.Firewall.Sync(ctx, rules)
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	if msg != g.firewallErr {
+		g.firewallErr = msg
+		if err != nil {
+			g.cfg.Log.Warn("telemetry gateway: firewall", "err", err)
+		}
 	}
 }
 

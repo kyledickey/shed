@@ -121,6 +121,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
+| `internal/firewall` | iptables `INPUT` rules letting Docker bridges reach the telemetry gateway port | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
@@ -1278,8 +1279,13 @@ Listeners:
   telemetry is on, every service container gets the host entry
   `shed.internal` → its network's gateway (`ExtraHosts`, resolved when the
   container is created). Hosts whose firewall drops input from Docker
-  bridges (ufw's default) must allow this port from them; containers
-  otherwise see connection timeouts.
+  bridges (ufw's default) would drop this traffic, so while the gateway runs
+  `internal/firewall` keeps one iptables rule per project bridge at the top
+  of `INPUT`: `-i <bridge> -p tcp --dport <otlp_port> -m comment --comment
+  shed-telemetry -j ACCEPT`. Rules for bridges that went away are deleted,
+  and all of them when telemetry is turned off. Rules without the comment
+  are never touched. Without `iptables` on `PATH` the gateway logs a warning
+  and containers must be allowed in by hand.
 - One on `127.0.0.1:<otlp_port>` for shed's own telemetry and the proxy's edge
   spans.
 

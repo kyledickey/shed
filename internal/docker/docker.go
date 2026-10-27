@@ -90,6 +90,8 @@ type Network struct {
 	// Gateway is the first IPv4 gateway of the network, the host's address
 	// on its bridge; zero if it has none.
 	Gateway netip.Addr
+	// Bridge is the name of the network's bridge interface on the host.
+	Bridge string
 }
 
 // Networks returns the networks whose names start with prefix.
@@ -103,7 +105,7 @@ func (c *Client) Networks(ctx context.Context, prefix string) ([]Network, error)
 	var out []Network
 	for _, n := range res.Items {
 		if strings.HasPrefix(n.Name, prefix) {
-			out = append(out, Network{Name: n.Name, Gateway: gateway(n.IPAM)})
+			out = append(out, Network{Name: n.Name, Gateway: gateway(n.IPAM), Bridge: bridge(n.ID, n.Options)})
 		}
 	}
 	return out, nil
@@ -120,6 +122,16 @@ func (c *Client) NetworkGateway(ctx context.Context, name string) (netip.Addr, e
 		return netip.Addr{}, fmt.Errorf("docker: network %s has no IPv4 gateway", name)
 	}
 	return gw, nil
+}
+
+// bridge returns the host interface of the bridge network id: the name set
+// in its options, else Docker's default "br-" and the ID's first 12
+// characters.
+func bridge(id string, options map[string]string) string {
+	if name := options["com.docker.network.bridge.name"]; name != "" {
+		return name
+	}
+	return "br-" + id[:min(len(id), 12)]
 }
 
 func gateway(ipam network.IPAM) netip.Addr {

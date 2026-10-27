@@ -78,18 +78,15 @@ Variables and the host entry are part of a container's configuration, so turning
 
 ## Firewall
 
-Containers reach the gateway on the host's address on their bridge. A host firewall whose default input policy drops packets (ufw's default, firewalld's public zone) drops these too, and SDKs see connection timeouts. Allow TCP port 4318 from Docker's bridges, for example:
+Containers reach the gateway on the host's address on their bridge. A host firewall whose default input policy drops packets (ufw's default, firewalld's public zone) would drop these too, so while telemetry is on shed adds one iptables rule per project network that accepts TCP to port 4318 from that network's bridge only:
 
 ```sh
-# ufw: Docker's default address pools
-sudo ufw allow proto tcp from 172.16.0.0/12 to any port 4318
-sudo ufw allow proto tcp from 192.168.0.0/16 to any port 4318
-
-# iptables: any user-defined bridge
-sudo iptables -I INPUT -i br-+ -p tcp --dport 4318 -j ACCEPT
+-A INPUT -i br-1a2b3c4d5e6f -p tcp -m tcp --dport 4318 -m comment --comment shed-telemetry -j ACCEPT
 ```
 
-Change the port if you changed `telemetry.otlp_port`. The gateway only listens on loopback and on the gateways of shed's project networks, so this does not expose it to the internet.
+The rules sit at the top of the `INPUT` chain, follow project networks as they come and go, and are removed when telemetry is turned off. shed only changes rules carrying the `shed-telemetry` comment. List them with `sudo iptables -S INPUT | grep shed-telemetry`.
+
+If `iptables` is not installed, shed logs a warning and you need to allow the port yourself, for example `sudo nft add rule inet filter input iifname "br-*" tcp dport 4318 accept`. The gateway only listens on loopback and on the gateways of shed's project networks, so the port is not exposed to the internet either way.
 
 ## Container logs
 

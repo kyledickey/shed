@@ -31,6 +31,7 @@ internal/variables where variables live: shed.db or a 1Password vault
 internal/catalog   database templates
 internal/s3        S3-compatible object storage client
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
+internal/firewall  iptables rules opening the telemetry gateway to containers
 internal/host      host resource usage from procfs, sysfs, and statfs
 internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
@@ -52,8 +53,8 @@ Each package under `internal/` should work as a self-contained piece that
 can be understood, tested, and replaced on its own.
 
 - Leaf packages (`config`, `store`, `docker`, `build`, `proxy`, `github`,
-  `vars`, `catalog`, `host`, `logtail`, `s3`, `update`) import nothing from
-  `internal/`. Keep it that way.
+  `vars`, `catalog`, `firewall`, `host`, `logtail`, `s3`, `update`) import
+  nothing from `internal/`. Keep it that way.
 - Interfaces belong to the consumer. A package that needs another's behavior
   declares the small interface it uses (`deploy.Docker`, `auth.Store`, …)
   instead of importing a concrete type. `cmd/shed` wires real
