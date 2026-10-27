@@ -218,10 +218,12 @@ func run() error {
 		Log: log,
 	})
 
+	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
 	collector := metrics.New(metrics.Config{
 		Docker: dc,
 		Host:   host.Reader{Path: cfg.Data.Dir},
 		Store:  st,
+		Remote: vm,
 		Log:    log,
 	})
 
@@ -254,7 +256,7 @@ func run() error {
 	stack := observability.New(observability.Config{
 		Store:   st,
 		Docker:  dc,
-		Metrics: victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil),
+		Metrics: vm,
 		Logs:    victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil),
 		Traces:  victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil),
 		Grafana: func(password string) observability.GrafanaAPI {
@@ -272,6 +274,8 @@ func run() error {
 		OTLPEndpoint: fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort),
 		Log:          log,
 	})
+
+	stack.OnEnabled(collector.SetRemote)
 
 	plane := control.New(control.Config{
 		Store:    st,

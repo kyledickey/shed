@@ -8,6 +8,10 @@
 // [Collector.QueryHost] average the stored samples into a fixed number of
 // buckets over a range.
 //
+// While telemetry is on, the collector pushes each tick to VictoriaMetrics
+// (a [Remote]) instead of the store, and the queries read it from there,
+// falling back to the store when VictoriaMetrics fails or has nothing.
+//
 // Docker, the host, and the store are reached through small interfaces so
 // they can be replaced, for example by fakes in tests.
 package metrics
@@ -18,6 +22,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
@@ -49,6 +54,9 @@ type Store interface {
 	InsertHostSample(ctx context.Context, sample store.HostSample) error
 	HostBuckets(ctx context.Context, from time.Time, step time.Duration, n int) ([]store.HostBucket, error)
 	DeleteMetricSamplesBefore(ctx context.Context, t time.Time) error
+	// AllServices and Projects name the services whose samples are pushed.
+	AllServices(ctx context.Context) ([]store.Service, error)
+	Projects(ctx context.Context) ([]store.Project, error)
 }
 
 // Config configures a Collector.
@@ -57,6 +65,9 @@ type Config struct {
 	// Host is sampled alongside the containers; nil means it is not.
 	Host  Host
 	Store Store
+	// Remote receives the samples while [Collector.SetRemote] is on; nil
+	// means samples always go to the store.
+	Remote Remote
 	// Interval is the time between samples; zero means 10 seconds.
 	Interval time.Duration
 	// Retention is how long samples are kept; zero means 7 days.
@@ -75,6 +86,8 @@ type Collector struct {
 	docker    Docker
 	host      Host
 	store     Store
+	remote    Remote
+	remoteOn  atomic.Bool
 	interval  time.Duration
 	retention time.Duration
 	now       func() time.Time
@@ -82,6 +95,7 @@ type Collector struct {
 
 	// Owned by the Run goroutine.
 	prev       map[string]docker.Stats // last sample by container ID
+	ctrLimits  map[string]limits       // limits by container ID, which never change
 	hostPrev   *host.Stats
 	hostPrevAt time.Time
 	lastPrune  time.Time
@@ -93,11 +107,13 @@ func New(cfg Config) *Collector {
 		docker:    cfg.Docker,
 		host:      cfg.Host,
 		store:     cfg.Store,
+		remote:    cfg.Remote,
 		interval:  cfg.Interval,
 		retention: cfg.Retention,
 		now:       cfg.Now,
 		log:       cfg.Log,
 		prev:      make(map[string]docker.Stats),
+		ctrLimits: make(map[string]limits),
 	}
 	if c.interval <= 0 {
 		c.interval = 10 * time.Second
@@ -126,8 +142,9 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
-// collect takes one sample of every running service container and stores
-// the per-service sums of their rates since the previous sample.
+// collect takes one sample of the host and of every running service
+// container, and stores or pushes the per-service sums of their rates since
+// the previous sample.
 func (c *Collector) collect(ctx context.Context, now time.Time) {
 	now = now.Truncate(time.Second)
 	if now.Sub(c.lastPrune) >= pruneEvery {
@@ -136,15 +153,42 @@ func (c *Collector) collect(ctx context.Context, now time.Time) {
 		}
 		c.lastPrune = now
 	}
-	c.collectHost(ctx, now)
+	h := c.collectHost(ctx, now)
+	services := c.collectServices(ctx, now)
 
+	if c.pushTick(ctx, now, services, h) {
+		return
+	}
+	if h != nil {
+		if err := c.store.InsertHostSample(ctx, h.HostSample); err != nil {
+			c.log.Warn("store host sample", "err", err)
+		}
+	}
+	if len(services) == 0 {
+		return
+	}
+	samples := make([]store.MetricSample, len(services))
+	for i, s := range services {
+		samples[i] = s.MetricSample
+	}
+	if err := c.store.InsertMetricSamples(ctx, samples); err != nil {
+		c.log.Warn("store metric samples", "err", err)
+	}
+}
+
+// collectServices samples every running service container and sums their
+// rates since the previous sample per service, ordered by service ID.
+func (c *Collector) collectServices(ctx context.Context, now time.Time) []serviceTick {
 	containers, err := c.docker.List(ctx, map[string]string{serviceLabel: ""})
 	if err != nil {
 		c.log.Warn("list containers for metrics", "err", err)
-		return
+		return nil
 	}
+	remote := c.remoteOn.Load()
 	seen := make(map[string]docker.Stats)
+	seenLimits := make(map[string]limits)
 	sums := make(map[string]usage)
+	caps := make(map[string]limits)
 	for _, ctr := range containers {
 		svc := ctr.Labels[serviceLabel]
 		if !ctr.Running || svc == "" {
@@ -163,56 +207,90 @@ func (c *Collector) collect(ctx context.Context, now time.Time) {
 		if !ok {
 			continue
 		}
-		if u, ok := rates(prev, st); ok {
-			sums[svc] = sums[svc].add(u)
+		u, ok := rates(prev, st)
+		if !ok {
+			continue
+		}
+		sums[svc] = sums[svc].add(u)
+		if remote {
+			l, ok := c.ctrLimits[ctr.ID]
+			if !ok {
+				l = c.containerLimits(ctx, ctr.ID)
+			}
+			seenLimits[ctr.ID] = l
+			caps[svc] = limits{caps[svc].cpuPercent + l.cpuPercent, caps[svc].memory + l.memory}
 		}
 	}
 	c.prev = seen // Forget containers that are gone.
+	c.ctrLimits = seenLimits
 
 	if len(sums) == 0 {
-		return
+		return nil
 	}
-	samples := make([]store.MetricSample, 0, len(sums))
+	var labels map[string]string
+	if remote {
+		if labels, err = c.serviceLabels(ctx); err != nil {
+			c.log.Warn("name services for metrics", "err", err)
+			labels = nil
+		}
+	}
+	services := make([]serviceTick, 0, len(sums))
 	for _, svc := range slices.Sorted(maps.Keys(sums)) {
 		u := sums[svc]
-		samples = append(samples, store.MetricSample{
-			ServiceID: svc, Time: now,
-			CPU: u.cpu, Memory: int64(u.memory),
-			NetRx: u.netRx, NetTx: u.netTx,
-			DiskRead: u.diskRead, DiskWrite: u.diskWrite,
+		services = append(services, serviceTick{
+			MetricSample: store.MetricSample{
+				ServiceID: svc, Time: now,
+				CPU: u.cpu, Memory: int64(u.memory),
+				NetRx: u.netRx, NetTx: u.netTx,
+				DiskRead: u.diskRead, DiskWrite: u.diskWrite,
+			},
+			labels: labels[svc],
+			limits: caps[svc],
 		})
 	}
-	if err := c.store.InsertMetricSamples(ctx, samples); err != nil {
-		c.log.Warn("store metric samples", "err", err)
-	}
+	return services
 }
 
-// collectHost takes one sample of the host and stores its rates since the
-// previous sample.
-func (c *Collector) collectHost(ctx context.Context, now time.Time) {
+// containerLimits returns the limits of a container, zero where Docker does
+// not answer.
+func (c *Collector) containerLimits(ctx context.Context, id string) limits {
+	info, err := c.docker.Inspect(ctx, id)
+	if err != nil {
+		if !docker.IsNotFound(err) {
+			c.log.Warn("inspect container for limits", "container", id, "err", err)
+		}
+		return limits{}
+	}
+	return limits{cpuPercent: info.CPULimit * 100, memory: info.MemoryLimit}
+}
+
+// collectHost takes one sample of the host and returns its rates since the
+// previous sample, nil if there is none yet.
+func (c *Collector) collectHost(ctx context.Context, now time.Time) *hostTick {
 	if c.host == nil {
-		return
+		return nil
 	}
 	cur, err := c.host.Read(ctx)
 	if err != nil {
 		c.log.Warn("read host stats", "err", err)
-		return
+		return nil
 	}
 	prev, prevAt := c.hostPrev, c.hostPrevAt
 	c.hostPrev, c.hostPrevAt = &cur, now
 	if prev == nil {
-		return
+		return nil
 	}
 	u, ok := hostRates(*prev, cur, now.Sub(prevAt))
 	if !ok {
-		return
+		return nil
 	}
-	err = c.store.InsertHostSample(ctx, store.HostSample{
-		Time: now, CPU: u.cpu, Memory: int64(u.memory), DiskUsed: int64(cur.DiskUsed),
-		NetRx: u.netRx, NetTx: u.netTx, DiskRead: u.diskRead, DiskWrite: u.diskWrite,
-	})
-	if err != nil {
-		c.log.Warn("store host sample", "err", err)
+	return &hostTick{
+		HostSample: store.HostSample{
+			Time: now, CPU: u.cpu, Memory: int64(u.memory), DiskUsed: int64(cur.DiskUsed),
+			NetRx: u.netRx, NetTx: u.netTx, DiskRead: u.diskRead, DiskWrite: u.diskWrite,
+		},
+		memoryTotal: cur.MemoryTotal,
+		diskTotal:   cur.DiskTotal,
 	}
 }
 
@@ -353,7 +431,7 @@ func (c *Collector) Query(ctx context.Context, serviceID string, r Range) (Serie
 	// Fetch one extra bucket before the window, so that the window can shift
 	// back a step when the in-progress bucket has no samples yet.
 	start, step := window(c.now(), d)
-	buckets, err := c.store.MetricBuckets(ctx, serviceID, start.Add(-step), step, Buckets+1)
+	buckets, err := c.serviceBuckets(ctx, serviceID, start.Add(-step), step)
 	if err != nil {
 		return Series{}, err
 	}
@@ -379,6 +457,36 @@ func (c *Collector) Query(ctx context.Context, serviceID string, r Range) (Serie
 		return Series{}, err
 	}
 	return s, nil
+}
+
+// serviceBuckets returns the Buckets+1 buckets of a service's samples from
+// from: from the remote store while it is on and has samples in the window,
+// otherwise from the store.
+func (c *Collector) serviceBuckets(ctx context.Context, serviceID string, from time.Time, step time.Duration) ([]store.MetricBucket, error) {
+	if c.remoteOn.Load() {
+		bs, err := c.remoteMetricBuckets(ctx, serviceID, from, step, Buckets+1)
+		if err == nil && len(bs) > 0 {
+			return bs, nil
+		}
+		if err != nil {
+			c.log.Warn("query service metrics from telemetry; using shed.db", "err", err)
+		}
+	}
+	return c.store.MetricBuckets(ctx, serviceID, from, step, Buckets+1)
+}
+
+// hostBuckets is like serviceBuckets for the host.
+func (c *Collector) hostBuckets(ctx context.Context, from time.Time, step time.Duration) ([]store.HostBucket, error) {
+	if c.remoteOn.Load() {
+		bs, err := c.remoteHostBuckets(ctx, from, step, Buckets+1)
+		if err == nil && len(bs) > 0 {
+			return bs, nil
+		}
+		if err != nil {
+			c.log.Warn("query host metrics from telemetry; using shed.db", "err", err)
+		}
+	}
+	return c.store.HostBuckets(ctx, from, step, Buckets+1)
 }
 
 // window returns the start and bucket width of a range of length d ending
@@ -456,7 +564,7 @@ func (c *Collector) QueryHost(ctx context.Context, r Range) (HostSeries, error) 
 		return HostSeries{}, ErrInvalidRange
 	}
 	start, step := window(c.now(), d)
-	buckets, err := c.store.HostBuckets(ctx, start.Add(-step), step, Buckets+1)
+	buckets, err := c.hostBuckets(ctx, start.Add(-step), step)
 	if err != nil {
 		return HostSeries{}, err
 	}
