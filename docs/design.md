@@ -1795,7 +1795,7 @@ command is recorded as `fields: ["startCommand"]`, a new S3 secret as
 | `audit.settings.update` | retention changed |
 | `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` (target: UID), `telemetry.dashboards.restore` | |
 | `telemetry.caps.update` (`overridden`) | a service's own caps set or cleared |
-| `mcp.call` (tool and arguments) | every MCP tool call |
+| `mcp.call` (tool; arguments except query, operation, tags) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
 Denied events from anonymous actors are coalesced to one row per action and
@@ -2369,7 +2369,9 @@ off; the Origin check and the bearer token take its place.
 deployments, and how to diagnose a failed deploy. Every tool is annotated
 `readOnlyHint` and calls a `control.Plane` method. Every call is recorded as
 an `mcp.call` audit event of the agent, with the tool, its arguments, and
-`service_id` as the event's service. Results are compact JSON
+`service_id` as the event's service. Only IDs, repository names, audit filters,
+times, durations, and limits are recorded (an allowlist of argument names); a query, span name, or tags
+can hold a secret being looked for and are left out. Results are compact JSON
 (camelCase; empty strings, zero settings, and false flags left out) as both
 `structuredContent` and a text block, except the log tools, which return the
 lines as one text block. Not-found, invalid, and conflict errors become tool

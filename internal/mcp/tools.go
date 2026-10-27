@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -147,8 +148,18 @@ func add[In, Out any](s *Server, name, title, description string, h sdk.ToolHand
 	sdk.AddTool(s.server, readOnly(name, title, description), audited(s, name, h))
 }
 
-// audited records every call of h, with its arguments, as an mcp.call audit
-// event of the agent calling it. It also traces the call, without its
+// auditedArguments are the tool arguments an mcp.call event records: IDs and
+// structured parameters. Any other, such as a query, span name, or tags, is
+// left out, since it can hold a secret being looked for.
+var auditedArguments = map[string]bool{
+	"project_id": true, "service_id": true, "deployment_id": true, "trace_id": true, "folder_uid": true,
+	"owner": true, "repo": true, "actor": true, "action": true, "outcome": true,
+	"lines": true, "limit": true, "range": true, "since": true, "time": true, "start": true, "end": true,
+	"step": true, "min_duration": true, "max_duration": true,
+}
+
+// audited records every call of h, with its audited arguments, as an mcp.call
+// audit event of the agent calling it. It also traces the call, without its
 // arguments, and counts it in shed_mcp_tool_calls_total.
 func audited[In, Out any](s *Server, name string, h sdk.ToolHandlerFor[In, Out]) sdk.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
@@ -166,7 +177,10 @@ func audited[In, Out any](s *Server, name string, h sdk.ToolHandlerFor[In, Out])
 			attribute.String("tool", name), attribute.String("client", cmp.Or(actor.ClientName, actor.ClientID))))
 		e := audit.Event{Action: "mcp.call", Outcome: audit.Result(err), Detail: map[string]any{"tool": name}}
 		var args map[string]any
-		if raw, merr := json.Marshal(in); merr == nil && json.Unmarshal(raw, &args) == nil && len(args) > 0 {
+		if raw, merr := json.Marshal(in); merr == nil && json.Unmarshal(raw, &args) == nil {
+			maps.DeleteFunc(args, func(k string, _ any) bool { return !auditedArguments[k] })
+		}
+		if len(args) > 0 {
 			e.Detail["arguments"] = args
 			e.ServiceID, _ = args["service_id"].(string)
 		}

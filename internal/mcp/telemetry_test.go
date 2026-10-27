@@ -406,8 +406,11 @@ func TestTelemetryCallsAreAudited(t *testing.T) {
 	f.tel.result = &victoria.Result{Type: "vector"}
 	cs := connect(t, f)
 	call(t, cs, "error_logs", map[string]any{"service_id": "svc1"})
-	call(t, cs, "query_metrics", map[string]any{"query": "up"})
-	if len(f.records) != 2 {
+	call(t, cs, "query_logs", map[string]any{"query": "synthetic-review-token", "limit": 5})
+	call(t, cs, "search_traces", map[string]any{
+		"service_id": "svc1", "operation": "GET /reset?token=synthetic-op-token", "tags": map[string]any{"k": "synthetic-tag-token"},
+	})
+	if len(f.records) != 3 {
 		t.Fatalf("recorded %d events", len(f.records))
 	}
 	e := f.records[0]
@@ -415,8 +418,16 @@ func TestTelemetryCallsAreAudited(t *testing.T) {
 	if e.Action != "mcp.call" || e.Detail["tool"] != "error_logs" || e.ServiceID != "svc1" || args["service_id"] != "svc1" {
 		t.Errorf("event = %+v", e)
 	}
-	if args := f.records[1].Detail["arguments"].(map[string]any); args["query"] != "up" {
-		t.Errorf("arguments = %v", args)
+	for _, e := range f.records[1:] {
+		if detail := fmt.Sprint(e.Detail); strings.Contains(detail, "synthetic") {
+			t.Errorf("%s detail = %s, want no freeform arguments", e.Detail["tool"], detail)
+		}
+	}
+	if args := f.records[1].Detail["arguments"].(map[string]any); args["limit"] != float64(5) {
+		t.Errorf("query_logs arguments = %v, want the limit", args)
+	}
+	if args := f.records[2].Detail["arguments"].(map[string]any); args["service_id"] != "svc1" {
+		t.Errorf("search_traces arguments = %v, want the service", args)
 	}
 }
 
