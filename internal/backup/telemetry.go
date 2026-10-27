@@ -54,21 +54,44 @@ func (m *Manager) finish(ctx context.Context, span trace.Span, kind, serviceID s
 	defer span.End()
 	ctx = context.WithoutCancel(ctx)
 	var labels []attribute.KeyValue
-	if s, ok := m.service(ctx, serviceID); ok {
-		span.SetAttributes(s.Attributes()...)
-		labels = s.Labels()
+	svc, ok := m.service(ctx, serviceID)
+	if ok {
+		span.SetAttributes(svc.Attributes()...)
+		labels = svc.Labels()
 	}
 	outcome := "succeeded"
 	if err != nil {
 		outcome = "failed"
 		span.SetStatus(codes.Error, err.Error())
 	}
+	m.events(outcomeEvent(kind, svc, start, err))
 	kindAttr := attribute.String("kind", kind)
 	m.runs.Add(ctx, 1, metric.WithAttributes(append(labels, kindAttr, attribute.String("outcome", outcome))...))
 	m.duration.Record(ctx, time.Since(start).Seconds(), metric.WithAttributes(append(labels, kindAttr)...))
 	if err == nil && kind == "backup" {
 		m.bytes.Record(ctx, size, metric.WithAttributes(labels...))
 	}
+}
+
+// outcomeEvent is the event of a job of kind backup or restore of svc that
+// started at start and ended now with err.
+func outcomeEvent(kind string, svc telemetry.Service, start time.Time, err error) telemetry.Event {
+	target := "shed.db"
+	if svc.ID != "" {
+		target = svc.Name
+	}
+	e := telemetry.Event{Service: svc, Start: start, End: time.Now()}
+	switch {
+	case kind == "restore" && err != nil:
+		e.Kind, e.Text = telemetry.EventRestoreFailed, "Restore of "+target+" failed: "+err.Error()
+	case kind == "restore":
+		e.Kind, e.Text = telemetry.EventRestore, "Restored "+target
+	case err != nil:
+		e.Kind, e.Text = telemetry.EventBackupFailed, "Backup of "+target+" failed: "+err.Error()
+	default:
+		e.Kind, e.Text = telemetry.EventBackup, "Backed up "+target
+	}
+	return e
 }
 
 // step runs fn, a step of a backup or restore, in a span named name.

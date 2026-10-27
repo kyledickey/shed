@@ -4,13 +4,16 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 	"github.com/kyledickey/shed/internal/telemetry/telemetrytest"
 )
 
@@ -96,5 +99,91 @@ func TestDeploymentTraceIDOnlyWhileRecording(t *testing.T) {
 	dep := f.wait(t, f.deploy(t).ID, terminal)
 	if dep.TraceID != "" {
 		t.Errorf("trace ID = %q with spans not sampled, want empty", dep.TraceID)
+	}
+}
+
+// eventLog records the events a Deployer reports.
+type eventLog struct {
+	mu     sync.Mutex
+	events []telemetry.Event
+}
+
+func (l *eventLog) add(e telemetry.Event) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, e)
+}
+
+func (l *eventLog) take() []telemetry.Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.events
+	l.events = nil
+	return out
+}
+
+func kinds(events []telemetry.Event) []telemetry.EventKind {
+	var out []telemetry.EventKind
+	for _, e := range events {
+		out = append(out, e.Kind)
+	}
+	return out
+}
+
+func TestEvents(t *testing.T) {
+	f := newFixture(t)
+	log := &eventLog{}
+	f.d.events = log.add
+	ctx := context.Background()
+
+	dep := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	events := log.take()
+	if got, want := kinds(events), []telemetry.EventKind{telemetry.EventDeployStarted, telemetry.EventDeployActive}; !slices.Equal(got, want) {
+		t.Fatalf("deploy events = %q, want %q", got, want)
+	}
+	want := telemetry.Service{ProjectID: f.svc.ProjectID, ProjectName: "demo", ID: f.svc.ID, Name: "web", Kind: "app"}
+	for _, e := range events {
+		if e.Service != want {
+			t.Errorf("%s service = %+v, want %+v", e.Kind, e.Service, want)
+		}
+	}
+	// The store keeps milliseconds.
+	near := func(a, b time.Time) bool { return a.Sub(b).Abs() < time.Millisecond }
+	if active := events[1]; !near(active.Start, *dep.StartedAt) || !near(active.End, *dep.FinishedAt) {
+		t.Errorf("deploy.active spans %s to %s, want the deployment's %s to %s", active.Start, active.End, dep.StartedAt, dep.FinishedAt)
+	}
+
+	re, err := f.d.Redeploy(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.wait(t, re.ID, terminal)
+	f.settle(t)
+	if err := f.d.RestartService(ctx, f.svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.d.StopService(ctx, f.svc.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.healthy = func() bool { return false }
+	failed := f.wait(t, f.deploy(t).ID, terminal)
+	f.settle(t)
+	if failed.Status != store.StatusFailed {
+		t.Fatalf("status = %s, want failed", failed.Status)
+	}
+	events = log.take()
+	wantKinds := []telemetry.EventKind{
+		telemetry.EventRedeploy, telemetry.EventDeployActive,
+		telemetry.EventRestart, telemetry.EventStop,
+		telemetry.EventDeployStarted, telemetry.EventDeployFailed,
+	}
+	if got := kinds(events); !slices.Equal(got, wantKinds) {
+		t.Fatalf("events = %q, want %q", got, wantKinds)
+	}
+	for _, e := range events {
+		if e.Service.ID != f.svc.ID || e.Service.ProjectName != "demo" {
+			t.Errorf("%s service = %+v, want web in demo", e.Kind, e.Service)
+		}
 	}
 }

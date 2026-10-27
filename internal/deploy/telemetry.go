@@ -99,6 +99,51 @@ func (j *job) finish(ctx context.Context, span trace.Span) {
 		attribute.String("trigger", string(j.dep.Trigger)),
 		attribute.String("outcome", string(j.dep.Status)),
 	)...))
+	if j.dep.StartedAt == nil || j.dep.FinishedAt == nil {
+		return
+	}
+	ev := telemetry.Event{Service: svc, Start: *j.dep.StartedAt, End: *j.dep.FinishedAt}
+	switch j.dep.Status {
+	case store.StatusActive:
+		ev.Kind, ev.Text = telemetry.EventDeployActive, "Deployment "+j.dep.ID+" active"+j.revision()
+	case store.StatusFailed:
+		ev.Kind, ev.Text = telemetry.EventDeployFailed, "Deployment "+j.dep.ID+" failed: "+j.dep.Error
+	default:
+		return
+	}
+	j.events(ev)
+}
+
+// started reports that the job's deployment started.
+func (j *job) started() {
+	kind := telemetry.EventDeployStarted
+	if j.dep.Trigger == store.TriggerRedeploy {
+		kind = telemetry.EventRedeploy
+	}
+	j.events(telemetry.Event{
+		Kind: kind, Service: j.service(), Start: *j.dep.StartedAt,
+		Text: "Deployment " + j.dep.ID + " started (" + string(j.dep.Trigger) + ")" + j.revision(),
+	})
+}
+
+// revision describes the deployment's commit or image for an event.
+func (j *job) revision() string {
+	switch {
+	case j.dep.CommitSHA != "":
+		return " at " + shortSHA(j.dep.CommitSHA)
+	case j.dep.Image != "":
+		return " of " + j.dep.Image
+	}
+	return ""
+}
+
+// serviceEvent reports an event of kind about svc now.
+func (d *Deployer) serviceEvent(ctx context.Context, svc store.Service, kind telemetry.EventKind, text string) {
+	s := telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind}
+	if p, err := d.store.Project(ctx, svc.ProjectID); err == nil {
+		s.ProjectName = p.Name
+	}
+	d.events(telemetry.Event{Kind: kind, Service: s, Start: time.Now(), Text: text})
 }
 
 // inStage runs fn as the pipeline stage name, in its own span, and records

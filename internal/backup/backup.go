@@ -30,6 +30,7 @@ import (
 
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // Store persists backups, restores, policies, and settings. *store.Store
@@ -131,7 +132,10 @@ type Config struct {
 	// Dir holds the local archives, in a subdirectory per service and
 	// "system" for shed.db.
 	Dir string
-	Log *slog.Logger
+	// Events receives the outcome of every backup and restore. It must
+	// not block. Nil drops them.
+	Events func(telemetry.Event)
+	Log    *slog.Logger
 	// Now returns the current time. Nil means time.Now.
 	Now func() time.Time
 }
@@ -197,6 +201,7 @@ type Manager struct {
 	services  Services
 	newRemote func(S3Config) (Remote, error)
 	dir       string
+	events    func(telemetry.Event)
 	log       *slog.Logger
 	now       func() time.Time
 	// readyTimeout is how long the isolated database that a dump is
@@ -232,6 +237,10 @@ func New(cfg Config) *Manager {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	events := cfg.Events
+	if events == nil {
+		events = func(telemetry.Event) {}
+	}
 	newRemote := cfg.NewRemote
 	if newRemote == nil {
 		newRemote = func(S3Config) (Remote, error) { return nil, errors.New("S3 is not available") }
@@ -242,6 +251,7 @@ func New(cfg Config) *Manager {
 		services:     cfg.Services,
 		newRemote:    newRemote,
 		dir:          cfg.Dir,
+		events:       events,
 		log:          log,
 		now:          func() time.Time { return now().UTC().Truncate(time.Millisecond) },
 		readyTimeout: 5 * time.Minute,

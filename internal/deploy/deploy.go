@@ -31,6 +31,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // Docker runs containers. *docker.Client implements it.
@@ -104,7 +105,10 @@ type Config struct {
 	KeepDeployments int
 	// Dashboard, if its Host is set, is included in every route set.
 	Dashboard proxy.Route
-	Log       *slog.Logger
+	// Events receives deployments starting and ending, stops, and
+	// restarts. It must not block. Nil drops them.
+	Events func(telemetry.Event)
+	Log    *slog.Logger
 }
 
 // Commit identifies the source revision of a deployment.
@@ -165,6 +169,7 @@ type Deployer struct {
 	logLimit  int64
 	keep      int // deployments kept per service; 0 keeps all
 	dashboard proxy.Route
+	events    func(telemetry.Event)
 	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
@@ -231,6 +236,7 @@ func New(cfg Config) *Deployer {
 		logLimit:         cfg.LogLimit,
 		keep:             cfg.KeepDeployments,
 		dashboard:        cfg.Dashboard,
+		events:           cfg.Events,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
 		ciTimeout:        60 * time.Minute,
@@ -252,6 +258,9 @@ func New(cfg Config) *Deployer {
 	}
 	if d.variables == nil {
 		d.variables = savedVariables{cfg.Store}
+	}
+	if d.events == nil {
+		d.events = func(telemetry.Event) {}
 	}
 	d.instrument()
 	return d
