@@ -1137,8 +1137,10 @@ Reconciliation is idempotent and runs at boot and after every settings
 change: each component container is compared with the spec those settings
 produce (a `shed.spec` label holds its hash) and created, recreated on the same
 volume, or left alone. Enabling then waits for each store's `/health`, writes
-Grafana's provisioning files, starts Grafana, reconciles folders and
-dashboards, opens the ingest listeners, and starts the shippers (container
+Grafana's data sources file, starts Grafana, reconciles folders, writes the
+alert rules file and reloads it (see [Folders and
+dashboards](#folders-and-dashboards)), reconciles dashboards, opens the ingest
+listeners, and starts the shippers (container
 logs, edge, audit mirror, egress). Changing retention recreates the affected
 store; data is kept.
 
@@ -1181,8 +1183,10 @@ Grafana's configuration (environment variables on its container):
   calls), `security.admin_user = shed` with a random password kept in
   `settings` (`grafana_admin_password`, encrypted like other settings).
 - Analytics, update checks, and gravatar off; `security.allow_embedding` off.
-- `plugins.preinstall`: `victoriametrics-metrics-datasource`,
-  `victoriametrics-logs-datasource`.
+- `plugins.preinstall_sync`: `victoriametrics-metrics-datasource`,
+  `victoriametrics-logs-datasource`, installed before Grafana starts because
+  the provisioned data sources need them (`plugins.preinstall` installs in
+  the background).
 
 Data sources are provisioned from files and reapplied on every Grafana start,
 so editing or deleting them in Grafana is undone by a restart:
@@ -1213,6 +1217,10 @@ shed sets them; values a sender supplies are overwritten.
 VictoriaLogs stream fields are `shed.project.id`, `shed.service.id`, and
 `shed.source`; the rest are ordinary fields. Dashboards and queries filter by
 IDs, which survive renames, and display names.
+
+Metrics shed records about a service (edge requests, span metrics, drops,
+restarts, egress) carry that service's labels, not shed's: `shed_service_id`
+names the service the record is about.
 
 ### Ingest
 
@@ -1254,9 +1262,11 @@ live in `telemetry_caps`. Every drop increments
 page shows "dropping telemetry" while it rises.
 
 Span metrics: for spans of kind server or consumer the gateway records
-`shed_span_duration_seconds` (histogram) labeled with service, span name
-(at most 200 names per service, the rest `other`), and status code. These
-drive the Traces dashboards.
+`shed_span_duration_seconds` (histogram) labeled with the service's `shed.*`
+labels, `service_name` (the span's `service.name`), `span_name` (at most 200
+names per service, the rest `other`), and `status_code` (`unset`, `ok`, or
+`error`). These drive the Traces dashboards, whose trace search takes its
+`service.name` from `service_name`.
 
 Forwarding: traces to VictoriaTraces and logs to VictoriaLogs (OTLP, with
 `VL-Stream-Fields`), metrics to VictoriaMetrics' OTLP endpoint. If a store
@@ -1304,8 +1314,10 @@ domain table (the dashboard host to shed, unrouted hosts to no service) and:
   `method`), and `shed_http_response_bytes_total`; the path is never a label;
 - ships an access record (`shed.source=edge`): client IP (after
   `proxy.cloudflare` handling), method, host, path and query (masked), status,
-  duration, bytes in and out, user agent, referer, TLS version, trace ID.
-  Request headers and bodies are not recorded.
+  duration, bytes in and out, user agent, referer, TLS version, trace ID
+  (fields `client_ip`, `method`, `host`, `path`, `query`, `status`,
+  `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`,
+  `tls_version`, `trace_id`). Request headers and bodies are not recorded.
 
 Every app route also gets Caddy's tracing handler: it starts a server span
 per request, or continues an incoming `traceparent`, forwards `traceparent`
@@ -1323,8 +1335,8 @@ resolved variables, passed as environment variables:
 
 | Kind | Exporter | Notable collectors |
 |---|---|---|
-| postgres | `prometheuscommunity/postgres-exporter` | `stat_statements`, `database`, `locks`, `stat_bgwriter` |
-| mysql | `prom/mysqld-exporter` | `perf_schema.eventsstatementssum`, `info_schema.innodb_metrics` |
+| postgres | `prometheuscommunity/postgres-exporter` | `stat_statements` (off by default; with `--collector.stat_statements.include_query` for query text), `database`, `locks`, `stat_bgwriter` |
+| mysql | `prom/mysqld-exporter` | `perf_schema.eventsstatements` (per digest; `eventsstatementssum` only has grand totals), `info_schema.innodb_metrics` |
 | mongo | `percona/mongodb_exporter` | `--collect-all` |
 | redis | `oliver006/redis_exporter` | slowlog, keyspace, memory |
 
@@ -1332,7 +1344,9 @@ The exporter is recreated when its spec (image, target, credentials) changes
 and removed with the database, when the database stops, or when telemetry is
 off. shed rewrites `scrape.yaml` with a static target per exporter
 (`<container address>:<port>`, scrape interval 15 s, `shed.*` labels) whenever
-exporters change.
+exporters change. It also scrapes the three stores' own `/metrics` (labels of
+shed itself), which the Telemetry dashboard reads for store disk use
+(`vm_data_size_bytes`, `vl_data_size_bytes`, `vt_data_size_bytes`).
 
 Query statistics are part of each database template's start arguments:
 
@@ -1367,7 +1381,15 @@ Folder titles follow renames. A deleted service's folder moves under Archived
 as `<project> / <service> (deleted <date>)`, a deleted project's folder as
 `<project> (deleted <date>)`; their data ages out through retention.
 
-Dashboard UIDs are `<template>-<scope ID>` (e.g. `svc-http-<serviceID>`).
+Dashboard UIDs are `<template>-<scope ID>` (e.g. `svc-http-<serviceID>`);
+shed's own dashboards have no scope (`shed-deploys`). Grafana UIDs are at
+most 40 characters, so template names stay short: `svc-overview`,
+`svc-logs`, `svc-http`, `svc-traces`, `svc-postgres`, `svc-mysql`,
+`svc-mongo`, `svc-redis`, `proj-overview`, and `shed-overview`,
+`shed-deploys`, `shed-api`, `shed-proxy`, `shed-host`, `shed-backups`,
+`shed-runtime`, `shed-telemetry`, `shed-security`. Dashboard titles are the
+template's ("Overview", "HTTP"), never a service or project name, so renames
+only retitle folders.
 `grafana_dashboards` records, for each dashboard shed created, the template
 version and the Grafana dashboard version that write produced. On
 reconciliation (enable, boot while enabled, service or project created or
@@ -1376,12 +1398,18 @@ renamed, shed upgrade):
 - Missing and never created: create it.
 - Missing but recorded: the user deleted it; leave it gone. The Telemetry page
   offers "Restore default dashboards".
+- Present but not recorded (shed.db restored from an older backup): mark it
+  `customized`, keeping whatever is there.
 - Grafana version equals the recorded one and the template is newer:
   overwrite and record the new versions.
-- Grafana version is newer than the recorded one: someone saved it; mark it
-  `customized` and never overwrite it. The service page shows "newer default
-  available" when the template moved on; "Reset to default" overwrites it and
-  clears `customized`.
+- Grafana version differs from the recorded one: someone saved it (or deleted
+  and recreated it); mark it `customized` and never overwrite it. The service
+  page shows "newer default available" when the template moved on; "Reset to
+  default" overwrites it and clears `customized`.
+
+Writes name the Grafana version they replace, so a save that lands between
+reading and writing makes the write fail (409) instead of being lost.
+Grafana keeps the version when a write does not change the dashboard.
 
 Templates:
 
@@ -1398,8 +1426,10 @@ Templates:
 
 Annotations: deploy started, active, and failed, redeploys, restarts,
 crashes, stops, backups, and restores become Grafana annotations tagged
-`shed`, the event kind, and `service:<serviceID>`. Templates show them through
-a tag-filtered annotation query; custom dashboards can add the same query.
+`shed`, the event kind, `service:<serviceID>`, and `project:<projectID>`.
+Templates show them through a tag-filtered annotation query (`service:`,
+`project:`, or `shed` for shed's own dashboards); custom dashboards can add
+the same query.
 Writing an annotation is best effort: a failure is logged and dropped.
 
 Alert rules are provisioned from a file into folder shed, group
@@ -1408,7 +1438,10 @@ than 3 times in 10 min, container OOM killed, host disk above 85%, host memory
 above 90% for 10 min, 5xx ratio above 5% for 5 min at more than 1 request/s,
 p95 latency above 2 s for 10 min, database connections above 80% of the
 maximum, deploy failed, backup failed, telemetry dropping records. Grafana does
-not allow editing provisioned rules; copy one to change it. Firing alerts
+not allow editing provisioned rules; copy one to change it. Grafana files the
+rules under a folder by title and creates a missing one with a random UID, so
+shed writes the rules file only after creating folder `shed`, then calls
+`POST /api/admin/provisioning/alerting/reload`. Firing alerts
 (from Grafana's alert API) appear on the Telemetry page and on the affected
 service.
 
@@ -1436,12 +1469,15 @@ Spans:
 - backup and restore steps;
 - store queries (driver wrapper; statement text, never parameters).
 
-Metrics: Go runtime and process metrics, plus `shed_deployments_total{trigger,
+Metrics: Go runtime metrics from
+`go.opentelemetry.io/contrib/instrumentation/runtime` (`go_goroutine_count`,
+`go_memory_used_bytes{go_memory_type}`, `go_memory_gc_goal_bytes`,
+`go_memory_allocated_bytes_total`, `go_schedule_duration_seconds`), plus `shed_deployments_total{trigger,
 outcome}`, `shed_deploy_stage_duration_seconds{stage}`,
 `shed_deploy_queue_depth`, `shed_build_steps_total{cached}`,
 `shed_webhook_deliveries_total{event, outcome}`,
 `shed_route_apply_duration_seconds`, `shed_backups_total{kind, outcome}`,
-`shed_backup_bytes`, `shed_backup_duration_seconds`,
+`shed_backup_bytes` and `shed_backup_duration_seconds` (histograms),
 `shed_docker_request_duration_seconds{op}`, `shed_store_query_duration_seconds`,
 `shed_mcp_tool_calls_total{tool, client}`, `shed_signins_total{outcome}`,
 `shed_telemetry_ingested_total{signal}`, and `shed_telemetry_dropped_total`.
@@ -1485,7 +1521,7 @@ IP per minute, with `detail.count`. Rows older than the audit retention
 (default 365 days, `PUT /api/audit/settings`) are pruned hourly. Server →
 Audit lists them with filters. While telemetry is on, a shipper copies rows
 with an `id` above the `audit_mirror_cursor` setting into VictoriaLogs
-(`shed.source=audit`) and advances the cursor after each acknowledged batch,
+(`shed.source=audit`, the columns as fields) and advances the cursor after each acknowledged batch,
 so the mirror catches up after any outage.
 
 ### Docker events
@@ -1527,7 +1563,10 @@ While telemetry is on, the metrics sampler pushes each tick to
 VictoriaMetrics (`shed_container_cpu_percent`, `shed_container_memory_bytes`,
 `shed_container_network_{rx,tx}_bytes_per_second`,
 `shed_container_disk_{read,write}_bytes_per_second`, and the same for
-`shed_host_*` plus `shed_host_disk_used_bytes`) instead of writing
+`shed_host_*`, plus the running containers' limits
+`shed_container_cpu_limit_percent` and `shed_container_memory_limit_bytes`
+(0 = unlimited), `shed_host_memory_total_bytes`, `shed_host_disk_used_bytes`,
+and `shed_host_disk_total_bytes`) instead of writing
 `metric_samples` and `host_samples`. `/api/services/{id}/metrics` and
 `/api/host/metrics` then query VictoriaMetrics (`avg_over_time` over each
 bucket width, with the same alignment and window rules). If the query fails,
