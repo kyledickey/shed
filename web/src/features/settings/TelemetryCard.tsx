@@ -1,9 +1,11 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
+import { TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { serviceTelemetryQuery, useSetServiceCaps } from "../../api/telemetry";
 import type { Service, TelemetryCaps } from "../../api/types";
 import { Badge } from "../../components/Badge";
 import { Field, Input, Switch } from "../../components/Form";
+import { Callout } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { HelpTip } from "../docs/HelpTip";
 import { SettingsCard } from "./SectionForm";
@@ -73,6 +75,11 @@ export function TelemetryCard({ service }: { service: Service }) {
       }}
     >
       <div className={styles.fields}>
+        {data.listenerError && (
+          <Callout tone="tangerine" icon={<TriangleAlert size={16} />} title="Not receiving OTLP">
+            {data.listenerError}
+          </Callout>
+        )}
         <Switch
           checked={own}
           onChange={setOwn}

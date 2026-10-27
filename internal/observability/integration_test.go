@@ -104,7 +104,7 @@ func TestIntegration(t *testing.T) {
 		Dir:          dir,
 		MinFreeBytes: 0,
 		GrafanaURL:   shed.URL + "/grafana/",
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Log:          log,
 	})
 	auditLog := audit.New(st, log)

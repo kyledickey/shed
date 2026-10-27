@@ -213,8 +213,9 @@ func TestServiceTelemetryCaps(t *testing.T) {
 	svc := createApp(t, f.st)
 	defaults := observability.DefaultSettings().DefaultCaps
 
+	f.listenerErrs = map[string]string{svc.ID: "port taken"}
 	got, err := f.plane.ServiceTelemetry(ctx, svc.ID)
-	if err != nil || got.Caps != defaults || got.Overridden {
+	if err != nil || got.Caps != defaults || got.Overridden || got.ListenerError != "port taken" {
 		t.Fatalf("defaults: %+v, %v", got, err)
 	}
 	f.audit.take()

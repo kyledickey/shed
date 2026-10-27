@@ -762,3 +762,19 @@ func TestCrashedHook(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceContainerChanges(t *testing.T) {
+	h := newSecHarness(t)
+	calls := 0
+	h.changed = func() { calls++ }
+	h.handle(
+		containerEvent("start", "c1", nil),
+		containerEvent("kill", "c1", nil),
+		containerEvent("die", "c1", nil),
+		containerEvent("exec_create", "c1", nil),
+		containerEvent("start", "c2", map[string]string{labelService: "", labelExporter: "svc1"}),
+	)
+	if calls != 2 {
+		t.Errorf("hook called %d times, want 2: the service container's start and die", calls)
+	}
+}

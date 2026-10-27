@@ -168,28 +168,22 @@ While telemetry is on, shed is an OpenTelemetry gateway for your services. Each 
 
 | Variable                      | Value                                   |
 | ----------------------------- | --------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://shed.internal:4318`             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                 |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf`                         |
 | `OTEL_SERVICE_NAME`           | the service name                        |
 | `OTEL_RESOURCE_ATTRIBUTES`    | `service.version=<commit SHA or image>` |
 
-Any OpenTelemetry SDK reads them, so instrumenting the code is the only change. A variable you set yourself with the same name wins. They are listed as injected on the Variables tab. Every service's container, databases included, also gets the host name `shed.internal`, pointing at its project network's gateway address on the host. The port is [`telemetry.otlp_port`](/docs/configuration#telemetry-addresses) (4318).
+Any OpenTelemetry SDK reads them, so instrumenting the code is the only change. A variable you set yourself with the same name wins. They are listed as injected on the Variables tab. `localhost:4318` is also the SDKs' default, so an app that ignores the variables still finds the gateway.
 
-The gateway takes OTLP over HTTP: `POST /v1/traces`, `/v1/metrics`, and `/v1/logs`, protobuf or JSON, optionally gzip, up to 8 MiB a request. There is no gRPC endpoint, and it is not reachable from the internet. It knows the sender by the container's address on its project network, so it labels every record with the service, project, and deployment, whatever the SDK claims; a sender shed doesn't know gets a 403. String attributes, span status messages, and log bodies are masked with the values of every variable in the project and those the container started with. Traces go to VictoriaTraces, metrics to VictoriaMetrics, and logs to VictoriaLogs.
+The gateway listens inside each running app's container, on `127.0.0.1` and, where the container has IPv6 loopback, `::1`, on port [`telemetry.otlp_port`](/docs/configuration#telemetry-addresses) (4318). shed opens the listener when the container starts, closes it when the container stops, and opens it again after a restart. Nothing leaves the container's network, so a host firewall never sees this traffic and needs no rules. Databases get no listener.
 
-Variables and the host entry are part of a container's configuration, so turning telemetry on or off reaches a service with its next deployment.
+It takes OTLP over HTTP: `POST /v1/traces`, `/v1/metrics`, and `/v1/logs`, protobuf or JSON, optionally gzip, up to 8 MiB a request. There is no gRPC endpoint, and it is not reachable from the internet or from other containers. Each listener belongs to one container, so the gateway labels every record with that container's service, project, and deployment, whatever the SDK claims. String attributes, span status messages, and log bodies are masked with the values of every variable in the project and those the container started with. Traces go to VictoriaTraces, metrics to VictoriaMetrics, and logs to VictoriaLogs.
 
-## Firewall
+The variables are part of a container's configuration, so turning telemetry on or off reaches a service with its next deployment. The listeners follow at once: turning telemetry off closes all of them.
 
-Containers reach the gateway on the host's address on their bridge. A host firewall whose default input policy drops packets (ufw's default, firewalld's public zone) would drop these too, so while telemetry is on shed adds one iptables rule per project network that accepts TCP to port 4318 from that network's bridge only:
+### When the app uses port 4318
 
-```sh
--A INPUT -i br-1a2b3c4d5e6f -p tcp -m tcp --dport 4318 -m comment --comment shed-telemetry -j ACCEPT
-```
-
-The rules sit at the top of the `INPUT` chain, follow project networks as they come and go, and are removed when telemetry is turned off. shed only changes rules carrying the `shed-telemetry` comment. List them with `sudo iptables -S INPUT | grep shed-telemetry`.
-
-If `iptables` is not installed, shed logs a warning and you need to allow the port yourself, for example `sudo nft add rule inet filter input iifname "br-*" tcp dport 4318 accept`. The gateway only listens on loopback and on the gateways of shed's project networks, so the port is not exposed to the internet either way.
+If the app itself listens on port 4318, for example because it is an OpenTelemetry Collector, shed cannot open its listener in that container. The app keeps running, shed logs a warning once, and the service's Telemetry card on its Settings tab says it is not receiving OTLP. shed tries again every few seconds, so the listener opens as soon as the port is free. To keep the app on 4318, set `telemetry.otlp_port` to a free port instead; the injected endpoint follows with each app's next deployment.
 
 ## Container logs
 

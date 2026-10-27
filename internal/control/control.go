@@ -194,6 +194,9 @@ type Config struct {
 	Audit      Audit
 	Telemetry  Telemetry
 	Dashboards Dashboards
+	// ListenerError returns why the telemetry gateway cannot listen inside
+	// a service's container, or "". Nil reports none.
+	ListenerError func(serviceID string) string
 	// Stores answer telemetry queries; they are not asked while telemetry
 	// is off.
 	Stores TelemetryStores
@@ -220,6 +223,7 @@ type Plane struct {
 	audit         Audit
 	telemetry     Telemetry
 	dashboards    Dashboards
+	listenerError func(serviceID string) string
 	stores        TelemetryStores
 	dashboardHost string
 	baseDomain    string
@@ -235,23 +239,24 @@ type Plane struct {
 // New returns a Plane.
 func New(cfg Config) *Plane {
 	p := &Plane{
-		store:      cfg.Store,
-		deployer:   cfg.Deployer,
-		backups:    cfg.Backups,
-		metrics:    cfg.Metrics,
-		logs:       cfg.Logs,
-		updates:    cfg.Updates,
-		github:     cfg.GitHub,
-		variables:  cfg.Variables,
-		audit:      cfg.Audit,
-		telemetry:  cfg.Telemetry,
-		dashboards: cfg.Dashboards,
-		stores:     cfg.Stores,
-		baseDomain: strings.ToLower(cfg.BaseDomain),
-		log:        cfg.Log,
-		routes:     newRouteState(),
-		pushRetry:  pushRetryInterval,
-		pushErrs:   make(map[string]string),
+		store:         cfg.Store,
+		deployer:      cfg.Deployer,
+		backups:       cfg.Backups,
+		metrics:       cfg.Metrics,
+		logs:          cfg.Logs,
+		updates:       cfg.Updates,
+		github:        cfg.GitHub,
+		variables:     cfg.Variables,
+		audit:         cfg.Audit,
+		telemetry:     cfg.Telemetry,
+		dashboards:    cfg.Dashboards,
+		stores:        cfg.Stores,
+		listenerError: cfg.ListenerError,
+		baseDomain:    strings.ToLower(cfg.BaseDomain),
+		log:           cfg.Log,
+		routes:        newRouteState(),
+		pushRetry:     pushRetryInterval,
+		pushErrs:      make(map[string]string),
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil {
 		p.dashboardHost = strings.TrimSuffix(u.Hostname(), ".")

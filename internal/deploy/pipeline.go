@@ -263,7 +263,7 @@ func (j *job) start(ctx context.Context, r Resolved) error {
 	// so it gets the service's hostname only in switchOver.
 	spec.Aliases = nil
 	j.describe(spec)
-	id, err := j.runContainer(ctx, spec, rt.Telemetry)
+	id, err := j.runContainer(ctx, spec)
 	// A failed start may still leave the container behind, so fail must
 	// remove it.
 	j.container = id

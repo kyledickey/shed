@@ -22,9 +22,6 @@ import (
 // keepImages is how many built images are kept per service.
 const keepImages = 5
 
-// telemetryHost is the host name containers reach the telemetry gateway at.
-const telemetryHost = "shed.internal"
-
 // injected returns the variables shed provides to every service. otlp is
 // the gateway URL apps send telemetry to, "" while telemetry is off.
 func injected(project store.Project, svc store.Service, domains []store.Domain, sha, otlp string) map[string]string {
@@ -69,19 +66,10 @@ func (d *Deployer) telemetryOn(ctx context.Context) (bool, error) {
 }
 
 // runContainer creates and starts the container described by spec, creating
-// its network and volumes as needed. A container run with telemetry on gets
-// the host entry shed.internal, pointing at its network's gateway, where the
-// telemetry gateway listens.
-func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec, telemetry bool) (string, error) {
+// its network and volumes as needed.
+func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (string, error) {
 	if err := d.docker.EnsureNetwork(ctx, spec.Network); err != nil {
 		return "", err
-	}
-	if telemetry {
-		gw, err := d.docker.NetworkGateway(ctx, spec.Network)
-		if err != nil {
-			return "", err
-		}
-		spec.ExtraHosts = append(spec.ExtraHosts, telemetryHost+":"+gw.String())
 	}
 	for _, m := range spec.Mounts {
 		if err := d.docker.EnsureVolume(ctx, m.Volume); err != nil {
@@ -99,7 +87,6 @@ func runtimeOf(svc store.Service, r Resolved, secretKeys []string, vols []store.
 		Cmd:        command(svc),
 		Env:        r.Env,
 		SecretKeys: secretKeys,
-		Telemetry:  r.Telemetry,
 		CPUs:       svc.CPULimit,
 		Memory:     svc.MemoryLimit,
 		PublicPort: svc.PublicPort,
@@ -519,7 +506,7 @@ func (d *Deployer) ensureRunning(ctx context.Context, dep store.Deployment) (str
 		return "", fmt.Errorf("recreate container of %s: %w", svc.Name, err)
 	}
 	d.log.Info("recreating missing container", "service", svc.Name, "deployment", dep.ID)
-	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt), rt.Telemetry)
+	id, err := d.runContainer(ctx, containerSpec(svc, dep, rt))
 	if err != nil {
 		return "", err
 	}

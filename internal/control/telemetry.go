@@ -120,6 +120,9 @@ type ServiceTelemetry struct {
 	Overridden bool
 	// Dropping is set if records were dropped in the last 5 minutes.
 	Dropping bool
+	// ListenerError says why the gateway cannot listen inside the service's
+	// container, such as the app having taken the OTLP port; "" if it can.
+	ListenerError string
 	// Grafana holds the service's folder, dashboards, and firing alerts;
 	// it is empty while telemetry is off.
 	Grafana observability.ServiceDashboards
@@ -149,6 +152,9 @@ func (p *Plane) ServiceTelemetry(ctx context.Context, serviceID string) (Service
 		return ServiceTelemetry{}, err
 	}
 	out.Dropping = dropping
+	if p.listenerError != nil {
+		out.ListenerError = p.listenerError(serviceID)
+	}
 	if out.Grafana, err = p.dashboards.Service(ctx, serviceID); err != nil {
 		return ServiceTelemetry{}, err
 	}

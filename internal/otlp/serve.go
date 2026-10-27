@@ -65,11 +65,6 @@ func serve[R proto.Message](h *Handler, w http.ResponseWriter, r *http.Request, 
 
 	ctx := r.Context()
 	a, err := h.cfg.Attribute(r)
-	if errors.Is(err, ErrUnknownSource) {
-		h.drop(ctx, "", s.name, reasonUnknownSource, s.count(req))
-		c.writeStatus(w, http.StatusForbidden, "unknown source")
-		return
-	}
 	if err != nil {
 		h.log.Warn("otlp: attribute request", "remote", r.RemoteAddr, "err", err)
 		w.Header().Set("Retry-After", "5")

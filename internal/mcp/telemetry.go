@@ -137,7 +137,7 @@ type ingestOut struct {
 }
 
 type dropOut struct {
-	Reason string  `json:"reason" jsonschema:"unknown_source, rate_cap, or series_cap"`
+	Reason string  `json:"reason" jsonschema:"rate_cap or series_cap"`
 	Signal string  `json:"signal" jsonschema:"traces, metrics, or logs"`
 	Count  float64 `json:"count"`
 }

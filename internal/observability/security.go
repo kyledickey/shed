@@ -93,6 +93,8 @@ type security struct {
 	log *slog.Logger
 	// on reports whether telemetry is enabled.
 	on atomic.Bool
+	// changed is called for each start or die of a service container.
+	changed func()
 
 	restarts, ooms, egressBytes metric.Int64Counter
 
@@ -108,6 +110,7 @@ func newSecurity(cfg Security, log *slog.Logger) *security {
 	s := &security{
 		Security:   cfg,
 		log:        log,
+		changed:    func() {},
 		settle:     time.Second,
 		minBackoff: time.Second,
 		maxBackoff: 30 * time.Second,
@@ -127,6 +130,11 @@ func newSecurity(cfg Security, log *slog.Logger) *security {
 // installSecurity registers the eventFollower and the worker with m.
 func (m *Manager) installSecurity() {
 	s := newSecurity(*m.cfg.Security, m.cfg.Log)
+	s.changed = func() {
+		for _, fn := range m.containerHooks {
+			fn()
+		}
+	}
 	m.AddAlways(s.followEvents)
 	m.AddWorker(s.runEgress)
 	m.OnEnabled(s.on.Store)

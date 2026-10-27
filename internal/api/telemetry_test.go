@@ -186,10 +186,11 @@ func TestDashboardsAPI(t *testing.T) {
 	f.telemetry.enable(true)
 	got := f.decode(f.do("GET", "/api/services/"+svc.ID+"/telemetry", ""), http.StatusOK)
 	want := map[string]any{
-		"caps":       map[string]any{"spansPerSecond": 5000.0, "logsPerSecond": 2000.0, "series": 50000.0},
-		"overridden": false,
-		"dropping":   false,
-		"folderUrl":  "http://localhost/grafana/dashboards/f/s-" + svc.ID + "/",
+		"caps":          map[string]any{"spansPerSecond": 5000.0, "logsPerSecond": 2000.0, "series": 50000.0},
+		"overridden":    false,
+		"dropping":      false,
+		"listenerError": "",
+		"folderUrl":     "http://localhost/grafana/dashboards/f/s-" + svc.ID + "/",
 		"dashboards": []any{map[string]any{
 			"uid": "svc-logs-" + svc.ID, "title": "Logs", "url": "http://localhost/grafana/d/svc-logs-" + svc.ID,
 			"customized": true, "outdated": true,
@@ -240,10 +241,10 @@ func TestServiceTelemetryRoutes(t *testing.T) {
 		code         int
 		want         string
 	}{
-		{"GET", "", http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
-		{"PUT", `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3}}`, http.StatusOK, `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3},"overridden":true,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
+		{"GET", "", http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"listenerError":"","folderUrl":"","dashboards":[],"firingAlerts":[]}`},
+		{"PUT", `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3}}`, http.StatusOK, `{"caps":{"spansPerSecond":1,"logsPerSecond":2,"series":3},"overridden":true,"dropping":false,"listenerError":"","folderUrl":"","dashboards":[],"firingAlerts":[]}`},
 		{"PUT", `{"caps":{"spansPerSecond":0,"logsPerSecond":2,"series":3}}`, http.StatusBadRequest, ""},
-		{"PUT", `{"caps":null}`, http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"folderUrl":"","dashboards":[],"firingAlerts":[]}`},
+		{"PUT", `{"caps":null}`, http.StatusOK, `{"caps":{"spansPerSecond":5000,"logsPerSecond":2000,"series":50000},"overridden":false,"dropping":false,"listenerError":"","folderUrl":"","dashboards":[],"firingAlerts":[]}`},
 	} {
 		w := f.do(tt.method, path, tt.body)
 		if w.Code != tt.code {

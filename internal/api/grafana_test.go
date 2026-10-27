@@ -24,7 +24,7 @@ type fakeTelemetry struct {
 func (f *fakeTelemetry) Status(context.Context) (observability.Status, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	st := observability.Status{Settings: f.s, GrafanaURL: "http://localhost/grafana/", OTLPEndpoint: "http://shed.internal:4318"}
+	st := observability.Status{Settings: f.s, GrafanaURL: "http://localhost/grafana/", OTLPEndpoint: "http://localhost:4318"}
 	if f.s.Enabled {
 		st.Components = []observability.ComponentStatus{{Name: observability.Grafana, State: observability.Running, Version: "13.2.4", MemoryLimit: 256 << 20}}
 	}
@@ -119,7 +119,7 @@ func TestTelemetryAPI(t *testing.T) {
 	got := f.decode(f.do("GET", "/api/telemetry", ""), http.StatusOK)
 	settings := got["settings"].(map[string]any)
 	if settings["enabled"] != false || settings["metricsRetentionDays"] != float64(30) || len(got["components"].([]any)) != 0 ||
-		got["otlpEndpoint"] != "http://shed.internal:4318" {
+		got["otlpEndpoint"] != "http://localhost:4318" {
 		t.Errorf("GET /api/telemetry = %v", got)
 	}
 	f.decode(f.do("POST", "/api/telemetry/components/grafana/restart", ""), http.StatusConflict)

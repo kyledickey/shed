@@ -389,6 +389,8 @@ export type ServiceTelemetry = {
   overridden: boolean;
   /** Records were dropped in the last 5 minutes. */
   dropping: boolean;
+  /** Why shed cannot listen for OTLP inside the service's container; "" if it can. */
+  listenerError: string;
   /** "" while telemetry is off. */
   folderUrl: string;
   dashboards: DashboardLink[];
@@ -405,7 +407,7 @@ export type Telemetry = {
   firingAlerts: { name: string; serviceId: string; since: string }[];
   /** "<server.url>/grafana/" */
   grafanaUrl: string;
-  /** "http://shed.internal:4318" */
+  /** "http://localhost:4318" */
   otlpEndpoint: string;
 };
 

@@ -186,7 +186,7 @@ func TestIntegrationAgents(t *testing.T) {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
 		Addrs: addrs, Dir: filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL: shed.URL + "/grafana/", OTLPEndpoint: "http://shed.internal:4318", Log: log,
+		GrafanaURL: shed.URL + "/grafana/", OTLPEndpoint: "http://localhost:4318", Log: log,
 	})
 	dashboards := observability.NewDashboards(observability.DashboardsConfig{
 		Store: st,

@@ -66,6 +66,7 @@ describe("Grafana links", () => {
     caps: { spansPerSecond: 5000, logsPerSecond: 2000, series: 50000 },
     overridden: false,
     dropping: false,
+    listenerError: "",
     folderUrl: `${grafana}dashboards/f/s-svc1/`,
     dashboards: [
       {

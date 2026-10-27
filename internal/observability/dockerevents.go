@@ -130,6 +130,9 @@ func (f *eventFollower) handle(ctx context.Context, e docker.Event) {
 			clear(f.started)
 		}
 		f.started[e.ID] = struct{}{}
+		if e.Attributes[labelService] != "" {
+			f.changed()
+		}
 	}
 	if !f.on.Load() {
 		return

@@ -102,7 +102,8 @@ type Config struct {
 	// GrafanaURL is the public URL Grafana is served at,
 	// "<server.url>/grafana/".
 	GrafanaURL string
-	// OTLPEndpoint is the gateway address services send to.
+	// OTLPEndpoint is the address apps send OTLP to, on loopback inside
+	// their containers.
 	OTLPEndpoint string
 	// Databases lists the database services to run exporters for. Nil runs
 	// none.
@@ -127,9 +128,10 @@ type Manager struct {
 	// poll is how often readiness is checked while waiting for a component.
 	poll time.Duration
 
-	workers []Worker
-	always  []Worker
-	hooks   []func(enabled bool)
+	workers        []Worker
+	always         []Worker
+	hooks          []func(enabled bool)
+	containerHooks []func()
 
 	// base is the parent of the workers' context; Run cancels it.
 	base     context.Context
@@ -195,6 +197,14 @@ func (m *Manager) AddAlways(w Worker) {
 // the workers stop. It is not called at shutdown. Register it before Run.
 func (m *Manager) OnEnabled(fn func(enabled bool)) {
 	m.hooks = append(m.hooks, fn)
+}
+
+// OnServiceContainer registers fn, called from the Docker events follower
+// (see [Config.Security]) whenever a container labeled shed.service starts
+// or dies, whether telemetry is enabled or not. fn must not block. Register
+// it before Run.
+func (m *Manager) OnServiceContainer(fn func()) {
+	m.containerHooks = append(m.containerHooks, fn)
 }
 
 // retryEvery is how long Run waits after a failed reconciliation before

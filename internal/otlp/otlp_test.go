@@ -377,36 +377,21 @@ func TestSizeLimit(t *testing.T) {
 	}
 }
 
-func TestAttributionErrors(t *testing.T) {
-	tests := []struct {
-		name           string
-		err            error
-		wantStatus     int
-		wantRetryAfter string
-		wantDropped    int64
-	}{
-		{"unknown source", fmt.Errorf("lookup 172.18.0.9: %w", otlp.ErrUnknownSource), 403, "", 3},
-		{"index unavailable", errors.New("index not ready"), 503, "5", 0},
+func TestAttributionError(t *testing.T) {
+	f := newFixture(t, func(c *otlp.Config) {
+		c.Attribute = func(*http.Request) (otlp.Attribution, error) {
+			return otlp.Attribution{}, errors.New("masks unavailable")
+		}
+	})
+	w := f.post("/v1/traces", nSpans(3))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", w.Code)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, func(c *otlp.Config) {
-				c.Attribute = func(*http.Request) (otlp.Attribution, error) { return otlp.Attribution{}, tt.err }
-			})
-			w := f.post("/v1/traces", nSpans(3))
-			if w.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d", w.Code, tt.wantStatus)
-			}
-			if got := w.Header().Get("Retry-After"); got != tt.wantRetryAfter {
-				t.Errorf("Retry-After = %q, want %q", got, tt.wantRetryAfter)
-			}
-			if len(f.fwd.traces) != 0 {
-				t.Error("forwarded a request from an unattributed source")
-			}
-			if got := f.dropped(t, "", "traces", "unknown_source"); got != tt.wantDropped {
-				t.Errorf("dropped = %d, want %d", got, tt.wantDropped)
-			}
-		})
+	if got := w.Header().Get("Retry-After"); got != "5" {
+		t.Errorf("Retry-After = %q, want 5", got)
+	}
+	if len(f.fwd.traces) != 0 {
+		t.Error("forwarded a request from an unattributed source")
 	}
 }
 

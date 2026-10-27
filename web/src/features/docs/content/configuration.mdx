@@ -83,7 +83,7 @@ metrics_addr = "127.0.0.1:8428"
 logs_addr    = "127.0.0.1:9428"
 traces_addr  = "127.0.0.1:10428"
 grafana_addr = "127.0.0.1:3001"
-otlp_port    = 4318                 # OTLP/HTTP on each project network's gateway
+otlp_port    = 4318                 # OTLP/HTTP on localhost inside each app's container
 
 [log]
 level        = "info"               # debug | info | warn | error
@@ -149,4 +149,4 @@ While a build runs, shed polls free space every three seconds. This is best-effo
 | `telemetry.logs_addr`    | `127.0.0.1:9428`  | VictoriaLogs                                                  |
 | `telemetry.traces_addr`  | `127.0.0.1:10428` | VictoriaTraces                                                |
 | `telemetry.grafana_addr` | `127.0.0.1:3001`  | Grafana, served to signed-in users at `<server.url>/grafana/` |
-| `telemetry.otlp_port`    | `4318`            | The OTLP/HTTP port services send to                           |
+| `telemetry.otlp_port`    | `4318`            | The OTLP/HTTP port apps send to on `localhost`                |

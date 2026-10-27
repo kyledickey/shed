@@ -32,12 +32,12 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
-	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/netns"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/otlp"
@@ -197,7 +197,7 @@ func run() error {
 		log.Warn("load 1Password", "err", err)
 	}
 
-	otlpEndpoint := fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort)
+	otlpEndpoint := fmt.Sprintf("http://localhost:%d", cfg.Telemetry.OTLPPort)
 	grafanaURL := strings.TrimRight(cfg.Server.URL, "/") + "/grafana/"
 	newGrafana := func(password string) *grafana.Client {
 		return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
@@ -353,6 +353,8 @@ func run() error {
 	}
 	stack.OnEnabled(collector.SetRemote)
 
+	// The gateway masks with the plane, which reports its listener errors.
+	var gateway *observability.Gateway
 	plane = control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
@@ -370,20 +372,23 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
+		ListenerError: func(serviceID string) string {
+			return gateway.ListenerError(serviceID)
+		},
 		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt},
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
 	})
 
-	gateway := observability.NewGateway(observability.GatewayConfig{
-		Store:    st,
-		Docker:   dc,
-		Masks:    plane,
-		Settings: stack.Settings,
-		Port:     cfg.Telemetry.OTLPPort,
-		Firewall: firewall.New(),
-		Log:      log,
+	gateway = observability.NewGateway(observability.GatewayConfig{
+		Store:      st,
+		Docker:     dc,
+		Namespaces: namespaces{},
+		Masks:      plane,
+		Settings:   stack.Settings,
+		Port:       cfg.Telemetry.OTLPPort,
+		Log:        log,
 	})
 	receiver, err := otlp.New(otlp.Config{
 		Attribute: gateway.Attribute,
@@ -396,6 +401,7 @@ func run() error {
 		return err
 	}
 	stack.AddWorker(func(ctx context.Context) { gateway.Run(ctx, receiver) })
+	stack.OnServiceContainer(gateway.Kick)
 	stack.AddWorker(observability.NewLogShipper(observability.LogShipperConfig{
 		Store: st, Docker: dc, Logs: vl, Masks: plane, Cap: receiver, Log: log,
 	}).Run)
@@ -463,6 +469,15 @@ func (conntrackTable) Flows(ctx context.Context) ([]host.Flow, error) {
 }
 
 func (conntrackTable) EnableAccounting() error { return host.EnableConntrackAccounting("") }
+
+// namespaces opens the telemetry gateway's listeners inside containers.
+type namespaces struct{}
+
+func (namespaces) ID(pid int) (uint64, error) { return netns.ID(pid) }
+
+func (namespaces) Listen(ctx context.Context, pid int, addr string) (net.Listener, error) {
+	return netns.Listen(ctx, pid, addr)
+}
 
 // executable returns the path of the running shed binary, with symlinks
 // resolved so an update replaces the file itself.

@@ -12,12 +12,11 @@ import (
 
 func TestTelemetryEnvironment(t *testing.T) {
 	tests := []struct {
-		name      string
-		on        bool
-		own       map[string]string
-		kind      string
-		wantEnv   map[string]string // "" means absent
-		wantHosts []string
+		name    string
+		on      bool
+		own     map[string]string
+		kind    string
+		wantEnv map[string]string // "" means absent
 	}{
 		{
 			name: "off",
@@ -31,12 +30,11 @@ func TestTelemetryEnvironment(t *testing.T) {
 			on:   true,
 			kind: "app",
 			wantEnv: map[string]string{
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://shed.internal:4318",
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
 				"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
 				"OTEL_SERVICE_NAME":           "web",
 				"OTEL_RESOURCE_ATTRIBUTES":    "service.version=abc1234def",
 			},
-			wantHosts: []string{"shed.internal:172.18.0.1"},
 		},
 		{
 			name: "user variable wins",
@@ -45,16 +43,14 @@ func TestTelemetryEnvironment(t *testing.T) {
 			own:  map[string]string{"OTEL_SERVICE_NAME": "storefront"},
 			wantEnv: map[string]string{
 				"OTEL_SERVICE_NAME":           "storefront",
-				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://shed.internal:4318",
+				"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
 			},
-			wantHosts: []string{"shed.internal:172.18.0.1"},
 		},
 		{
-			name:      "databases get only the host entry",
-			on:        true,
-			kind:      "redis",
-			wantEnv:   map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_SERVICE_NAME": ""},
-			wantHosts: []string{"shed.internal:172.18.0.1"},
+			name:    "databases get none",
+			on:      true,
+			kind:    "redis",
+			wantEnv: map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "", "OTEL_SERVICE_NAME": ""},
 		},
 	}
 	for _, tt := range tests {
@@ -62,7 +58,7 @@ func TestTelemetryEnvironment(t *testing.T) {
 			ctx := context.Background()
 			f := newFixture(t)
 			f.d.telemetry = func(context.Context) (bool, error) { return tt.on, nil }
-			f.d.otlp = "http://shed.internal:4318"
+			f.d.otlp = "http://localhost:4318"
 			if tt.kind != "app" {
 				svc, err := f.st.CreateService(ctx, store.Service{ProjectID: f.svc.ProjectID, Name: "cache", Kind: tt.kind, Image: "redis:7"})
 				if err != nil {
@@ -94,9 +90,6 @@ func TestTelemetryEnvironment(t *testing.T) {
 				if want != "" && got != want {
 					t.Errorf("%s = %q, want %q", k, got, want)
 				}
-			}
-			if !slices.Equal(spec.ExtraHosts, tt.wantHosts) {
-				t.Errorf("extra hosts = %v, want %v", spec.ExtraHosts, tt.wantHosts)
 			}
 
 			r, err := f.d.ResolveVariables(ctx, f.svc.ID)

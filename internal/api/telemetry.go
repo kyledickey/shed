@@ -135,22 +135,24 @@ type serviceAlertJSON struct {
 }
 
 type serviceTelemetryJSON struct {
-	Caps         observability.Caps  `json:"caps"`
-	Overridden   bool                `json:"overridden"`
-	Dropping     bool                `json:"dropping"`
-	FolderURL    string              `json:"folderUrl"`
-	Dashboards   []dashboardLinkJSON `json:"dashboards"`
-	FiringAlerts []serviceAlertJSON  `json:"firingAlerts"`
+	Caps          observability.Caps  `json:"caps"`
+	Overridden    bool                `json:"overridden"`
+	Dropping      bool                `json:"dropping"`
+	ListenerError string              `json:"listenerError"`
+	FolderURL     string              `json:"folderUrl"`
+	Dashboards    []dashboardLinkJSON `json:"dashboards"`
+	FiringAlerts  []serviceAlertJSON  `json:"firingAlerts"`
 }
 
 func toServiceTelemetryJSON(t control.ServiceTelemetry) serviceTelemetryJSON {
 	out := serviceTelemetryJSON{
-		Caps:         t.Caps,
-		Overridden:   t.Overridden,
-		Dropping:     t.Dropping,
-		FolderURL:    t.Grafana.FolderURL,
-		Dashboards:   make([]dashboardLinkJSON, 0, len(t.Grafana.Dashboards)),
-		FiringAlerts: make([]serviceAlertJSON, 0, len(t.Grafana.Alerts)),
+		Caps:          t.Caps,
+		Overridden:    t.Overridden,
+		Dropping:      t.Dropping,
+		ListenerError: t.ListenerError,
+		FolderURL:     t.Grafana.FolderURL,
+		Dashboards:    make([]dashboardLinkJSON, 0, len(t.Grafana.Dashboards)),
+		FiringAlerts:  make([]serviceAlertJSON, 0, len(t.Grafana.Alerts)),
 	}
 	for _, d := range t.Grafana.Dashboards {
 		out.Dashboards = append(out.Dashboards, dashboardLinkJSON(d))

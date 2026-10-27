@@ -8,11 +8,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptest"
-	"net/netip"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,7 +20,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/kyledickey/shed/internal/docker"
-	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/victoria"
@@ -129,12 +128,11 @@ func (s *ingestStore) SetSetting(_ context.Context, key, value string) error {
 	return nil
 }
 
-// ingestDocker holds service containers and project networks, and plays
-// each container's output once.
+// ingestDocker holds service containers and plays each container's output
+// once.
 type ingestDocker struct {
 	mu         sync.Mutex
 	containers []docker.Container
-	networks   []docker.Network
 	output     map[string]string // by container ID: "<ts> <line>\n" lines on stdout
 	since      map[string]time.Time
 }
@@ -145,10 +143,32 @@ func (d *ingestDocker) List(context.Context, map[string]string) ([]docker.Contai
 	return slices.Clone(d.containers), nil
 }
 
-func (d *ingestDocker) Networks(context.Context, string) ([]docker.Network, error) {
+func (d *ingestDocker) Inspect(_ context.Context, id string) (docker.Container, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return slices.Clone(d.networks), nil
+	for _, c := range d.containers {
+		if c.ID == id {
+			return c, nil
+		}
+	}
+	return docker.Container{}, fmt.Errorf("no container %s", id)
+}
+
+// update calls fn with the container id, under the lock.
+func (d *ingestDocker) update(id string, fn func(c *docker.Container)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range d.containers {
+		if d.containers[i].ID == id {
+			fn(&d.containers[i])
+		}
+	}
+}
+
+func (d *ingestDocker) add(c docker.Container) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.containers = append(d.containers, c)
 }
 
 func (d *ingestDocker) LogStream(ctx context.Context, id string, since time.Time, stdout, _ io.Writer) error {
@@ -173,12 +193,103 @@ func (d *ingestDocker) sinceOf(id string) (time.Time, bool) {
 	return t, ok
 }
 
-func container(id, serviceID, deploymentID, network, ip string) docker.Container {
+// container is a running container of a service whose init process is pid.
+func container(id, serviceID, deploymentID string, pid int) docker.Container {
 	return docker.Container{
-		ID: id, Running: true,
+		ID: id, Running: true, Pid: pid,
 		Labels: map[string]string{labelService: serviceID, labelDeployment: deploymentID},
-		IPs:    map[string]string{network: ip},
 	}
+}
+
+// fakeNamespaces stands for the network namespaces of processes. A listener
+// "inside" one is a real listener on the host's loopback, recorded as
+// "<namespace> <address asked for>".
+type fakeNamespaces struct {
+	mu       sync.Mutex
+	byPid    map[int]uint64
+	taken    map[uint64]bool // the app listens on the port itself
+	noIPv6   map[uint64]bool
+	open     map[string]*nsListener
+	attempts map[uint64]int // calls of Listen by namespace
+}
+
+func newFakeNamespaces() *fakeNamespaces {
+	return &fakeNamespaces{
+		byPid: map[int]uint64{}, taken: map[uint64]bool{}, noIPv6: map[uint64]bool{},
+		open: map[string]*nsListener{}, attempts: map[uint64]int{},
+	}
+}
+
+type nsListener struct {
+	net.Listener
+	closed atomic.Bool
+}
+
+func (l *nsListener) Close() error {
+	l.closed.Store(true)
+	return l.Listener.Close()
+}
+
+func (n *fakeNamespaces) set(fn func(n *fakeNamespaces)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	fn(n)
+}
+
+func (n *fakeNamespaces) ID(pid int) (uint64, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	ns, ok := n.byPid[pid]
+	if !ok {
+		return 0, fmt.Errorf("stat /proc/%d/ns/net: %w", pid, syscall.ENOENT)
+	}
+	return ns, nil
+}
+
+func (n *fakeNamespaces) Listen(_ context.Context, pid int, addr string) (net.Listener, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	ns := n.byPid[pid]
+	n.attempts[ns]++
+	if host, _, _ := net.SplitHostPort(addr); host == "::1" && n.noIPv6[ns] {
+		return nil, fmt.Errorf("listen tcp %s: %w", addr, syscall.EADDRNOTAVAIL)
+	}
+	if n.taken[ns] {
+		return nil, fmt.Errorf("listen tcp %s: %w", addr, syscall.EADDRINUSE)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	l := &nsListener{Listener: ln}
+	n.open[fmt.Sprintf("%d %s", ns, addr)] = l
+	return l, nil
+}
+
+// listening returns the listeners still open, sorted.
+func (n *fakeNamespaces) listening() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []string
+	for k, l := range n.open {
+		if !l.closed.Load() {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func (n *fakeNamespaces) url(key string) string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return "http://" + n.open[key].Addr().String()
+}
+
+func (n *fakeNamespaces) attemptsIn(ns uint64) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.attempts[ns]
 }
 
 // prefixMasks masks a marker per project, to tell which mask was used.
@@ -226,13 +337,37 @@ type discardLogs struct{}
 
 func (discardLogs) ForwardOTLP(context.Context, []byte, []string) error { return nil }
 
+// lockedBuffer collects log output written from several goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// gatewayFixture runs a gateway over container c1 of the app s1 in p1,
+// whose init process 101 runs in namespace 1.
 type gatewayFixture struct {
 	g      *Gateway
-	h      *otlp.Handler
 	st     *ingestStore
 	dc     *ingestDocker
+	ns     *fakeNamespaces
 	traces *traceSink
-	now    time.Time
+	logs   *lockedBuffer
+	// loopback is the URL of the listener on the host's loopback.
+	loopback string
+	// stop stops Run and waits for it to return.
+	stop func()
 }
 
 func newGatewayFixture(t *testing.T) *gatewayFixture {
@@ -240,19 +375,31 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 	f := &gatewayFixture{
 		st: newIngestStore(),
 		dc: &ingestDocker{
-			containers: []docker.Container{container("c1", "s1", "d1", "shed-p1", "172.18.0.2")},
+			containers: []docker.Container{container("c1", "s1", "d1", 101)},
 			since:      map[string]time.Time{},
 		},
+		ns:     newFakeNamespaces(),
 		traces: &traceSink{},
-		now:    time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
+		logs:   &lockedBuffer{},
 	}
+	f.ns.byPid[101] = 1
 	f.g = NewGateway(GatewayConfig{
-		Store: f.st, Docker: f.dc, Masks: prefixMasks{},
+		Store: f.st, Docker: f.dc, Namespaces: f.ns, Masks: prefixMasks{},
 		Settings: func(context.Context) (Settings, error) { return DefaultSettings(), nil },
 		Port:     4318,
-		Log:      slog.New(slog.DiscardHandler),
+		Log:      slog.New(slog.NewTextHandler(f.logs, nil)),
 	})
-	f.g.now = func() time.Time { return f.now }
+	loopback := make(chan string, 1)
+	f.g.listen = func(addr string) (net.Listener, error) {
+		if addr != "127.0.0.1:4318" {
+			t.Errorf("host listener on %s, want 127.0.0.1:4318", addr)
+		}
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err == nil {
+			loopback <- "http://" + ln.Addr().String()
+		}
+		return ln, err
+	}
 	h, err := otlp.New(otlp.Config{
 		Attribute: f.g.Attribute, Mask: f.g.Mask, Caps: f.g.Caps,
 		Forwarder: NewForwarder(f.traces, f.traces, discardLogs{}),
@@ -260,22 +407,49 @@ func newGatewayFixture(t *testing.T) *gatewayFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.h = h
-	if err := f.g.reload(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.g.Run(ctx, h)
+	}()
+	f.stop = sync.OnceFunc(func() {
+		cancel()
+		<-done
+	})
+	t.Cleanup(f.stop)
+	f.loopback = <-loopback
+	f.await(t, "1 127.0.0.1:4318", "1 [::1]:4318")
 	return f
 }
 
-// post sends an OTLP/JSON trace to the listener info from remote.
-func (f *gatewayFixture) post(info listenerInfo, remote, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	r.RemoteAddr = remote
-	r = r.WithContext(context.WithValue(r.Context(), listenerKey{}, info))
-	w := httptest.NewRecorder()
-	f.h.ServeHTTP(w, r)
-	return w
+// await kicks the gateway until exactly the listeners want are open.
+func (f *gatewayFixture) await(t *testing.T, want ...string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Equal(f.ns.listening(), want) && time.Now().Before(deadline) {
+		f.g.Kick()
+		time.Sleep(time.Millisecond)
+	}
+	if got := f.ns.listening(); !slices.Equal(got, want) {
+		t.Fatalf("listening on %v, want %v", got, want)
+	}
+}
+
+// post sends an OTLP/JSON trace to the listener at url and returns the
+// response status.
+func (f *gatewayFixture) post(t *testing.T, url, body string) int {
+	t.Helper()
+	resp, err := http.Post(url+"/v1/traces", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Logf("%s: %s %s", url, resp.Status, b)
+	}
+	return resp.StatusCode
 }
 
 // traceJSON is a trace of one server span, from a resource with
@@ -315,47 +489,41 @@ func spanAttr(req *coltracepb.ExportTraceServiceRequest, key string) string {
 
 func TestGatewayAttribution(t *testing.T) {
 	f := newGatewayFixture(t)
-	p1 := listenerInfo{projectID: "p1"}
+	f.st.mu.Lock()
+	f.st.services = append(f.st.services, store.Service{ID: "s3", ProjectID: "p2", Name: "api", Kind: "app"})
+	f.st.mu.Unlock()
+	f.ns.set(func(n *fakeNamespaces) { n.byPid[103] = 3 })
+	f.dc.add(container("c3", "s3", "d3", 103))
+	f.await(t, "1 127.0.0.1:4318", "1 [::1]:4318", "3 127.0.0.1:4318", "3 [::1]:4318")
 	body := traceJSON(map[string]string{"shed.service.id": "spoofed"}, map[string]string{"token": "secret-p1 secret-p2"})
 
-	if w := f.post(p1, "172.18.0.2:40000", body); w.Code != http.StatusOK {
-		t.Fatalf("known source: %d %s", w.Code, w.Body)
-	}
-	req := f.traces.last(t)
-	for k, want := range map[string]string{
-		"shed.service.id": "s1", "shed.project.name": "shop", "shed.deployment.id": "d1",
-		"shed.source": "otlp", "service.name": "web",
+	for _, tt := range []struct {
+		listener                     string
+		service, project, deployment string
+		name, token                  string
+	}{
+		{"1 127.0.0.1:4318", "s1", "shop", "d1", "web", "*** secret-p2"},
+		{"3 [::1]:4318", "s3", "blog", "d3", "api", "secret-p1 ***"},
 	} {
-		if got := resourceAttr(req, k); got != want {
-			t.Errorf("%s = %q, want %q", k, got, want)
+		if code := f.post(t, f.ns.url(tt.listener), body); code != http.StatusOK {
+			t.Fatalf("%s: %d", tt.listener, code)
 		}
-	}
-	if got := spanAttr(req, "token"); got != "*** secret-p2" {
-		t.Errorf("token = %q, want only the sender's project's values masked", got)
-	}
-
-	if w := f.post(p1, "172.18.0.9:40000", body); w.Code != http.StatusForbidden {
-		t.Errorf("unknown source: %d, want 403", w.Code)
-	}
-	if w := f.post(listenerInfo{projectID: "p2"}, "172.18.0.2:40000", body); w.Code != http.StatusForbidden {
-		t.Errorf("known address on another project's listener: %d, want 403", w.Code)
-	}
-
-	// A container that started since the last reload is found on its first
-	// request, once missEvery has passed.
-	f.dc.mu.Lock()
-	f.dc.containers = append(f.dc.containers, container("c2", "s2", "d2", "shed-p2", "172.19.0.2"))
-	f.dc.mu.Unlock()
-	f.now = f.now.Add(missEvery)
-	if w := f.post(listenerInfo{projectID: "p2"}, "172.19.0.2:40000", body); w.Code != http.StatusOK {
-		t.Errorf("new container: %d %s, want 200", w.Code, w.Body)
-	} else if got := resourceAttr(f.traces.last(t), "shed.service.id"); got != "s2" {
-		t.Errorf("new container attributed to %q, want s2", got)
+		req := f.traces.last(t)
+		for k, want := range map[string]string{
+			"shed.service.id": tt.service, "shed.project.name": tt.project, "shed.deployment.id": tt.deployment,
+			"shed.source": "otlp", "service.name": tt.name,
+		} {
+			if got := resourceAttr(req, k); got != want {
+				t.Errorf("%s: %s = %q, want %q", tt.listener, k, got, want)
+			}
+		}
+		if got := spanAttr(req, "token"); got != tt.token {
+			t.Errorf("%s: token = %q, want %q: only the sender's project's values masked", tt.listener, got, tt.token)
+		}
 	}
 }
 
 func TestGatewayLoopbackAndEdgeSpans(t *testing.T) {
-	loopback := listenerInfo{loopback: true}
 	tests := []struct {
 		name      string
 		resource  map[string]string
@@ -378,8 +546,8 @@ func TestGatewayLoopbackAndEdgeSpans(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGatewayFixture(t)
-			if w := f.post(loopback, "127.0.0.1:50000", traceJSON(tt.resource, tt.span)); w.Code != http.StatusOK {
-				t.Fatalf("%d %s", w.Code, w.Body)
+			if code := f.post(t, f.loopback, traceJSON(tt.resource, tt.span)); code != http.StatusOK {
+				t.Fatal(code)
 			}
 			req := f.traces.last(t)
 			if got := resourceAttr(req, "shed.service.id"); got != tt.service {
@@ -410,85 +578,89 @@ func TestGatewayCaps(t *testing.T) {
 	}
 }
 
-// fakeListener accepts nothing until closed.
-type fakeListener struct {
-	addr   string
-	closed chan struct{}
-	once   sync.Once
-}
-
-func (l *fakeListener) Accept() (net.Conn, error) { <-l.closed; return nil, net.ErrClosed }
-func (l *fakeListener) Close() error              { l.once.Do(func() { close(l.closed) }); return nil }
-func (l *fakeListener) Addr() net.Addr            { return &net.TCPAddr{} }
-
-func TestGatewayListenersFollowNetworks(t *testing.T) {
+func TestGatewayListenersFollowContainers(t *testing.T) {
 	f := newGatewayFixture(t)
-	var mu sync.Mutex
-	open := map[string]*fakeListener{}
-	failing := "172.20.0.1:4318"
-	f.g.listen = func(addr string) (net.Listener, error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if addr == failing {
-			return nil, errors.New("address not available")
-		}
-		l := &fakeListener{addr: addr, closed: make(chan struct{})}
-		open[addr] = l
-		return l, nil
-	}
-	listening := func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		var out []string
-		for addr, l := range open {
-			select {
-			case <-l.closed:
-			default:
-				out = append(out, addr)
-			}
-		}
-		slices.Sort(out)
-		return out
-	}
-	servers := map[string]*http.Server{}
-	defer func() {
-		for _, s := range servers {
-			s.Close()
-		}
-	}()
-	step := func(networks []docker.Network, want []string) {
-		t.Helper()
-		f.dc.mu.Lock()
-		f.dc.networks = networks
-		f.dc.mu.Unlock()
-		w, err := f.g.listeners(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.g.reconcile(servers, w, http.NotFoundHandler())
-		deadline := time.Now().Add(5 * time.Second)
-		for !slices.Equal(listening(), want) && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		if got := listening(); !slices.Equal(got, want) {
-			t.Errorf("listening on %v, want %v", got, want)
-		}
-	}
-	gw := func(name, addr string) docker.Network {
-		return docker.Network{Name: name, Gateway: netip.MustParseAddr(addr)}
+	f.st.mu.Lock()
+	f.st.services = append(f.st.services, store.Service{ID: "s3", ProjectID: "p2", Name: "api", Kind: "app"})
+	f.st.mu.Unlock()
+	f.ns.set(func(n *fakeNamespaces) {
+		n.byPid[102], n.byPid[103], n.byPid[104] = 2, 3, 4
+		n.noIPv6[3] = true
+	})
+	stopped := container("c4", "s1", "d0", 104)
+	stopped.Running = false
+	f.dc.add(container("c2", "s2", "d2", 102)) // a database
+	f.dc.add(stopped)
+	f.dc.add(container("c3", "s3", "d3", 103)) // without IPv6
+	f.await(t, "1 127.0.0.1:4318", "1 [::1]:4318", "3 127.0.0.1:4318")
+
+	// A restarted container runs in a new namespace; its listener is
+	// opened there and serves.
+	f.ns.set(func(n *fakeNamespaces) {
+		delete(n.byPid, 101)
+		n.byPid[201] = 11
+	})
+	f.dc.update("c1", func(c *docker.Container) { c.Pid = 201 })
+	f.await(t, "11 127.0.0.1:4318", "11 [::1]:4318", "3 127.0.0.1:4318")
+	if code := f.post(t, f.ns.url("11 127.0.0.1:4318"), traceJSON(nil, nil)); code != http.StatusOK {
+		t.Errorf("after a restart: %d", code)
+	} else if got := resourceAttr(f.traces.last(t), "shed.service.id"); got != "s1" {
+		t.Errorf("after a restart attributed to %q, want s1", got)
 	}
 
-	step(nil, []string{"127.0.0.1:4318"})
-	step([]docker.Network{gw("shed-p1", "172.18.0.1"), gw("shed-unknown", "172.30.0.1"), {Name: "shed-p2"}},
-		[]string{"127.0.0.1:4318", "172.18.0.1:4318"})
-	step([]docker.Network{gw("shed-p1", "172.18.0.1"), gw("shed-p2", "172.19.0.1")},
-		[]string{"127.0.0.1:4318", "172.18.0.1:4318", "172.19.0.1:4318"})
-	step([]docker.Network{gw("shed-p2", "172.19.0.1")}, []string{"127.0.0.1:4318", "172.19.0.1:4318"})
+	// A stopped container's listener closes.
+	f.dc.update("c3", func(c *docker.Container) { c.Running = false })
+	f.await(t, "11 127.0.0.1:4318", "11 [::1]:4318")
 
-	// A listener that fails to open is retried on the next pass.
-	step([]docker.Network{gw("shed-p2", "172.20.0.1")}, []string{"127.0.0.1:4318"})
-	failing = ""
-	step([]docker.Network{gw("shed-p2", "172.20.0.1")}, []string{"127.0.0.1:4318", "172.20.0.1:4318"})
+	// An app that listens on the port itself gets no listener: the error
+	// is reported and logged once, and listening is tried again until the
+	// port is free.
+	f.ns.set(func(n *fakeNamespaces) {
+		n.byPid[105] = 5
+		n.taken[5] = true
+	})
+	f.dc.add(container("c5", "s3", "d5", 105))
+	deadline := time.Now().Add(5 * time.Second)
+	for f.ns.attemptsIn(5) < 3 && time.Now().Before(deadline) {
+		f.g.Kick()
+		time.Sleep(time.Millisecond)
+	}
+	if got := f.ns.listening(); !slices.Equal(got, []string{"11 127.0.0.1:4318", "11 [::1]:4318"}) {
+		t.Errorf("listening on %v with the port taken", got)
+	}
+	if got := f.g.ListenerError("s3"); !strings.Contains(got, "listens on port 4318") {
+		t.Errorf("ListenerError(s3) = %q, want the port named", got)
+	}
+	if got := f.g.ListenerError("s1"); got != "" {
+		t.Errorf("ListenerError(s1) = %q, want none", got)
+	}
+	if n := strings.Count(f.logs.String(), "listen in container"); n != 1 {
+		t.Errorf("logged the conflict %d times over %d attempts, want once", n, f.ns.attemptsIn(5))
+	}
+	f.ns.set(func(n *fakeNamespaces) { n.taken[5] = false })
+	f.await(t, "11 127.0.0.1:4318", "11 [::1]:4318", "5 127.0.0.1:4318", "5 [::1]:4318")
+	if got := f.g.ListenerError("s3"); got != "" {
+		t.Errorf("ListenerError(s3) = %q once the port is free", got)
+	}
+
+	// Turning telemetry off stops Run, which closes every listener.
+	f.ns.set(func(n *fakeNamespaces) { n.taken[5] = true })
+	f.dc.add(container("c6", "s3", "d6", 105))
+	for f.g.ListenerError("s3") == "" && time.Now().Before(deadline.Add(5*time.Second)) {
+		f.g.Kick()
+		time.Sleep(time.Millisecond)
+	}
+	f.stop()
+	if got := f.ns.listening(); len(got) != 0 {
+		t.Errorf("listening on %v after Run returned", got)
+	}
+	if got := f.g.ListenerError("s3"); got != "" {
+		t.Errorf("ListenerError(s3) = %q after Run returned", got)
+	}
+	if code, err := http.Post(f.loopback+"/v1/traces", "application/json", strings.NewReader(traceJSON(nil, nil))); err == nil {
+		code.Body.Close()
+		t.Errorf("host loopback still answers after Run returned: %s", code.Status)
+	}
 }
 
 func TestParseLine(t *testing.T) {
@@ -607,7 +779,7 @@ func TestLogShipperResumesFromCursor(t *testing.T) {
 	st.cursors["c1"] = ts(1)
 	st.cursors["gone"] = ts(0)
 	dc := &ingestDocker{
-		containers: []docker.Container{container("c1", "s1", "d1", "shed-p1", "172.18.0.2")},
+		containers: []docker.Container{container("c1", "s1", "d1", 101)},
 		output:     map[string]string{"c1": out.String()},
 		since:      map[string]time.Time{},
 	}
@@ -657,7 +829,7 @@ func TestLogShipperCapAndRetry(t *testing.T) {
 	}
 	st := newIngestStore()
 	dc := &ingestDocker{
-		containers: []docker.Container{container("c1", "s1", "d1", "shed-p1", "172.18.0.2")},
+		containers: []docker.Container{container("c1", "s1", "d1", 101)},
 		output:     map[string]string{"c1": out.String()},
 		since:      map[string]time.Time{},
 	}
@@ -732,64 +904,5 @@ func TestAuditMirror(t *testing.T) {
 	}
 	if got := logs.records[0]["shed.service.id"]; got != "shed" {
 		t.Errorf("event without a service attributed to %q, want shed", got)
-	}
-}
-
-type fakeFirewall struct {
-	mu    sync.Mutex
-	syncs [][]firewall.Rule
-}
-
-func (f *fakeFirewall) Sync(_ context.Context, rules []firewall.Rule) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.syncs = append(f.syncs, rules)
-	return nil
-}
-
-func (f *fakeFirewall) last() ([]firewall.Rule, int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.syncs) == 0 {
-		return nil, 0
-	}
-	return f.syncs[len(f.syncs)-1], len(f.syncs)
-}
-
-func TestGatewayFirewallFollowsListeners(t *testing.T) {
-	f := newGatewayFixture(t)
-	fw := &fakeFirewall{}
-	f.g.cfg.Firewall = fw
-	f.g.listen = func(addr string) (net.Listener, error) {
-		return &fakeListener{addr: addr, closed: make(chan struct{})}, nil
-	}
-	f.dc.mu.Lock()
-	f.dc.networks = []docker.Network{
-		{Name: "shed-p1", Gateway: netip.MustParseAddr("172.18.0.1"), Bridge: "br-p1"},
-		{Name: "shed-unknown", Gateway: netip.MustParseAddr("172.30.0.1"), Bridge: "br-unknown"},
-	}
-	f.dc.mu.Unlock()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		f.g.Run(ctx, http.NotFoundHandler())
-	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if rules, _ := fw.last(); len(rules) > 0 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	rules, _ := fw.last()
-	if want := []firewall.Rule{{Iface: "br-p1", Port: 4318}}; !slices.Equal(rules, want) {
-		t.Fatalf("firewall rules while running = %v, want %v", rules, want)
-	}
-	cancel()
-	<-done
-	if rules, n := fw.last(); n < 2 || rules != nil {
-		t.Errorf("firewall rules after Run = %v, want none", rules)
 	}
 }

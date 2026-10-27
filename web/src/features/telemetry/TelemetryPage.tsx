@@ -117,8 +117,7 @@ function EnableCard({ telemetry }: { telemetry: Telemetry }) {
         {save.error && <p className={settingsStyles.error}>{errorMessage(save.error)}</p>}
         {toggled && (
           <Callout tone="sky" icon={<Info size={16} />}>
-            Services get the OTLP variables and the <code>shed.internal</code> host, or lose them,
-            with their next deployment.
+            Apps get the OTLP variables, or lose them, with their next deployment.
           </Callout>
         )}
       </div>

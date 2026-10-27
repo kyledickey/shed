@@ -4,20 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
-	"github.com/kyledickey/shed/internal/firewall"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -31,22 +30,26 @@ type GatewayStore interface {
 
 var _ GatewayStore = (*store.Store)(nil)
 
-// GatewayDocker finds service containers and project networks.
+// GatewayDocker finds service containers and their processes.
 // *docker.Client implements it.
 type GatewayDocker interface {
 	ContainerLister
-	Networks(ctx context.Context, prefix string) ([]docker.Network, error)
+	Inspect(ctx context.Context, id string) (docker.Container, error)
 }
 
 var _ GatewayDocker = (*docker.Client)(nil)
 
-// Firewall opens the gateway's port to containers. *firewall.Firewall
-// implements it.
-type Firewall interface {
-	Sync(ctx context.Context, rules []firewall.Rule) error
+// Namespaces opens listeners inside the network namespaces of containers.
+// cmd/shed adapts internal/netns to it.
+type Namespaces interface {
+	// ID identifies the network namespace of the process pid.
+	ID(pid int) (uint64, error)
+	// Listen listens on the TCP address addr inside the network namespace
+	// of the process pid. An address the namespace does not have fails with
+	// an error wrapping syscall.EADDRNOTAVAIL, a port taken there with one
+	// wrapping syscall.EADDRINUSE.
+	Listen(ctx context.Context, pid int, addr string) (net.Listener, error)
 }
-
-var _ Firewall = (*firewall.Firewall)(nil)
 
 // Masks build the functions that mask secret values in telemetry.
 // *control.Plane implements it.
@@ -60,50 +63,43 @@ type Masks interface {
 
 // GatewayConfig configures a Gateway.
 type GatewayConfig struct {
-	Store  GatewayStore
-	Docker GatewayDocker
-	Masks  Masks
+	Store      GatewayStore
+	Docker     GatewayDocker
+	Namespaces Namespaces
+	Masks      Masks
 	// Settings returns the telemetry settings, for the default caps.
 	Settings func(ctx context.Context) (Settings, error)
 	// Port is telemetry.otlp_port, the port of every listener.
 	Port int
-	// Firewall, if set, keeps a rule per project bridge accepting TCP to
-	// Port while the gateway runs, for hosts whose firewall drops input
-	// from bridges.
-	Firewall Firewall
-	Log      *slog.Logger
+	Log  *slog.Logger
 }
 
 // Timings of the gateway.
 const (
-	// networksEvery is how often listeners follow the project networks and
-	// caps are reloaded.
-	networksEvery = 5 * time.Second
-	// directoryEvery is how often the container index is reloaded.
-	directoryEvery = 30 * time.Second
-	// missEvery bounds how often an unknown source reloads the index.
-	missEvery = time.Second
+	// syncEvery is how often the listeners follow the containers, besides
+	// whenever Kick is called, and the caps are reloaded.
+	syncEvery = 5 * time.Second
+	// masksEvery is how often the cached masking functions are rebuilt.
+	masksEvery = 30 * time.Second
 )
 
-// Gateway receives OTLP for shed: it runs a listener on every project
-// network's gateway address and one on loopback, and tells an
+// Gateway receives OTLP for shed: it runs a listener on loopback inside
+// every running app container and one on the host's loopback, and tells an
 // [otlp.Handler] who sent each request, how to mask it, and what the
 // sender's caps are.
 type Gateway struct {
 	cfg    GatewayConfig
-	listen func(addr string) (net.Listener, error)
+	listen func(addr string) (net.Listener, error) // on the host
 	now    func() time.Time
+	kick   chan struct{}
 
 	dir  atomic.Pointer[directory]
 	caps atomic.Pointer[capsTable]
-
-	loadMu sync.Mutex // serializes reloading the directory
-	loaded time.Time  // when dir was last reloaded; guarded by loadMu
-
-	firewallErr string // last firewall error logged; only Run uses it
+	// failed holds why listening failed, by service ID.
+	failed atomic.Pointer[map[string]string]
 
 	masksMu sync.Mutex
-	masks   map[maskKey]func(string) string // cleared on reload; guarded by masksMu
+	masks   map[maskKey]func(string) string // cleared every masksEvery; guarded by masksMu
 }
 
 // capsTable holds the default caps and every service's override.
@@ -131,186 +127,261 @@ func NewGateway(cfg GatewayConfig) *Gateway {
 		cfg:    cfg,
 		listen: func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
 		now:    time.Now,
+		kick:   make(chan struct{}, 1),
 		masks:  make(map[maskKey]func(string) string),
 	}
 }
 
-// listenerKey is the context key of the listener a request arrived on.
+// listenerKey is the context key of the listener a request arrived on: an
+// *appListener, or hostLoopback.
 type listenerKey struct{}
 
-// listenerInfo describes a listener: a project network's, or loopback.
-type listenerInfo struct {
-	projectID string
-	loopback  bool
-	bridge    string // host interface of the project's network
+// hostLoopback marks the listener on the host's loopback.
+type hostLoopback struct{}
+
+// appListener is the listener inside one app container's network
+// namespace, identified by the process it was opened through and that
+// namespace's ID.
+type appListener struct {
+	pid int
+	ns  uint64
+	// src is who the container's records belong to, kept current as the
+	// service or project is renamed.
+	src atomic.Pointer[otlp.Source]
+	srv *http.Server // nil while listening fails
+	err string       // why listening last failed
 }
 
-// Run serves h on the listeners until ctx is done, following the project
-// networks as they come and go. It is meant to run as a [Worker].
-func (g *Gateway) Run(ctx context.Context, h http.Handler) {
-	servers := make(map[string]*http.Server) // by address
-	defer func() {
-		for _, srv := range servers {
-			srv.Close()
-		}
-		g.syncFirewall(context.WithoutCancel(ctx), nil)
-	}()
-	if err := g.reload(ctx); err != nil {
-		g.cfg.Log.Warn("telemetry gateway: load containers", "err", err)
+// Kick asks Run to follow the containers now, after one started or
+// stopped. It does not block.
+func (g *Gateway) Kick() {
+	select {
+	case g.kick <- struct{}{}:
+	default:
 	}
-	tick := time.NewTicker(networksEvery)
+}
+
+// ListenerError returns why the gateway cannot listen inside a running
+// container of the service, such as the app having taken the port itself,
+// or "".
+func (g *Gateway) ListenerError(serviceID string) string {
+	if m := g.failed.Load(); m != nil {
+		return (*m)[serviceID]
+	}
+	return ""
+}
+
+// Run serves h on the listeners until ctx is done, following the app
+// containers as they start, stop, and restart. It is meant to run as a
+// [Worker].
+func (g *Gateway) Run(ctx context.Context, h http.Handler) {
+	var loopback *http.Server
+	apps := make(map[string]*appListener) // by container ID
+	defer func() {
+		if loopback != nil {
+			loopback.Close()
+		}
+		for _, l := range apps {
+			l.close()
+		}
+		g.failed.Store(nil)
+	}()
+	tick := time.NewTicker(syncEvery)
 	defer tick.Stop()
+	masked := g.now()
 	for {
+		if loopback == nil {
+			loopback = g.listenLoopback(h)
+		}
 		if err := g.loadCaps(ctx); err != nil {
 			g.cfg.Log.Warn("telemetry gateway: load caps", "err", err)
 		}
-		want, err := g.listeners(ctx)
-		if err != nil {
-			g.cfg.Log.Warn("telemetry gateway: list networks", "err", err)
-		} else {
-			g.reconcile(servers, want, h)
-			g.syncFirewall(ctx, want)
+		if err := g.sync(ctx, apps, h); err != nil {
+			g.cfg.Log.Warn("telemetry gateway: follow containers", "err", err)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+		case <-g.kick:
 		}
-		g.loadMu.Lock()
-		stale := g.now().Sub(g.loaded) >= directoryEvery
-		g.loadMu.Unlock()
-		if stale {
-			if err := g.reload(ctx); err != nil {
-				g.cfg.Log.Warn("telemetry gateway: load containers", "err", err)
-			}
+		if g.now().Sub(masked) >= masksEvery {
+			g.forgetMasks()
+			masked = g.now()
 		}
 	}
 }
 
-// listeners returns the addresses to listen on: loopback, and the gateway
-// of every project's network.
-func (g *Gateway) listeners(ctx context.Context) (map[string]listenerInfo, error) {
-	port := strconv.Itoa(g.cfg.Port)
-	want := map[string]listenerInfo{net.JoinHostPort("127.0.0.1", port): {loopback: true}}
-	networks, err := g.cfg.Docker.Networks(ctx, networkPrefix)
+// listenLoopback starts serving h on the host's loopback, or returns nil if
+// it cannot listen, to be retried on the next pass.
+func (g *Gateway) listenLoopback(h http.Handler) *http.Server {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(g.cfg.Port))
+	ln, err := g.listen(addr)
 	if err != nil {
-		return nil, err
+		g.cfg.Log.Warn("telemetry gateway: listen", "addr", addr, "err", err)
+		return nil
 	}
-	projects, err := g.cfg.Store.Projects(ctx)
-	if err != nil {
-		return nil, err
-	}
-	known := make(map[string]bool, len(projects))
-	for _, p := range projects {
-		known[p.ID] = true
-	}
-	for _, n := range networks {
-		id := strings.TrimPrefix(n.Name, networkPrefix)
-		if known[id] && n.Gateway.IsValid() {
-			want[net.JoinHostPort(n.Gateway.String(), port)] = listenerInfo{projectID: id, bridge: n.Bridge}
-		}
-	}
-	return want, nil
+	srv := newServer(h, hostLoopback{})
+	go g.serve(srv, ln)
+	g.cfg.Log.Info("telemetry gateway: listening", "addr", addr)
+	return srv
 }
 
-// reconcile opens the listeners in want that servers lacks and closes the
-// ones it no longer has. A listener that fails to open is retried on the
-// next call.
-func (g *Gateway) reconcile(servers map[string]*http.Server, want map[string]listenerInfo, h http.Handler) {
-	for addr, srv := range servers {
-		if _, ok := want[addr]; !ok {
-			srv.Close()
-			delete(servers, addr)
-			g.cfg.Log.Info("telemetry gateway: closed listener", "addr", addr)
-		}
-	}
-	for addr, info := range want {
-		if servers[addr] != nil {
-			continue
-		}
-		ln, err := g.listen(addr)
-		if err != nil {
-			g.cfg.Log.Warn("telemetry gateway: listen", "addr", addr, "err", err)
-			continue
-		}
-		srv := &http.Server{
-			Handler:           h,
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       time.Minute,
-			IdleTimeout:       2 * time.Minute,
-			BaseContext: func(net.Listener) context.Context {
-				return context.WithValue(context.Background(), listenerKey{}, info)
-			},
-		}
-		servers[addr] = srv
-		go func() {
-			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				g.cfg.Log.Warn("telemetry gateway: serve", "addr", addr, "err", err)
-			}
-		}()
-		g.cfg.Log.Info("telemetry gateway: listening", "addr", addr)
-	}
-}
-
-// syncFirewall keeps a firewall rule for each project listener in want and
-// none for others. Failures are logged once per distinct error, since Run
-// retries every few seconds.
-func (g *Gateway) syncFirewall(ctx context.Context, want map[string]listenerInfo) {
-	if g.cfg.Firewall == nil {
-		return
-	}
-	var rules []firewall.Rule
-	for _, info := range want {
-		if info.bridge != "" {
-			rules = append(rules, firewall.Rule{Iface: info.bridge, Port: g.cfg.Port})
-		}
-	}
-	slices.SortFunc(rules, func(a, b firewall.Rule) int { return strings.Compare(a.Iface, b.Iface) })
-	err := g.cfg.Firewall.Sync(ctx, rules)
-	msg := ""
-	if err != nil {
-		msg = err.Error()
-	}
-	if msg != g.firewallErr {
-		g.firewallErr = msg
-		if err != nil {
-			g.cfg.Log.Warn("telemetry gateway: firewall", "err", err)
-		}
-	}
-}
-
-// reload reads the directory again and forgets the cached masks, so new
-// variable values are masked from then on.
-func (g *Gateway) reload(ctx context.Context) error {
-	g.loadMu.Lock()
-	defer g.loadMu.Unlock()
-	return g.reloadLocked(ctx)
-}
-
-func (g *Gateway) reloadLocked(ctx context.Context) error {
+// sync opens a listener in every running app container that has none and
+// closes those of containers that stopped, went away, or run in a new
+// namespace since, which a restart gives them. Listening that failed is
+// tried again. It also refreshes the domains edge spans are attributed by.
+func (g *Gateway) sync(ctx context.Context, apps map[string]*appListener, h http.Handler) error {
 	d, err := loadDirectory(ctx, g.cfg.Store, g.cfg.Docker)
 	if err != nil {
 		return err
 	}
 	g.dir.Store(d)
-	g.loaded = g.now()
+	running := make(map[string]otlp.Source)
+	for _, c := range d.containers {
+		if c.Running && c.Source.ServiceKind == "app" {
+			running[c.ID] = c.Source
+		}
+	}
+	for id, l := range apps {
+		if _, ok := running[id]; ok && g.sameNamespace(l) {
+			continue
+		}
+		l.close()
+		delete(apps, id)
+		g.cfg.Log.Info("telemetry gateway: closed listener", "container", id)
+	}
+	var errs []error
+	for id, src := range running {
+		l := apps[id]
+		if l == nil {
+			l, err = g.inspect(ctx, id)
+			if err != nil {
+				errs = append(errs, err)
+			}
+			if l == nil {
+				continue
+			}
+			apps[id] = l
+		}
+		l.src.Store(&src)
+		if l.srv == nil {
+			g.open(ctx, id, l, h)
+		}
+	}
+	failed := make(map[string]string)
+	for _, l := range apps {
+		if l.err != "" {
+			failed[l.src.Load().ServiceID] = l.err
+		}
+	}
+	g.failed.Store(&failed)
+	return errors.Join(errs...)
+}
+
+// inspect returns a listener, not yet open, for the namespace of the
+// container id, or nil if the container no longer runs.
+func (g *Gateway) inspect(ctx context.Context, id string) (*appListener, error) {
+	c, err := g.cfg.Docker.Inspect(ctx, id)
+	if docker.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !c.Running || c.Pid == 0 {
+		return nil, nil
+	}
+	ns, err := g.cfg.Namespaces.ID(c.Pid)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &appListener{pid: c.Pid, ns: ns}, nil
+}
+
+// sameNamespace reports whether l's process still runs in the namespace l
+// was opened in. A restarted container has a new process and namespace.
+func (g *Gateway) sameNamespace(l *appListener) bool {
+	ns, err := g.cfg.Namespaces.ID(l.pid)
+	return err == nil && ns == l.ns
+}
+
+// open starts serving h inside l's namespace on 127.0.0.1 and, if the
+// namespace has IPv6 loopback, ::1, since localhost resolves to either. If
+// either fails, neither serves and the error is kept in l, logged when it
+// changes.
+func (g *Gateway) open(ctx context.Context, id string, l *appListener, h http.Handler) {
+	port := strconv.Itoa(g.cfg.Port)
+	var lns []net.Listener
+	var err error
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		ln, lerr := g.cfg.Namespaces.Listen(ctx, l.pid, net.JoinHostPort(host, port))
+		if host == "::1" && errors.Is(lerr, syscall.EADDRNOTAVAIL) {
+			continue
+		}
+		if lerr != nil {
+			err = lerr
+			break
+		}
+		lns = append(lns, ln)
+	}
+	if err != nil {
+		for _, ln := range lns {
+			ln.Close()
+		}
+		msg := err.Error()
+		if errors.Is(err, syscall.EADDRINUSE) {
+			msg = fmt.Sprintf("The app listens on port %d itself, so shed cannot receive its OTLP at localhost:%d.", g.cfg.Port, g.cfg.Port)
+		}
+		if msg != l.err {
+			g.cfg.Log.Warn("telemetry gateway: listen in container", "container", id, "service", l.src.Load().ServiceID, "err", err)
+			l.err = msg
+		}
+		return
+	}
+	l.err = ""
+	l.srv = newServer(h, l)
+	for _, ln := range lns {
+		go g.serve(l.srv, ln)
+	}
+	g.cfg.Log.Info("telemetry gateway: listening in container", "container", id, "service", l.src.Load().ServiceID, "listeners", len(lns))
+}
+
+func (l *appListener) close() {
+	if l.srv != nil {
+		l.srv.Close()
+	}
+}
+
+// newServer returns a server of h whose requests carry listener under
+// listenerKey.
+func newServer(h http.Handler, listener any) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       time.Minute,
+		IdleTimeout:       2 * time.Minute,
+		BaseContext: func(net.Listener) context.Context {
+			return context.WithValue(context.Background(), listenerKey{}, listener)
+		},
+	}
+}
+
+func (g *Gateway) serve(srv *http.Server, ln net.Listener) {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		g.cfg.Log.Warn("telemetry gateway: serve", "addr", ln.Addr(), "err", err)
+	}
+}
+
+// forgetMasks drops the cached masking functions, so changed variable
+// values are masked from then on.
+func (g *Gateway) forgetMasks() {
 	g.masksMu.Lock()
 	clear(g.masks)
 	g.masksMu.Unlock()
-	return nil
-}
-
-// reloadForMiss reloads the directory for a source it does not know, unless
-// it was reloaded within missEvery, and returns the current directory.
-func (g *Gateway) reloadForMiss(ctx context.Context) (*directory, error) {
-	g.loadMu.Lock()
-	defer g.loadMu.Unlock()
-	if g.dir.Load() == nil || g.now().Sub(g.loaded) >= missEvery {
-		if err := g.reloadLocked(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return g.dir.Load(), nil
 }
 
 func (g *Gateway) loadCaps(ctx context.Context) error {
@@ -326,43 +397,23 @@ func (g *Gateway) loadCaps(ctx context.Context) error {
 	return nil
 }
 
-// Attribute says who sent r, for [otlp.Config.Attribute]. On a project
-// listener the source address must belong to a container of that project;
-// on loopback everything is shed's, except the proxy's edge spans.
+// Attribute says who sent r, for [otlp.Config.Attribute]. A request on a
+// container's listener is that container's service's; on the host's
+// loopback everything is shed's, except the proxy's edge spans.
 func (g *Gateway) Attribute(r *http.Request) (otlp.Attribution, error) {
 	ctx := r.Context()
-	info, _ := ctx.Value(listenerKey{}).(listenerInfo)
-	if info.loopback {
+	switch l := ctx.Value(listenerKey{}).(type) {
+	case *appListener:
+		src := *l.src.Load()
+		if _, err := g.mask(ctx, keyOf(src)); err != nil {
+			return otlp.Attribution{}, err
+		}
+		return otlp.Attribution{Source: src}, nil
+	case hostLoopback:
 		_, err := g.mask(ctx, shedKey)
 		return otlp.Attribution{Source: shedSource, Span: g.edgeSpan}, err
 	}
-	ap, err := netip.ParseAddrPort(r.RemoteAddr)
-	if err != nil || info.projectID == "" {
-		return otlp.Attribution{}, otlp.ErrUnknownSource
-	}
-	addr := ap.Addr().Unmap()
-	src, ok := g.lookup(g.dir.Load(), addr, info.projectID)
-	if !ok {
-		d, err := g.reloadForMiss(ctx)
-		if err != nil {
-			return otlp.Attribution{}, err
-		}
-		if src, ok = g.lookup(d, addr, info.projectID); !ok {
-			return otlp.Attribution{}, otlp.ErrUnknownSource
-		}
-	}
-	if _, err := g.mask(ctx, keyOf(src)); err != nil {
-		return otlp.Attribution{}, err
-	}
-	return otlp.Attribution{Source: src}, nil
-}
-
-func (g *Gateway) lookup(d *directory, addr netip.Addr, projectID string) (otlp.Source, bool) {
-	if d == nil {
-		return otlp.Source{}, false
-	}
-	src, ok := d.byAddr[addr]
-	return src, ok && src.ProjectID == projectID
+	return otlp.Attribution{}, errors.New("observability: request on no gateway listener")
 }
 
 // edgeHostAttrs are the span attributes that may carry the request's host,

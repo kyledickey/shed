@@ -23,7 +23,7 @@ internal/
   catalog/         database templates
   onepassword/     1Password vault and item operations (service account)
   variables/       where variables live: shed.db or a 1Password vault
-  firewall/        iptables rules letting Docker bridges reach the telemetry gateway
+  netns/           TCP listeners inside other processes' network namespaces
   telemetry/       shed's own OpenTelemetry providers and the event type
   otlp/            OTLP/HTTP receiver: decode, attribution, masking, caps
   victoria/        VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients
@@ -69,7 +69,7 @@ The last column is the real import graph, taken from `go list`. Leaf packages im
 | `logtail`       | In-memory tail of shed's own log, followed over SSE.                                     | none                                                                                                                                     |
 | `s3`            | S3-compatible object storage client for off-site backups.                                | none                                                                                                                                     |
 | `update`        | Release checks, verified downloads, replacing the shed binary.                           | none                                                                                                                                     |
-| `firewall`      | iptables rules letting Docker bridges reach the telemetry gateway port.                  | none                                                                                                                                     |
+| `netns`         | TCP listeners inside a container's network namespace, for the telemetry gateway.         | none                                                                                                                                     |
 | `telemetry`     | shed's own OpenTelemetry providers, the slog bridge, and the event type for annotations. | none                                                                                                                                     |
 | `otlp`          | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps.         | none                                                                                                                                     |
 | `victoria`      | VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients.                               | none                                                                                                                                     |
@@ -81,7 +81,7 @@ The last column is the real import graph, taken from `go list`. Leaf packages im
 | `backup`        | Dumps, archives, zstd, age, schedule, retention, upload, restore.                        | docker, store, telemetry                                                                                                                 |
 | `audit`         | Audit log: actor and client IP in context, recording, coalescing, retention.             | store                                                                                                                                    |
 | `auth`          | Sessions, GitHub sign-in, middleware, OAuth 2.1 server and bearer middleware.            | audit, github                                                                                                                            |
-| `observability` | Telemetry stack, ingest, log and edge shipping, exporters, dashboards.                   | catalog, docker, firewall, grafana, otlp, proxy, store, telemetry, victoria                                                              |
+| `observability` | Telemetry stack, ingest, log and edge shipping, exporters, dashboards.                   | catalog, docker, grafana, host, otlp, proxy, store, telemetry, victoria                                                                  |
 | `control`       | Operations on projects, services, deployments, backups; their validation rules.          | audit, backup, build, catalog, deploy, github, grafana, logtail, metrics, observability, onepassword, store, update, variables, victoria |
 | `mcp`           | Read-only MCP server for agents: tools, compact results, instructions.                   | audit, control, github, metrics, observability, store, update, victoria                                                                  |
 | `api`           | JSON API, SSE logs, webhook endpoint, SPA serving, `/mcp` mount. Calls `control`.        | audit, auth, backup, control, deploy, github, metrics, observability, onepassword, store, update, variables                              |

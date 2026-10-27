@@ -89,7 +89,7 @@ metrics_addr = "127.0.0.1:8428"
 logs_addr    = "127.0.0.1:9428"
 traces_addr  = "127.0.0.1:10428"
 grafana_addr = "127.0.0.1:3001"
-otlp_port    = 4318                # OTLP/HTTP on each project network's gateway
+otlp_port    = 4318                # OTLP/HTTP on localhost inside each app's container
 
 [log]
 level = "info"
@@ -121,7 +121,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
-| `internal/firewall` | iptables `INPUT` rules letting Docker bridges reach the telemetry gateway port | — |
+| `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
@@ -681,8 +681,7 @@ volume, or container is created, the error is logged, and the service shows
 
 The active deployment's `runtime` stores its command, resolved variables,
 masked variable keys, CPU/memory limits, public port, volume IDs and mount
-paths, and whether telemetry was on (which adds the `shed.internal` host
-entry). Activation writes it and clears the superseded deployment's runtime
+paths. Activation writes it and clears the superseded deployment's runtime
 in the same transaction, so resolved variables remain only on the active record.
 A missing container is recreated from this snapshot, including during boot,
 start, or release of a hold. Saved settings wait for a new deployment. Volumes
@@ -1181,10 +1180,10 @@ until it is disabled or shed shuts down; a hook is told when telemetry turns
 on (stack up, workers started) and off (before the workers stop). shed's own
 providers are switched by that hook once the loopback listener exists.
 
-Injected variables and the `shed.internal` host entry (see
-[Ingest](#ingest)) are part of a container's config, so they appear or
-disappear with each service's next deployment; the page says so after a
-toggle.
+Injected variables (see [Ingest](#ingest)) are part of a container's
+config, so they appear or disappear with each app's next deployment; the
+page says so after a toggle. The listeners inside containers follow
+telemetry at once.
 
 The Telemetry page shows each component's state, image version, CPU and memory
 (Docker stats; CPU from the difference to the previous request's sample),
@@ -1273,41 +1272,48 @@ no gRPC and no public endpoint.
 
 Listeners:
 
-- One on each project network's gateway address (`shed-<projectID>`, for
-  networks whose suffix is a project ID), port `telemetry.otlp_port` (4318),
-  opened and closed as networks come and go: the gateway lists `shed-*`
-  networks every 5 s and retries a listener that failed to open. While
-  telemetry is on, every service container gets the host entry
-  `shed.internal` → its network's gateway (`ExtraHosts`, resolved when the
-  container is created). Hosts whose firewall drops input from Docker
-  bridges (ufw's default) would drop this traffic, so while the gateway runs
-  `internal/firewall` keeps one iptables rule per project bridge at the top
-  of `INPUT`: `-i <bridge> -p tcp --dport <otlp_port> -m comment --comment
-  shed-telemetry -j ACCEPT`. Rules for bridges that went away are deleted,
-  and all of them when telemetry is turned off. Rules without the comment
-  are never touched. Without `iptables` on `PATH` the gateway logs a warning
-  and containers must be allowed in by hand.
-- One on `127.0.0.1:<otlp_port>` for shed's own telemetry and the proxy's edge
-  spans.
+- One inside each running app container's network namespace (every
+  container labeled `shed.service` whose service is of kind `app`;
+  databases and exporters get none), on `127.0.0.1:<otlp_port>` and, if the
+  namespace has IPv6 loopback, `[::1]:<otlp_port>`, since `localhost`
+  resolves to either. shed runs as root: `internal/netns` opens
+  `/proc/<pid>/ns/net` of the container's init process (`State.Pid`), and
+  on a goroutine locked to its OS thread saves the thread's own namespace,
+  `setns`es into the container's, listens, and `setns`es back. The thread
+  is unlocked only if restoring succeeded; otherwise it stays locked and the
+  runtime discards it. The socket stays bound to the container's
+  namespace, so apps reach the gateway at `localhost` without leaving it,
+  and host firewalls never see the traffic.
+- One on `127.0.0.1:<otlp_port>` on the host, for shed's own telemetry and
+  the proxy's edge spans.
 
-Attribution: on a project listener the request's source address is looked up
-in an index of shed's containers (every container labeled `shed.service`,
-from one Docker list: address on its project network → service and the
-deployment in its `shed.deployment` label), refreshed every 30 s and on a
-miss, at most once a second. A container starting a deployment is therefore
-known on its first request, before it is active, without the deployer
-announcing it. A source still unknown, or known on another project's
-network, answers 403 and is counted as dropped (`unknown_source`). The
-`shed.*` attributes are set from the index (`shed.source` = `otlp`);
-`service.name` is kept if the sender set one, else it becomes the service
-name. On the loopback listener, records are attributed to shed
-(`shed.source` = `shed`), except edge spans: spans whose resource has no
-`shed.service.id` (shed's own resource always sets it; Caddy's has
+The gateway follows the containers from one Docker list (`shed.service`)
+every 5 s and whenever the Docker events follower sees such a container
+start or die. A listener is opened for each running app container without
+one (inspecting it for its PID), and closed when the container stops, goes
+away, or no longer runs in the namespace the listener was opened in: the
+gateway keeps the PID and the namespace's inode (`stat` of
+`/proc/<pid>/ns/net`) and compares them on every pass, so a restart, which
+gives the container a new process and namespace, reopens it there. If the
+app already listens on the port itself (`EADDRINUSE`), the container gets
+no listener; the gateway logs it once per distinct error, reports it as
+`ServiceTelemetry.listenerError`, and tries again on every pass. Any other
+failure is handled alike. When telemetry is turned off, the gateway's
+context ends and every listener closes.
+
+Attribution: each container listener carries its container's source (the
+service, its project, and the deployment in its `shed.deployment` label),
+refreshed on every pass so renames apply, and passes it to the handler in
+the request context. The `shed.*` attributes are set from it (`shed.source`
+= `otlp`); `service.name` is kept if the sender set one, else it becomes
+the service name. On the host loopback listener, records are attributed to
+shed (`shed.source` = `shed`), except edge spans: spans whose resource has
+no `shed.service.id` (shed's own resource always sets it; Caddy's has
 `webengine.name=Caddy`). An edge span is attributed by its request host,
 read from `server.address` (what Caddy's otelhttp sets), else `http.host`,
 else the host of `url.full`, lowercase without a port, through the domain
-table, with `shed.source` = `edge`; the dashboard host and unrouted hosts go
-to shed with `shed.source` = `edge`.
+table (reloaded on every pass), with `shed.source` = `edge`; the dashboard
+host and unrouted hosts go to shed with `shed.source` = `edge`.
 
 Masking: string attribute values, span status messages, and log bodies are masked with the saved
 values of every variable in the sender's project and the values its container
@@ -1315,8 +1321,8 @@ was started with (the [build secret handling](#build-secret-handling) limits
 apply). shed's own records are masked with every project's values, like
 `ShedLog`. The value sets come from `internal/control` (`TelemetryMask`,
 `ShedMask`, `RuntimeMask`), the same code `ShedLog` and `RuntimeLogs` use;
-the gateway caches each masking function until the index is next refreshed,
-so a changed value is masked within 30 s. If one cannot be built while a
+the gateway caches each masking function for 30 s, so a changed value is
+masked within 30 s. If one cannot be built while a
 request is attributed, the request answers 503.
 
 Caps: each service has a token bucket per signal (spans/s, log records/s),
@@ -1327,8 +1333,7 @@ partial success naming the rejected count, so SDKs do not retry. Overrides
 live in `telemetry_caps`; the gateway reloads them and the default caps every
 5 s. shed itself has the default caps. Every drop increments
 `shed_telemetry_dropped_total{shed_service_id, signal, reason}` (signal
-`traces`, `metrics`, or `logs`; reason `unknown_source`, `rate_cap`, or
-`series_cap`); the service page shows "dropping telemetry" while it rises.
+`traces`, `metrics`, or `logs`; reason `rate_cap` or `series_cap`); the service page shows "dropping telemetry" while it rises.
 
 Span metrics: for spans of kind server or consumer the gateway records
 `shed_span_duration_seconds` (histogram) labeled with the service's `shed.*`
@@ -1347,7 +1352,7 @@ Injected variables, for every app while telemetry is on (a variable the user
 sets with the same name wins):
 
 ```
-OTEL_EXPORTER_OTLP_ENDPOINT=http://shed.internal:4318
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<otlp_port>
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_SERVICE_NAME=<service name>
 OTEL_RESOURCE_ATTRIBUTES=service.version=<commit sha or image>
@@ -1355,8 +1360,9 @@ OTEL_RESOURCE_ATTRIBUTES=service.version=<commit sha or image>
 
 The deployer asks the telemetry settings (`enabled`, the operator's intent,
 not whether the stack is up yet) when it resolves a deployment's variables,
-so variable listings show these as injected while telemetry is on, and the
-same answer decides the host entry. `OTEL_RESOURCE_ATTRIBUTES` is left out
+so variable listings show these as injected while telemetry is on.
+`http://localhost:4318` is also the OpenTelemetry SDKs' default endpoint.
+`OTEL_RESOURCE_ATTRIBUTES` is left out
 when there is neither a commit nor an image. `ServiceTelemetry.dropping`
 comes from `sum(increase(shed_telemetry_dropped_total{shed_service_id=…}[5m])) > 0`
 in VictoriaMetrics, false while telemetry is off or the store does not
@@ -1849,6 +1855,12 @@ a `kill` event since it started (the daemon sends one before the die of a
 container that was stopped or restarted) and either exited non-zero or was
 OOM killed. `cmd/shed` turns each into a `crash` annotation ("exited with
 code N" or "killed for running out of memory").
+
+For every `start` and `die` of a container with a `shed.service` label it
+calls the functions registered with `Manager.OnServiceContainer`, whether
+telemetry is on or not; `cmd/shed` registers the gateway's `Kick`, so a
+listener opens or closes right away instead of on the next 5 s pass (see
+[Ingest](#ingest)). They must not block.
 
 ### Egress
 
@@ -2600,12 +2612,13 @@ type Telemetry = {
   droppedLastHour: { reason: string; signal: string; count: number }[];
   firingAlerts: { name: string; serviceId: string; since: string }[];
   grafanaUrl: string;                  // "<server.url>/grafana/"
-  otlpEndpoint: string;                // "http://shed.internal:4318"
+  otlpEndpoint: string;                // "http://localhost:4318"
 };
 type ServiceTelemetry = {
   caps: TelemetryCaps;                 // effective
   overridden: boolean;
   dropping: boolean;                   // records dropped in the last 5 minutes
+  listenerError: string;               // why the gateway cannot listen in its container; "" if it can
   folderUrl: string;
   dashboards: { uid: string; title: string; url: string; customized: boolean; outdated: boolean }[];
   firingAlerts: { name: string; since: string }[];

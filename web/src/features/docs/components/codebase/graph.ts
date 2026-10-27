@@ -51,7 +51,6 @@ export const packages: Package[] = [
     imports: ["build", "catalog", "docker", "github", "proxy", "store", "telemetry", "vars"],
   },
   { name: "docker", imports: [] },
-  { name: "firewall", imports: [] },
   { name: "github", imports: [] },
   { name: "grafana", imports: [] },
   { name: "host", imports: [] },
@@ -70,13 +69,13 @@ export const packages: Package[] = [
     ],
   },
   { name: "metrics", imports: ["docker", "host", "store", "victoria"] },
+  { name: "netns", imports: [] },
   {
     name: "observability",
     imports: [
       "audit",
       "catalog",
       "docker",
-      "firewall",
       "grafana",
       "host",
       "otlp",

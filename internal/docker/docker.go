@@ -86,65 +86,6 @@ func (c *Client) RemoveNetwork(ctx context.Context, name string) error {
 	return nil
 }
 
-// Network is a bridge network and the host's address on it.
-type Network struct {
-	Name string
-	// Gateway is the first IPv4 gateway of the network, the host's address
-	// on its bridge; zero if it has none.
-	Gateway netip.Addr
-	// Bridge is the name of the network's bridge interface on the host.
-	Bridge string
-}
-
-// Networks returns the networks whose names start with prefix.
-func (c *Client) Networks(ctx context.Context, prefix string) ([]Network, error) {
-	filters := make(client.Filters)
-	filters.Add("name", prefix)
-	res, err := c.api.NetworkList(ctx, client.NetworkListOptions{Filters: filters})
-	if err != nil {
-		return nil, fmt.Errorf("docker: list networks: %w", err)
-	}
-	var out []Network
-	for _, n := range res.Items {
-		if strings.HasPrefix(n.Name, prefix) {
-			out = append(out, Network{Name: n.Name, Gateway: gateway(n.IPAM), Bridge: bridge(n.ID, n.Options)})
-		}
-	}
-	return out, nil
-}
-
-// NetworkGateway returns the host's IPv4 address on the network name.
-func (c *Client) NetworkGateway(ctx context.Context, name string) (netip.Addr, error) {
-	res, err := c.api.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
-	if err != nil {
-		return netip.Addr{}, fmt.Errorf("docker: inspect network %s: %w", name, err)
-	}
-	gw := gateway(res.Network.IPAM)
-	if !gw.IsValid() {
-		return netip.Addr{}, fmt.Errorf("docker: network %s has no IPv4 gateway", name)
-	}
-	return gw, nil
-}
-
-// bridge returns the host interface of the bridge network id: the name set
-// in its options, else Docker's default "br-" and the ID's first 12
-// characters.
-func bridge(id string, options map[string]string) string {
-	if name := options["com.docker.network.bridge.name"]; name != "" {
-		return name
-	}
-	return "br-" + id[:min(len(id), 12)]
-}
-
-func gateway(ipam network.IPAM) netip.Addr {
-	for _, cfg := range ipam.Config {
-		if cfg.Gateway.Is4() {
-			return cfg.Gateway
-		}
-	}
-	return netip.Addr{}
-}
-
 // ReconnectNetwork replaces the DNS aliases, besides its name, of the
 // container id on the network name, to which it must be connected. Docker
 // cannot change the aliases of a connected container, so it is disconnected
@@ -360,8 +301,6 @@ type RunSpec struct {
 	Mounts  []Mount
 	Binds   []Bind
 	Publish []PortBinding
-	// ExtraHosts are host entries, each "name:address".
-	ExtraHosts []string
 	// CPUs is the CPU quota in cores and Memory the memory limit in bytes,
 	// with no extra swap. Zero means unlimited.
 	CPUs   float64
@@ -419,7 +358,6 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 		HostConfig: &container.HostConfig{
 			NetworkMode:   container.NetworkMode(spec.Network),
 			PortBindings:  bindings,
-			ExtraHosts:    spec.ExtraHosts,
 			Mounts:        append(volumeMounts(spec.Mounts), bindMounts(spec.Binds)...),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     workloadResources(spec),
@@ -492,6 +430,9 @@ type Container struct {
 	Running bool
 	// ExitCode is the exit code of the last run.
 	ExitCode int
+	// Pid is the host PID of the container's init process while it runs.
+	// Only Inspect sets it.
+	Pid int
 	// IPs maps network name to the container's IP address on it.
 	IPs    map[string]string
 	Labels map[string]string
@@ -530,6 +471,7 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 		ctr.State = string(info.State.Status)
 		ctr.Running = info.State.Running
 		ctr.ExitCode = info.State.ExitCode
+		ctr.Pid = info.State.Pid
 	}
 	if info.NetworkSettings != nil {
 		addIPs(ctr.IPs, info.NetworkSettings.Networks)

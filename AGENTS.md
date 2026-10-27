@@ -35,7 +35,7 @@ internal/victoria  VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients
 internal/grafana   Grafana config, provisioning, HTTP API, dashboard templates
 internal/s3        S3-compatible object storage client
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
-internal/firewall  iptables rules opening the telemetry gateway to containers
+internal/netns     TCP listeners inside other processes' network namespaces
 internal/host      host resource usage from procfs, sysfs, and statfs, conntrack flows
 internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
@@ -58,7 +58,7 @@ Each package under `internal/` should work as a self-contained piece that
 can be understood, tested, and replaced on its own.
 
 - Leaf packages (`config`, `store`, `docker`, `build`, `proxy`, `github`,
-  `vars`, `catalog`, `firewall`, `host`, `logtail`, `s3`, `update`,
+  `vars`, `catalog`, `netns`, `host`, `logtail`, `s3`, `update`,
   `onepassword`, `telemetry`, `otlp`, `victoria`, `grafana`) import nothing
   from `internal/`. Keep it that way.
 - Interfaces belong to the consumer. A package that needs another's behavior

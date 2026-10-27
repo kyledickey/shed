@@ -301,7 +301,7 @@ func newHarness(t *testing.T, opts ...func(*Config)) *harness {
 		Addrs:        Addrs{Metrics: "127.0.0.1:8428", Logs: "127.0.0.1:9428", Traces: "127.0.0.1:10428", Grafana: "127.0.0.1:3001"},
 		Dir:          h.dir,
 		GrafanaURL:   "https://shed.example.com/grafana/",
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Log:          slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {

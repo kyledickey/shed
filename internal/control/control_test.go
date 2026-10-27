@@ -271,8 +271,10 @@ type fixture struct {
 	op       *fakeOnePassword
 	audit    *fakeAudit
 	tel      *fakeTelemetry
-	dash     *fakeDashboards
-	plane    *Plane
+	// listenerErrs are the gateway's listener errors by service ID.
+	listenerErrs map[string]string
+	dash         *fakeDashboards
+	plane        *Plane
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -301,6 +303,9 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      f.audit,
 		Telemetry:  f.tel,
 		Dashboards: f.dash,
+		ListenerError: func(serviceID string) string {
+			return f.listenerErrs[serviceID]
+		},
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

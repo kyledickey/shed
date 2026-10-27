@@ -22,7 +22,7 @@ const leaves = [
   "config",
   "logtail",
   "update",
-  "firewall",
+  "netns",
   "telemetry",
   "otlp",
   "victoria",

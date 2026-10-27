@@ -79,7 +79,7 @@ func TestDashboardsIntegration(t *testing.T) {
 		Addrs:        addrs,
 		Dir:          filepath.Join(t.TempDir(), "telemetry"),
 		GrafanaURL:   grafanaURL,
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Log:          log,
 	})
 	dashboards := observability.NewDashboards(observability.DashboardsConfig{

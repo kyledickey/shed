@@ -111,7 +111,7 @@ func TestEdgeIntegration(t *testing.T) {
 		Addrs:        addrs,
 		Dir:          filepath.Join(t.TempDir(), "telemetry"),
 		GrafanaURL:   "http://127.0.0.1/grafana/",
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Log:          log,
 	})
 	plane := control.New(control.Config{Store: st, Telemetry: stack, Log: log})

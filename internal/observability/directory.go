@@ -3,7 +3,6 @@ package observability
 import (
 	"context"
 	"fmt"
-	"net/netip"
 	"strings"
 
 	"github.com/kyledickey/shed/internal/docker"
@@ -11,12 +10,11 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// The labels and network names the deployer gives service containers.
+// The labels the deployer gives service containers.
 const (
 	labelProject    = "shed.project"
 	labelService    = "shed.service"
 	labelDeployment = "shed.deployment"
-	networkPrefix   = "shed-"
 )
 
 // DirectoryStore names projects, services, and domains. *store.Store
@@ -41,17 +39,13 @@ var shedSource = otlp.Source{ServiceID: "shed", ServiceName: "shed", ServiceKind
 type serviceContainer struct {
 	ID      string
 	Running bool
-	// Addr is the container's address on its project network, if it has one.
-	Addr   netip.Addr
-	Source otlp.Source
+	Source  otlp.Source
 }
 
 // directory resolves shed's containers and domains to the services they
 // belong to, as of one moment.
 type directory struct {
-	projects   map[string]bool // project IDs
 	containers []serviceContainer
-	byAddr     map[netip.Addr]otlp.Source
 	byHost     map[string]otlp.Source
 }
 
@@ -75,14 +69,9 @@ func loadDirectory(ctx context.Context, st DirectoryStore, dc ContainerLister) (
 		return nil, fmt.Errorf("observability: directory: %w", err)
 	}
 
-	d := &directory{
-		projects: make(map[string]bool, len(projects)),
-		byAddr:   make(map[netip.Addr]otlp.Source),
-		byHost:   make(map[string]otlp.Source, len(domains)),
-	}
+	d := &directory{byHost: make(map[string]otlp.Source, len(domains))}
 	names := make(map[string]string, len(projects))
 	for _, p := range projects {
-		d.projects[p.ID] = true
 		names[p.ID] = p.Name
 	}
 	bySvc := make(map[string]otlp.Source, len(services))
@@ -98,12 +87,7 @@ func loadDirectory(ctx context.Context, st DirectoryStore, dc ContainerLister) (
 			continue
 		}
 		src.DeploymentID = c.Labels[labelDeployment]
-		sc := serviceContainer{ID: c.ID, Running: c.Running, Source: src}
-		if a, err := netip.ParseAddr(c.IPs[networkPrefix+src.ProjectID]); err == nil {
-			sc.Addr = a
-			d.byAddr[a] = src
-		}
-		d.containers = append(d.containers, sc)
+		d.containers = append(d.containers, serviceContainer{ID: c.ID, Running: c.Running, Source: src})
 	}
 	for _, dom := range domains {
 		if src, ok := bySvc[dom.ServiceID]; ok {

@@ -20,9 +20,6 @@ type Resolved struct {
 	// Saved holds the service's own variables as saved, with references
 	// unexpanded.
 	Saved map[string]string
-	// Telemetry is set if telemetry is on, which added the OTEL_* variables
-	// to apps and gives every container the shed.internal host entry.
-	Telemetry bool
 }
 
 // readVariables returns the own variables of a service.
@@ -140,9 +137,9 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 		return v, ok, nil
 	})
 	if err != nil {
-		return Resolved{Own: ownKeys, Saved: selfOwn, Telemetry: telemetry}, fmt.Errorf("deploy: resolve variables: %w", err)
+		return Resolved{Own: ownKeys, Saved: selfOwn}, fmt.Errorf("deploy: resolve variables: %w", err)
 	}
-	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn, Telemetry: telemetry}, nil
+	return Resolved{Env: env, Own: ownKeys, Saved: selfOwn}, nil
 }
 
 // ResolveVariables returns the variables of a service with references

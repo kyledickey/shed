@@ -48,8 +48,8 @@ type Telemetry struct {
 	LogsAddr    string `koanf:"logs_addr"`
 	TracesAddr  string `koanf:"traces_addr"`
 	GrafanaAddr string `koanf:"grafana_addr"`
-	// OTLPPort is the port of the OTLP/HTTP gateway, on loopback and on
-	// each project network's gateway address.
+	// OTLPPort is the port of the OTLP/HTTP gateway, on the host's loopback
+	// and on loopback inside each app's container.
 	OTLPPort int `koanf:"otlp_port"`
 }
 

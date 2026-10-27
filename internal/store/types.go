@@ -164,9 +164,6 @@ type DeploymentRuntime struct {
 	// PublicPort is the published host TCP port; zero means none.
 	PublicPort int             `json:"publicPort,omitempty"`
 	Volumes    []RuntimeVolume `json:"volumes,omitempty"`
-	// Telemetry is set if telemetry was on: the container gets the
-	// shed.internal host entry.
-	Telemetry bool `json:"telemetry,omitempty"`
 }
 
 // RuntimeVolume is a volume mounted into a deployment's container.

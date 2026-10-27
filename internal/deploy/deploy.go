@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -57,7 +56,6 @@ type Docker interface {
 	Inspect(ctx context.Context, id string) (docker.Container, error)
 	List(ctx context.Context, labels map[string]string) ([]docker.Container, error)
 	Logs(ctx context.Context, id string, tail int, follow bool, w io.Writer) error
-	NetworkGateway(ctx context.Context, name string) (netip.Addr, error)
 }
 
 // Builder builds images from source. *build.Builder implements it.
@@ -108,11 +106,11 @@ type Config struct {
 	// Dashboard, if its Host is set, is included in every route set.
 	Dashboard proxy.Route
 	// Telemetry reports whether telemetry is on. While it is, apps get the
-	// OTEL_* variables and every container gets the shed.internal host
-	// entry. Nil means off.
+	// OTEL_* variables. Nil means off.
 	Telemetry func(ctx context.Context) (bool, error)
-	// OTLPEndpoint is the gateway URL apps send telemetry to, such as
-	// http://shed.internal:4318.
+	// OTLPEndpoint is the URL apps send telemetry to, such as
+	// http://localhost:4318, where the gateway listens inside each app's
+	// container.
 	OTLPEndpoint string
 	// Events receives deployments starting and ending, stops, and
 	// restarts. It must not block. Nil drops them.

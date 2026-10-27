@@ -34,11 +34,6 @@ import (
 // and after decompression.
 const MaxBodySize = 8 << 20
 
-// ErrUnknownSource is returned by an attribution function when the request
-// does not come from a known sender. The handler answers 403 and counts the
-// records as dropped with reason unknown_source.
-var ErrUnknownSource = errors.New("otlp: unknown source")
-
 // Source is who a record belongs to: the values of the shed.* resource
 // attributes stamped on it.
 type Source struct {
@@ -116,8 +111,7 @@ type Forwarder interface {
 // Config holds a Handler's dependencies. Attribute and Forwarder are
 // required.
 type Config struct {
-	// Attribute resolves who sent r. It returns ErrUnknownSource for
-	// senders shed does not know; any other error answers 503.
+	// Attribute resolves who sent r. An error answers 503.
 	Attribute func(r *http.Request) (Attribution, error)
 	// Mask returns the masking function for a source's records, applied to
 	// every string attribute value, span status message, and log body. Nil
@@ -150,9 +144,8 @@ type Handler struct {
 
 // Drop reasons, the reason label of shed_telemetry_dropped_total.
 const (
-	reasonUnknownSource = "unknown_source"
-	reasonRateCap       = "rate_cap"
-	reasonSeriesCap     = "series_cap"
+	reasonRateCap   = "rate_cap"
+	reasonSeriesCap = "series_cap"
 )
 
 // New returns a Handler for cfg.

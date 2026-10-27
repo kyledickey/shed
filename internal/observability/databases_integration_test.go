@@ -172,7 +172,7 @@ func TestIntegrationDatabaseExporters(t *testing.T) {
 		Addrs:        addrs,
 		Dir:          filepath.Join(t.TempDir(), "telemetry"),
 		GrafanaURL:   "http://" + addrs.Grafana + "/grafana/",
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Databases:    st,
 		Log:          log,
 	})

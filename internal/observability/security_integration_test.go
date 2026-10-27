@@ -94,7 +94,7 @@ func TestSecurityIntegration(t *testing.T) {
 		Addrs:        addrs,
 		Dir:          filepath.Join(t.TempDir(), "telemetry"),
 		GrafanaURL:   "http://" + addrs.Grafana + "/grafana/",
-		OTLPEndpoint: "http://shed.internal:4318",
+		OTLPEndpoint: "http://localhost:4318",
 		Security: &observability.Security{
 			Docker: dc, Catalog: st, Audit: audit.New(st, log), Logs: logs, Conntrack: table{},
 		},

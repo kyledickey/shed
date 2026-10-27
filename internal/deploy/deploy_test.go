@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/netip"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -89,10 +88,6 @@ func (f *fakeDocker) resolve(name string) []string {
 }
 
 func (f *fakeDocker) EnsureNetwork(context.Context, string) error { return nil }
-
-func (f *fakeDocker) NetworkGateway(context.Context, string) (netip.Addr, error) {
-	return netip.MustParseAddr("172.18.0.1"), nil
-}
 
 func (f *fakeDocker) RemoveNetwork(context.Context, string) error        { return nil }
 func (f *fakeDocker) PullImage(context.Context, string, io.Writer) error { return nil }
