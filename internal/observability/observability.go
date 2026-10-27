@@ -44,6 +44,7 @@ type Docker interface {
 	Restart(ctx context.Context, id string, timeout time.Duration) error
 	Remove(ctx context.Context, id string) error
 	Stats(ctx context.Context, id string) (docker.Stats, error)
+	Exec(ctx context.Context, id string, cmd []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
 var _ Docker = (*docker.Client)(nil)
@@ -99,7 +100,13 @@ type Config struct {
 	GrafanaURL string
 	// OTLPEndpoint is the gateway address services send to.
 	OTLPEndpoint string
-	Log          *slog.Logger
+	// Databases lists the database services to run exporters for. Nil runs
+	// none.
+	Databases ServiceStore
+	// Redeployer redeploys databases that were started without query
+	// statistics. Nil leaves them as they are.
+	Redeployer Redeployer
+	Log        *slog.Logger
 }
 
 // A Worker runs while telemetry is enabled and returns once ctx is done,
@@ -123,6 +130,12 @@ type Manager struct {
 	mu     sync.Mutex  // serializes Reconcile and DeleteData
 	active *activation // non-nil while the workers run; guarded by mu
 
+	// scrapeMu serializes writing scrape.yaml, and guards targets, the
+	// exporters it names.
+	scrapeMu sync.Mutex
+	targets  []scrapeTarget
+	dbs      *databases // nil without Config.Databases
+
 	stateMu sync.Mutex
 	errs    map[Component]string    // last reconcile failure; guarded by stateMu
 	samples map[string]docker.Stats // last stats by container ID; guarded by stateMu
@@ -137,7 +150,7 @@ type activation struct {
 // New returns a Manager. It does nothing until Run.
 func New(cfg Config) *Manager {
 	base, stop := context.WithCancel(context.Background())
-	return &Manager{
+	m := &Manager{
 		cfg:      cfg,
 		kick:     make(chan struct{}, 1),
 		poll:     time.Second,
@@ -146,6 +159,11 @@ func New(cfg Config) *Manager {
 		errs:     make(map[Component]string),
 		samples:  make(map[string]docker.Stats),
 	}
+	if cfg.Databases != nil {
+		m.dbs = newDatabases(cfg, m.setTargets)
+		m.workers = append(m.workers, m.dbs.watch, m.dbs.upgrade)
+	}
+	return m
 }
 
 // AddWorker registers w to run while telemetry is enabled: started once the

@@ -201,14 +201,27 @@ var shedLabels = map[string]string{
 	"shed_source":       "shed",
 }
 
-// writeScrapeConfig writes scrape.yaml, which scrapes the stores' own
-// metrics, under dir.
-func writeScrapeConfig(dir string, a Addrs) error {
+// scrapeConfigOf returns scrape.yaml's content: the stores' own metrics and
+// the exporters in targets.
+func scrapeConfigOf(a Addrs, targets []scrapeTarget) scrapeConfig {
 	cfg := scrapeConfig{ScrapeConfigs: []scrapeJob{{
 		JobName:        "shed-telemetry",
 		ScrapeInterval: "15s",
 		StaticConfigs:  []staticConfig{{Targets: []string{a.Metrics, a.Logs, a.Traces}, Labels: shedLabels}},
 	}}}
+	if len(targets) > 0 {
+		job := scrapeJob{JobName: "shed-exporters", ScrapeInterval: "15s"}
+		for _, t := range targets {
+			job.StaticConfigs = append(job.StaticConfigs, staticConfig{Targets: []string{t.Addr}, Labels: t.Labels})
+		}
+		cfg.ScrapeConfigs = append(cfg.ScrapeConfigs, job)
+	}
+	return cfg
+}
+
+// writeScrapeConfig atomically writes scrape.yaml under dir.
+func writeScrapeConfig(dir string, a Addrs, targets []scrapeTarget) error {
+	cfg := scrapeConfigOf(a, targets)
 	b, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err

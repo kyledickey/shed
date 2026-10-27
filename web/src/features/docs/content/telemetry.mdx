@@ -44,6 +44,36 @@ Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Ope
 
 Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
 
+## Databases
+
+While telemetry is on, shed runs a small exporter container next to every database that has an active deployment, and VictoriaMetrics scrapes it every 15 seconds. Nothing in your database image changes.
+
+| Database | Exporter                                | Metrics                                                                                 |
+| -------- | --------------------------------------- | --------------------------------------------------------------------------------------- |
+| Postgres | `prometheuscommunity/postgres-exporter` | connections, commits and rollbacks, cache hits, locks, size, WAL, per-statement timings |
+| MySQL    | `prom/mysqld-exporter`                  | connections, queries by command, InnoDB, row operations, per-digest timings             |
+| MongoDB  | `percona/mongodb_exporter`              | operations, connections, WiredTiger cache, latencies, slow operations                   |
+| Redis    | `oliver006/redis_exporter`              | commands, hit ratio, memory, evictions, clients, keys, slowlog                          |
+
+The exporter is named `shed-exp-<service ID>`, has the label `shed.exporter=<service ID>`, joins the project's network without a hostname, and is capped at 0.1 CPU and 64 MiB. It connects to the database by its private hostname and port with the credentials the database runs with, which it gets as environment variables. shed recreates it when its image, target, or credentials change. It is removed when you delete or stop the database, when the database has no active deployment, and when you turn telemetry off. Every series carries the `shed_*` labels of its database, so the service's Postgres, MySQL, MongoDB, or Redis dashboard in Grafana fills in without setup.
+
+### Query statistics
+
+Every database template starts with arguments that expose slow queries:
+
+| Database | Arguments                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------- |
+| Postgres | `pg_stat_statements` preloaded, `pg_stat_statements.track=all`, `log_min_duration_statement=250`              |
+| MySQL    | `performance_schema` on, the slow query log on with `long_query_time=0.25`, written to the container's output |
+| MongoDB  | `--profile=1 --slowms=250`                                                                                    |
+| Redis    | `--slowlog-log-slower-than 250000`                                                                            |
+
+Queries slower than 250 ms are written to the container's log, which telemetry ships to VictoriaLogs for the slow-query panels. For Postgres, shed also runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` in `POSTGRES_DB` after each activation, which is what the top-statements panel reads. MySQL cannot write its slow log to a pipe, so its start command writes a file under `/tmp` that a `tail` copies to the container's output; the file is emptied once it passes 10 MiB.
+
+### The one-time restart
+
+A database deployed before this existed was started without these arguments. When telemetry turns on, shed redeploys each such database once, one at a time, with the same image and variables. The deployment's trigger is **Telemetry**, and the database is unavailable for the few seconds a restart takes. Databases that are stopped, or that have a start command of their own, are left alone. Databases deployed later already start with the arguments.
+
 ## Retention and disk
 
 | Setting                  | Default | Range          |

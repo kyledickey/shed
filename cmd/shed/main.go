@@ -270,6 +270,8 @@ func run() error {
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   strings.TrimRight(cfg.Server.URL, "/") + "/grafana/",
 		OTLPEndpoint: fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort),
+		Databases:    st,
+		Redeployer:   deployer,
 		Log:          log,
 	})
 

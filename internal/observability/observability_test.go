@@ -92,7 +92,13 @@ func (d *fakeDocker) List(_ context.Context, labels map[string]string) ([]docker
 	defer d.mu.Unlock()
 	var out []docker.Container
 	for _, c := range d.ctrs {
-		if _, ok := c.Labels[LabelComponent]; ok {
+		match := true
+		for k, v := range labels {
+			if got, ok := c.Labels[k]; !ok || v != "" && got != v {
+				match = false
+			}
+		}
+		if match {
 			out = append(out, *c)
 		}
 	}
@@ -135,7 +141,10 @@ func (d *fakeDocker) Run(_ context.Context, spec docker.RunSpec) (string, error)
 	defer d.mu.Unlock()
 	d.seq++
 	id := fmt.Sprint("c", d.seq)
-	d.ctrs[id] = &docker.Container{ID: id, Name: spec.Name, State: "running", Running: true, Labels: spec.Labels}
+	d.ctrs[id] = &docker.Container{
+		ID: id, Name: spec.Name, State: "running", Running: true, Labels: spec.Labels,
+		IPs: map[string]string{spec.Network: fmt.Sprintf("10.9.0.%d", d.seq)},
+	}
 	d.t.add("run %s", spec.Labels[LabelComponent])
 	return id, nil
 }
@@ -170,6 +179,10 @@ func (d *fakeDocker) Remove(_ context.Context, id string) error {
 	defer d.mu.Unlock()
 	d.t.add("remove %s", d.ctrs[id].Labels[LabelComponent])
 	delete(d.ctrs, id)
+	return nil
+}
+
+func (d *fakeDocker) Exec(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
 	return nil
 }
 
@@ -245,11 +258,11 @@ type harness struct {
 	dir    string
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T, opts ...func(*Config)) *harness {
 	t.Helper()
 	tr := &trail{}
 	h := &harness{t: tr, docker: newFakeDocker(tr), store: &fakeStore{rows: map[string]string{}}, dir: filepath.Join(t.TempDir(), "telemetry")}
-	h.m = New(Config{
+	cfg := Config{
 		Store:   h.store,
 		Docker:  h.docker,
 		Metrics: fakeVictoria{tr, Metrics},
@@ -266,7 +279,11 @@ func newHarness(t *testing.T) *harness {
 		GrafanaURL:   "https://shed.example.com/grafana/",
 		OTLPEndpoint: "http://shed.internal:4318",
 		Log:          slog.New(slog.DiscardHandler),
-	})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	h.m = New(cfg)
 	h.m.poll = time.Millisecond
 	return h
 }

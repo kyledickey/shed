@@ -102,7 +102,7 @@ export type ServicePatch = Partial<
   >
 >;
 
-export type DeploymentTrigger = "push" | "manual" | "redeploy" | "create";
+export type DeploymentTrigger = "push" | "manual" | "redeploy" | "create" | "telemetry";
 
 export type Deployment = {
   id: string;

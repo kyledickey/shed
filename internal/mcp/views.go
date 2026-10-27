@@ -91,7 +91,7 @@ type deploymentOut struct {
 	ID            string     `json:"id"`
 	ServiceID     string     `json:"serviceId"`
 	Status        string     `json:"status" jsonschema:"queued, waiting (for CI checks), building, deploying, active (serving traffic), failed, crashed, removed (replaced by a newer deployment), canceled, or skipped (CI checks failed)"`
-	Trigger       string     `json:"trigger" jsonschema:"push, manual, redeploy, or create"`
+	Trigger       string     `json:"trigger" jsonschema:"push, manual, redeploy, create, or telemetry"`
 	CommitSHA     string     `json:"commitSha,omitempty"`
 	CommitMessage string     `json:"commitMessage,omitempty"`
 	CommitAuthor  string     `json:"commitAuthor,omitempty"`

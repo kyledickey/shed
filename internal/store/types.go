@@ -112,6 +112,9 @@ const (
 	TriggerManual   Trigger = "manual"
 	TriggerRedeploy Trigger = "redeploy"
 	TriggerCreate   Trigger = "create"
+	// TriggerTelemetry marks the one redeploy that gives a database the
+	// arguments telemetry reads query statistics with.
+	TriggerTelemetry Trigger = "telemetry"
 )
 
 // Deployment is one attempt to build and run a service.
