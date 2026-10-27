@@ -1,7 +1,12 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { Telemetry, TelemetryComponentName, TelemetrySettings } from "./types";
+import type {
+  ServiceTelemetry,
+  Telemetry,
+  TelemetryComponentName,
+  TelemetrySettings,
+} from "./types";
 
 const POLL_MS = 3000;
 const IDLE_MS = 15_000;
@@ -43,4 +48,52 @@ export function useDeleteTelemetryData() {
     mutationFn: () => api.delete("/telemetry/data"),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.telemetry }),
   });
+}
+
+export const serviceTelemetryQuery = (serviceId: string) =>
+  queryOptions({
+    queryKey: keys.serviceTelemetry(serviceId),
+    queryFn: () => api.get<ServiceTelemetry>(`/services/${serviceId}/telemetry`),
+    refetchInterval: IDLE_MS,
+  });
+
+/** useResetDashboard overwrites one of a service's dashboards with its default. */
+export function useResetDashboard(serviceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (uid: string) => api.post(`/telemetry/dashboards/${uid}/reset`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.serviceTelemetry(serviceId) }),
+  });
+}
+
+/** useRestoreDashboards recreates the default dashboards a user deleted. */
+export function useRestoreDashboards() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post("/telemetry/dashboards/restore"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["services"] }),
+  });
+}
+
+/** projectFolderUrl links to the Grafana folder of a project. */
+export const projectFolderUrl = (grafanaUrl: string, projectId: string) =>
+  `${grafanaUrl}dashboards/f/p-${projectId}/`;
+
+/** OVERVIEW_PAD_MS is how much time a deployment's Overview link shows around it. */
+const OVERVIEW_PAD_MS = 15 * 60_000;
+
+/**
+ * deploymentOverviewUrl links to a service's Overview dashboard around a
+ * deployment, or returns null if the dashboard is not listed.
+ */
+export function deploymentOverviewUrl(
+  t: ServiceTelemetry,
+  deployment: { createdAt: string; startedAt: string | null; finishedAt: string | null },
+  now = Date.now(),
+): string | null {
+  const overview = t.dashboards.find((d) => d.uid.startsWith("svc-overview-"));
+  if (!overview) return null;
+  const from = Date.parse(deployment.startedAt ?? deployment.createdAt) - OVERVIEW_PAD_MS;
+  const end = deployment.finishedAt ? Date.parse(deployment.finishedAt) + OVERVIEW_PAD_MS : now;
+  return `${overview.url}?from=${from}&to=${Math.min(end, now)}`;
 }

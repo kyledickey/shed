@@ -80,6 +80,11 @@ export const docTopics = {
     summary:
       "Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana; off keeps their data.",
   },
+  dashboards: {
+    page: "telemetry",
+    section: "folders-and-dashboards",
+    summary: "Default dashboards shed keeps per service; once you save one, shed leaves it alone.",
+  },
   telemetryDisk: {
     page: "telemetry",
     section: "retention-and-disk",

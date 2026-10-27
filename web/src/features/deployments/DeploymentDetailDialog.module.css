@@ -19,3 +19,10 @@
   color: var(--ink-3);
   font-size: var(--text-sm);
 }
+
+.grafana {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+}

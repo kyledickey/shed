@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, CircleX, RotateCcw, Square, Undo2 } from "lucide-react";
+import { Ban, ChartLine, CircleX, RotateCcw, Square, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import { invalidateDeployments } from "../../api/deployments";
 import { useLogStream } from "../../api/events";
 import { keys } from "../../api/keys";
+import { deploymentOverviewUrl, serviceTelemetryQuery } from "../../api/telemetry";
 import { isPending, type Deployment, type Service } from "../../api/types";
 import { StatusBadge } from "../../components/Badge";
 import { Button } from "../../components/Button";
@@ -45,6 +46,10 @@ export function DeploymentDetailDialog({
     enabled: !!deploymentId && !listed,
   });
   const deployment = listed ?? (deploymentId ? single.data : undefined);
+  const { data: telemetry } = useQuery({
+    ...serviceTelemetryQuery(service.id),
+    enabled: !!deploymentId,
+  });
 
   // Keep showing the last deployment while the dialog animates closed.
   const [shown, setShown] = useState(deployment);
@@ -73,6 +78,7 @@ export function DeploymentDetailDialog({
   const redeploy = redeployLabel(d);
   const pending = isPending(d.status);
   const failed = d.status === "failed" || d.status === "crashed";
+  const overview = telemetry && deploymentOverviewUrl(telemetry, d);
 
   return (
     <Dialog
@@ -90,6 +96,12 @@ export function DeploymentDetailDialog({
         <CommitMeta service={service} deployment={d}>
           <span>{formatDate(d.createdAt)}</span>
           {d.startedAt && <span>{formatDuration(d.startedAt, d.finishedAt)}</span>}
+          {overview && (
+            <a className={styles.grafana} href={overview} target="_blank" rel="noreferrer">
+              <ChartLine size={12} />
+              Open in Grafana
+            </a>
+          )}
         </CommitMeta>
       }
       footer={

@@ -373,6 +373,22 @@ export type TelemetryComponent = {
   diskBytes: number | null;
 };
 
+export type DashboardLink = {
+  uid: string;
+  title: string;
+  url: string;
+  /** Saved by a user since shed wrote it; shed no longer overwrites it. */
+  customized: boolean;
+  /** Customized, and its default has changed since. */
+  outdated: boolean;
+};
+export type ServiceTelemetry = {
+  /** "" while telemetry is off. */
+  folderUrl: string;
+  dashboards: DashboardLink[];
+  firingAlerts: { name: string; since: string }[];
+};
+
 export type Telemetry = {
   settings: TelemetrySettings;
   /** Empty while never enabled. */
