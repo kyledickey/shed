@@ -115,6 +115,8 @@ type Control interface {
 	SetTelemetry(ctx context.Context, s observability.Settings) (observability.Status, error)
 	RestartTelemetryComponent(ctx context.Context, name string) (observability.Status, error)
 	DeleteTelemetryData(ctx context.Context) error
+	LogHistory(ctx context.Context, serviceID string, q control.LogQuery) (control.LogPage, error)
+	TraceExploreURL(ctx context.Context, traceID string) (string, error)
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -281,6 +283,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/deployments/{id}/cancel", s.cancelDeployment)
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
+	authed("GET /api/services/{id}/logs/history", s.logHistory)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
 	authed("GET /api/host/metrics", s.hostMetrics)
 	authed("GET /api/logs", s.shedLogs)
@@ -313,6 +316,7 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/telemetry", s.putTelemetry)
 	authed("POST /api/telemetry/components/{name}/restart", s.restartTelemetryComponent)
 	authed("DELETE /api/telemetry/data", s.deleteTelemetryData)
+	authed("GET /api/telemetry/trace/{traceId}", s.traceRedirect)
 	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))
 
 	authed("GET /api/github/repos", s.repos)

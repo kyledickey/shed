@@ -282,11 +282,11 @@ func (p *Plane) LogHistory(ctx context.Context, serviceID string, q LogQuery) (L
 	if err != nil {
 		return LogPage{}, err
 	}
-	filter, err := serviceLogFilter(svc.ID, q.Search, q.Level)
-	if err != nil {
+	if _, err := p.requireTelemetry(ctx); err != nil {
 		return LogPage{}, err
 	}
-	if _, err := p.requireTelemetry(ctx); err != nil {
+	filter, err := serviceLogFilter(svc.ID, q.Search, q.Level)
+	if err != nil {
 		return LogPage{}, err
 	}
 	end := q.To

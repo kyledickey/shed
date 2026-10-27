@@ -253,12 +253,14 @@ func run() error {
 		return err
 	}
 
+	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
+	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
 	stack := observability.New(observability.Config{
 		Store:   st,
 		Docker:  dc,
 		Metrics: vm,
-		Logs:    victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil),
-		Traces:  victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil),
+		Logs:    vl,
+		Traces:  vt,
 		Grafana: func(password string) observability.GrafanaAPI {
 			return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
 		},
@@ -293,6 +295,7 @@ func run() error {
 		Variables:  vars,
 		Audit:      auditLog,
 		Telemetry:  stack,
+		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt, Dashboards: stack},
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
