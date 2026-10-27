@@ -44,6 +44,24 @@ Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Ope
 
 Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
 
+## Requests at the edge
+
+While telemetry is on, every request the proxy serves is measured, with no change to your apps. shed looks up the request's host in your domains: a service's domain counts for that service, the dashboard's host counts for shed, and any other host counts as `unrouted` under shed.
+
+Metrics, labeled with the service's `shed_*` labels and `shed_source="edge"`:
+
+| Metric                               | Labels                       |
+| ------------------------------------ | ---------------------------- |
+| `shed_http_requests_total`           | `host`, `method`, `code`     |
+| `shed_http_request_duration_seconds` | `host`, `code` (a histogram) |
+| `shed_http_response_bytes_total`     | `host`                       |
+
+The path is never a label. A method other than the standard ones is counted as `other`.
+
+Each request is also an access record in VictoriaLogs, with `shed.source=edge`: `client_ip` (the visitor's address with [`proxy.cloudflare`](/docs/networking#cloudflare) on), `method`, `host`, `path`, `query`, `status`, `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`, `tls_version`, and `trace_id`. The path, query, referer, and user agent have every variable value masked, like shed's own log. No other request header is recorded, so cookies and `Authorization` never are, and neither are bodies. Records wait in a queue of 4096 and ship once a second. When the store falls behind and the queue is full, new records are dropped and counted in `shed_telemetry_dropped_total{reason="edge_queue_full"}`; the metrics still count every request.
+
+Each routed request also gets a trace. The proxy starts a server span named after the method, or continues the `traceparent` the client sent. It passes its own `traceparent` to your app, so spans your app's OpenTelemetry SDK records join the same trace. Requests for unrouted hosts get no span.
+
 ## Retention and disk
 
 | Setting                  | Default | Range          |

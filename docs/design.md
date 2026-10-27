@@ -116,7 +116,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/store` | SQLite (modernc), embedded migrations, CRUD on plain structs | — |
 | `internal/docker` | Docker Engine ops via `github.com/moby/moby/client` | — |
 | `internal/build` | clone a commit, build an image (Dockerfile or Railpack) | — |
-| `internal/proxy` | embedded Caddy; `Apply(routes)` | — |
+| `internal/proxy` | embedded Caddy; `Apply(routes)`, access entries and tracing while telemetry is on | — |
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
@@ -135,7 +135,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
 | `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
-| `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/host types |
+| `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/host/proxy/telemetry types |
 | `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/deploy/github/metrics/update/store/audit |
 | `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/audit/observability |
@@ -1282,8 +1282,8 @@ deployment), refreshed on every activation and every 30 s. An unknown source
 answers 403 and is counted as dropped (`unknown_source`). The `shed.*`
 attributes are set from the index; `service.name` is kept if the sender set
 one, else it becomes the service name. On the loopback listener, records are
-attributed to shed, except edge spans, attributed by their `http.host`
-through the domain table.
+attributed to shed, except edge spans (resource `webengine.name = "Caddy"`),
+attributed by their `server.address` through the domain table.
 
 Masking: string attribute values, span status messages, and log bodies are masked with the saved
 values of every variable in the sender's project and the values its container
@@ -1346,26 +1346,64 @@ lost.
 
 ### Edge
 
-`internal/proxy` hands each access log entry to a callback (a Caddy log
-writer module contained in the proxy package) instead of a file. For every
-request, `internal/observability` resolves the host to a service through the
-domain table (the dashboard host to shed, unrouted hosts to no service) and:
+While telemetry is on, `internal/proxy` enables Caddy's access log on its
+server and sends it to a log writer module registered in the proxy package
+(`caddy.logging.writers.shed_access`) instead of a file. The writer parses
+each JSON entry into an `AccessEntry` and hands it to a callback. Caddy's own
+log (`caddy.log`) excludes the access logger. Turning telemetry on or off
+reloads the proxy with the last applied routes.
 
-- records `shed_http_requests_total{shed_service_id, host, method, code}`,
-  `shed_http_request_duration_seconds` (histogram, same labels without
-  `method`), and `shed_http_response_bytes_total`; the path is never a label;
-- ships an access record (`shed.source=edge`): client IP (after
-  `proxy.cloudflare` handling), method, host, path and query (masked), status,
-  duration, bytes in and out, user agent, referer, TLS version, trace ID
+For every entry, `internal/observability` resolves the host to a service
+through the domain table. The dashboard host maps to shed. Any other host is
+unrouted, and its label is `host="unrouted"` because clients choose the host
+freely. The table is read again after every route apply and every 30 s.
+The edge then:
+
+- records `shed_http_requests_total{host, method, code}`,
+  `shed_http_request_duration_seconds` (a histogram with the same labels
+  except `method`), and `shed_http_response_bytes_total{host}`. Each also
+  carries the service's `shed.*` labels and `shed_source="edge"` as data
+  point attributes. The path is never a label, and a method outside the
+  standard nine is `other`. An unrouted request has empty service labels.
+  VictoriaMetrics drops empty labels, so it counts under shed's own
+  resource labels (`shed_service_id="shed"`);
+- ships an access record (`shed.source=edge`, stream fields as in
+  [Label schema](#label-schema), `_msg` = `<method> <path> <status>`): client
+  IP (after `proxy.cloudflare` handling), method, host, path, query, status,
+  duration, bytes in and out, user agent, referer, TLS version, and trace ID
   (fields `client_ip`, `method`, `host`, `path`, `query`, `status`,
-  `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`,
-  `tls_version`, `trace_id`). Request headers and bodies are not recorded.
+  `duration` in seconds, `bytes_in` (request body), `bytes_out` (response
+  body), `user_agent`, `referer`, `tls_version` such as `TLS 1.3`,
+  `trace_id`). Path, query, referer, and user agent are masked with every
+  project's values, like `ShedLog`. A value that appears only
+  percent-decoded is masked in decoded form. Unrouted records have empty
+  `shed.*` service fields. Request headers other than the user agent and
+  referer, and bodies, are not recorded.
 
-Every app route also gets Caddy's tracing handler: it starts a server span
-per request, or continues an incoming `traceparent`, forwards `traceparent`
-upstream, and exports to the loopback listener. Caddy's tracer is configured
-through process environment, which `internal/proxy` sets before loading the
-config (process-global state stays inside the proxy package).
+Metrics are recorded on the request's goroutine. Records go through a queue
+of 4096 to a worker that ships batches of up to 1000 records or 1 s to
+VictoriaLogs' JSON lines endpoint. When the queue is full, the record is
+dropped and counted as
+`shed_telemetry_dropped_total{signal="logs", reason="edge_queue_full"}` with
+the service's labels. Caddy is never blocked. A batch the store rejects is
+logged and dropped.
+
+Every route, the dashboard's included, also gets Caddy's tracing handler
+before `reverse_proxy`. The handler starts a server span named after the
+method, or continues an incoming `traceparent`. It forwards its own span as
+`traceparent` upstream, and exports OTLP/HTTP to
+`http://127.0.0.1:<otlp_port>/v1/traces`. The catch-all 404 for unrouted
+hosts has no tracing handler. Caddy's spans carry the host in `server.address`
+(port stripped), and their resource has `webengine.name = "Caddy"`, which
+tells them apart from shed's own spans on the loopback listener. Caddy reads
+its exporter settings (`OTEL_TRACES_EXPORTER`,
+`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_PROPAGATORS=tracecontext`) only from the process environment. Caddy
+creates its tracer provider when the first tracing handler is provisioned and
+shuts it down when the last one is removed. `internal/proxy` therefore sets
+these variables only for the duration of a config load, then restores the
+previous values. Processes shed starts later, such as builds, never inherit
+them.
 
 ### Databases
 
