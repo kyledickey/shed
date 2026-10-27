@@ -39,6 +39,7 @@ import (
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
+	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
@@ -180,6 +181,10 @@ func run() error {
 		log.Warn("load 1Password", "err", err)
 	}
 
+	// The telemetry stack is built below; the deployer asks it at deploy time.
+	var stack *observability.Manager
+	otlpEndpoint := fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort)
+
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
 		Store:  st,
@@ -203,7 +208,12 @@ func run() error {
 		LogLimit:        int64(cfg.Deployments.LogMaxMB) << 20,
 		KeepDeployments: cfg.Deployments.Keep,
 		Dashboard:       dashboardRoute(cfg.Server),
-		Log:             log,
+		Telemetry: func(ctx context.Context) (bool, error) {
+			s, err := stack.Settings(ctx)
+			return s.Enabled, err
+		},
+		OTLPEndpoint: otlpEndpoint,
+		Log:          log,
 	})
 	defer deployer.Stop()
 
@@ -251,12 +261,15 @@ func run() error {
 		return err
 	}
 
-	stack := observability.New(observability.Config{
+	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
+	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
+	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
+	stack = observability.New(observability.Config{
 		Store:   st,
 		Docker:  dc,
-		Metrics: victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil),
-		Logs:    victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil),
-		Traces:  victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil),
+		Metrics: vm,
+		Logs:    vl,
+		Traces:  vt,
 		Grafana: func(password string) observability.GrafanaAPI {
 			return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
 		},
@@ -269,7 +282,7 @@ func run() error {
 		Dir:          filepath.Join(dataDir, "telemetry"),
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   strings.TrimRight(cfg.Server.URL, "/") + "/grafana/",
-		OTLPEndpoint: fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort),
+		OTLPEndpoint: otlpEndpoint,
 		Log:          log,
 	})
 
@@ -293,6 +306,33 @@ func run() error {
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
 	})
+
+	gateway := observability.NewGateway(observability.GatewayConfig{
+		Store:    st,
+		Docker:   dc,
+		Masks:    plane,
+		Settings: stack.Settings,
+		Port:     cfg.Telemetry.OTLPPort,
+		Log:      log,
+	})
+	receiver, err := otlp.New(otlp.Config{
+		Attribute: gateway.Attribute,
+		Mask:      gateway.Mask,
+		Caps:      gateway.Caps,
+		Forwarder: observability.NewForwarder(vm, vt, vl),
+		Logger:    log,
+	})
+	if err != nil {
+		return err
+	}
+	stack.AddWorker(func(ctx context.Context) { gateway.Run(ctx, receiver) })
+	stack.AddWorker(observability.NewLogShipper(observability.LogShipperConfig{
+		Store: st, Docker: dc, Logs: vl, Masks: plane, Cap: receiver, Log: log,
+	}).Run)
+	stack.AddWorker(observability.NewAuditMirror(st, vl, log).Run)
+	// shed's own telemetry flows through the loopback listener, which the
+	// gateway opens once the stack is up.
+	stack.OnEnabled(providers.SetEnabled)
 
 	server, err := api.New(ctx, api.Config{
 		Control:  plane,
