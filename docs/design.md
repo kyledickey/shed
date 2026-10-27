@@ -1415,9 +1415,13 @@ service.
 ### shed's own telemetry
 
 `internal/telemetry` builds shed's tracer, meter, and logger providers
-(resource `service.name=shed`, `service.version`, `host.name`), exporting
-OTLP/HTTP to the loopback listener. The exporters are switchable: while
-telemetry is off they drop everything without buffering. Providers are passed
+(resource `service.name=shed`, `service.version`, `host.name`, and the
+`shed.service.id`, `shed.service.kind`, and `shed.source` attributes of
+"Label schema", all set to `shed`), exporting OTLP/HTTP to the
+loopback listener. The providers are switchable and start off: while
+telemetry is off the sampler drops spans, the log processor refuses records,
+and the exporters drop anything already queued, so nothing is exported or
+buffered. Providers also register the Go runtime metrics. Providers are passed
 to the packages that instrument (`trace.TracerProvider`,
 `metric.MeterProvider` from the OpenTelemetry API); no package sets the
 OpenTelemetry globals, and tests pass no-op providers. The gateway itself
