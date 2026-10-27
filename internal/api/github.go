@@ -298,7 +298,9 @@ func (s *Server) saveApp(ctx context.Context, client *github.Client, how string)
 
 // webhook handles GitHub deliveries: a push to a branch deploys every app
 // service that tracks it.
-func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
+// receiveWebhook verifies a delivery and deploys the services a push is for,
+// recording what it learns in d.
+func (s *Server) receiveWebhook(w http.ResponseWriter, r *http.Request, d *delivery) error {
 	// Keep the deadline through net/http's post-handler body drain. The server
 	// resets deadlines before reading the next request on this connection.
 	controller := http.NewResponseController(w)
@@ -337,8 +339,10 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		s.deny(r, "webhook.signature.invalid")
 		return errorf(http.StatusUnauthorized, "invalid signature")
 	}
+	d.event = r.Header.Get("X-GitHub-Event")
 	r = r.WithContext(audit.WithActor(r.Context(), audit.Actor{Kind: audit.GitHub, IP: audit.ClientIP(r)}))
-	if r.Header.Get("X-GitHub-Event") != "push" {
+	if d.event != "push" {
+		d.ignored = true
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	}
@@ -347,6 +351,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		return errorf(http.StatusBadRequest, "invalid push event")
 	}
 	if ev.Deleted || ev.Branch == "" || ev.SHA == "" {
+		d.ignored = true
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	}
@@ -375,12 +380,12 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 			continue // deleted meanwhile
 		}
 		if err != nil {
-			s.log.Error("store push", "service", svc.ID, "err", err)
+			s.log.ErrorContext(r.Context(), "store push", "service", svc.ID, "err", err)
 			return errorf(http.StatusServiceUnavailable, "could not store delivery; redeliver it later")
 		}
 		s.control.DeployPush(r.Context(), svc.ID)
 	}
-	s.log.Info("push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
+	s.log.InfoContext(r.Context(), "push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
 	w.WriteHeader(http.StatusAccepted)
 	return nil
 }

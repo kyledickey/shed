@@ -7,8 +7,10 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp/standard" // Registers the HTTP app and reverse_proxy.
@@ -16,6 +18,8 @@ import (
 	_ "github.com/caddyserver/caddy/v2/modules/caddytls"           // Registers TLS automation and issuers.
 	_ "github.com/caddyserver/caddy/v2/modules/filestorage"        // Registers file_system storage.
 	_ "github.com/caddyserver/caddy/v2/modules/logging"            // Registers log writers.
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 // Route sends requests for a host name to an upstream.
@@ -52,11 +56,19 @@ type Proxy struct {
 
 	mu   sync.Mutex
 	last []byte // Config JSON currently loaded, or nil.
+
+	applyDuration metric.Float64Histogram
 }
 
 // New returns a Proxy that is not yet running. Apply starts it.
 func New(cfg Config) *Proxy {
-	return &Proxy{cfg: cfg}
+	// Creating an instrument fails only for an invalid name, and the
+	// instrument returned works regardless.
+	d, _ := otel.Meter("github.com/kyledickey/shed/internal/proxy").Float64Histogram("shed_route_apply_duration_seconds",
+		metric.WithDescription("Duration of loading a changed route set into Caddy."),
+		metric.WithUnit("s"),
+		metric.WithExplicitBucketBoundaries(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10))
+	return &Proxy{cfg: cfg, applyDuration: d}
 }
 
 // Apply makes the proxy serve exactly routes, starting it if necessary.
@@ -74,7 +86,10 @@ func (p *Proxy) Apply(routes []Route) error {
 	if bytes.Equal(cfg, p.last) {
 		return nil
 	}
-	if err := caddy.Load(cfg, false); err != nil {
+	start := time.Now()
+	err = caddy.Load(cfg, false)
+	p.applyDuration.Record(context.Background(), time.Since(start).Seconds())
+	if err != nil {
 		return fmt.Errorf("proxy: load config: %w", err)
 	}
 	p.last = cfg

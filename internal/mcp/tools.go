@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,11 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/store"
@@ -141,10 +147,22 @@ func add[In, Out any](s *Server, name, title, description string, h sdk.ToolHand
 }
 
 // audited records every call of h, with its arguments, as an mcp.call audit
-// event of the agent calling it.
+// event of the agent calling it. It also traces the call, without its
+// arguments, and counts it in shed_mcp_tool_calls_total.
 func audited[In, Out any](s *Server, name string, h sdk.ToolHandlerFor[In, Out]) sdk.ToolHandlerFor[In, Out] {
 	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		ctx, span := otel.Tracer(scope).Start(ctx, "tools/call "+name, trace.WithAttributes(
+			attribute.String("mcp.method.name", "tools/call"),
+			attribute.String("gen_ai.tool.name", name),
+		))
+		defer span.End()
 		res, out, err := h(ctx, req, in)
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		actor := audit.ActorFrom(ctx)
+		s.toolCalls.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("tool", name), attribute.String("client", cmp.Or(actor.ClientName, actor.ClientID))))
 		e := audit.Event{Action: "mcp.call", Outcome: audit.Result(err), Detail: map[string]any{"tool": name}}
 		var args map[string]any
 		if raw, merr := json.Marshal(in); merr == nil && json.Unmarshal(raw, &args) == nil && len(args) > 0 {

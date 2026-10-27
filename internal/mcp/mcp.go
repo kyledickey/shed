@@ -16,6 +16,8 @@ import (
 	"net/http"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/control"
@@ -59,14 +61,21 @@ type Config struct {
 
 // Server is the MCP server.
 type Server struct {
-	backend Backend
-	log     *slog.Logger
-	server  *sdk.Server
+	backend   Backend
+	log       *slog.Logger
+	server    *sdk.Server
+	toolCalls metric.Int64Counter
 }
+
+const scope = "github.com/kyledickey/shed/internal/mcp"
 
 // New returns a Server with every tool registered.
 func New(cfg Config) *Server {
 	s := &Server{backend: cfg.Backend, log: cfg.Log}
+	// Creating an instrument fails only for an invalid name, and the
+	// instrument returned works regardless.
+	s.toolCalls, _ = otel.Meter(scope).Int64Counter("shed_mcp_tool_calls_total",
+		metric.WithDescription("MCP tool calls, by tool and OAuth client."))
 	s.server = sdk.NewServer(&sdk.Implementation{Name: "shed", Title: "shed", Version: cfg.Version}, &sdk.ServerOptions{
 		Instructions: instructions,
 		Logger:       cfg.Log,
