@@ -178,6 +178,10 @@ func (h *Handler) logs(ctx context.Context, req *collogspb.ExportLogsServiceRequ
 			for _, lr := range sl.LogRecords {
 				if !a.Trusted {
 					lr.Attributes = dropReserved(lr.Attributes)
+					// VictoriaLogs flattens a map body into fields too.
+					if kv := lr.Body.GetKvlistValue(); kv != nil {
+						kv.Values = dropReserved(kv.Values)
+					}
 				}
 				maskAttrs(lr.Attributes, mask)
 				maskValue(lr.Body, mask)

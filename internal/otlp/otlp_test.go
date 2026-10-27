@@ -926,6 +926,7 @@ func TestReservedAttributes(t *testing.T) {
 			sl := l.ResourceLogs[0].ScopeLogs[0]
 			sl.Scope = &commonpb.InstrumentationScope{Attributes: attrs()}
 			sl.LogRecords[0].Attributes = attrs()
+			sl.LogRecords[0].Body = kvlist(attrs()...)
 			if w := f.post("/v1/logs", l); w.Code != 200 {
 				t.Fatalf("logs status = %d: %s", w.Code, w.Body)
 			}
@@ -935,6 +936,9 @@ func TestReservedAttributes(t *testing.T) {
 			}
 			if got := keys(sl.Scope.GetAttributes()); !slices.Equal(got, tt.want) {
 				t.Errorf("log scope attributes = %v, want %v", got, tt.want)
+			}
+			if got := keys(sl.LogRecords[0].Body.GetKvlistValue().GetValues()); !slices.Equal(got, tt.want) {
+				t.Errorf("log body keys = %v, want %v", got, tt.want)
 			}
 		})
 	}
