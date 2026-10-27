@@ -71,7 +71,7 @@ export function DependencyDiagram() {
         flow
         tone="accent"
       />
-      <Node x={40} y={176} w={150} h={44} title="auth" sub="github" />
+      <Node x={40} y={176} w={150} h={44} title="auth" sub="audit · github" />
       <Edge
         points={[
           [115, 132],
@@ -119,7 +119,7 @@ export function DependencyDiagram() {
         );
       })}
       <Note x={400} y={424} anchor="middle">
-        api, control, and mcp also import store, github, update, and other leaf packages directly.
+        api, control, and mcp also import audit, store, github, update, and other leaf packages.
       </Note>
     </Diagram>
   );

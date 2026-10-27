@@ -317,3 +317,29 @@ export type OAuthGrant = {
   /** Null until the client first uses an access token. */
   lastUsedAt: string | null;
 };
+
+export type AuditActorKind = "user" | "agent" | "github" | "system" | "docker" | "anonymous";
+export type AuditOutcome = "ok" | "failed" | "denied";
+
+/** One audit log event. detail holds names and changed fields or keys, never values. */
+export type AuditEvent = {
+  id: number;
+  ts: string;
+  actorKind: AuditActorKind;
+  /** GitHub login of a user or agent, "" otherwise. */
+  actor: string;
+  actorIp: string;
+  /** Dotted, e.g. service.variables.update. */
+  action: string;
+  outcome: AuditOutcome;
+  projectId: string;
+  serviceId: string;
+  /** ID of what was acted on. */
+  target: string;
+  detail: Record<string, unknown>;
+};
+
+/** A page of audit events, newest first. Pass next as before for the next page; null at the end. */
+export type AuditPage = { events: AuditEvent[]; next: number | null };
+
+export type AuditSettings = { retentionDays: number };

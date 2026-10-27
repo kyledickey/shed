@@ -35,6 +35,7 @@ internal/host      host resource usage from procfs, sysfs, and statfs
 internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
 internal/backup    backups and restores: dumps, archives, zstd, age, schedules, S3
+internal/audit     audit log: actor in request context, recording, retention
 internal/update    release checks, verified downloads, replacing the binary
 internal/auth      sessions, GitHub sign-in, middleware, OAuth server for agents
 internal/control   operations and rules behind every interface (control.Plane)

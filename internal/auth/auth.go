@@ -105,9 +105,9 @@ type Auth struct {
 }
 
 // New returns an Auth that keeps sessions in store and records sign-ins,
-// grants, and denials in rec. oauth reports the GitHub
-// client, or false until the GitHub App has been configured. baseURL is the
-// public dashboard URL; cookies are marked Secure when it is https.
+// grants, and denials in rec. oauth reports the GitHub client, or false
+// until the GitHub App has been configured. baseURL is the public dashboard
+// URL; cookies are marked Secure when it is https.
 // allowedUsers are the GitHub logins permitted to sign in, compared without
 // regard to case.
 func New(store Store, rec Audit, oauth func() (OAuth, bool), baseURL string, allowedUsers []string, log *slog.Logger) *Auth {

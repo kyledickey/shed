@@ -14,8 +14,8 @@ import (
 // an OAuth access token, in the Authorization header, that was issued for
 // resource and belongs to a permitted user. It makes the user available
 // through [UserFrom], the token's scopes through [ScopesFrom], and the agent
-// through [audit.ActorFrom]. Cookies are ignored. Other requests get a 401 whose WWW-Authenticate header points
-// clients at the resource's metadata.
+// through [audit.ActorFrom]. Cookies are ignored. Other requests get a 401
+// whose WWW-Authenticate header points clients at the resource's metadata.
 func (a *Auth) RequireBearer(resource string) func(http.Handler) http.Handler {
 	metadata := a.baseURL + "/.well-known/oauth-protected-resource"
 	if u, err := url.Parse(resource); err == nil {

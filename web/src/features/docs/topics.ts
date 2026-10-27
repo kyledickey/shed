@@ -120,6 +120,12 @@ export const docTopics = {
     section: "sheds-own-log",
     summary: "shed's own log: the last 1000 lines are kept in memory and streamed live.",
   },
+  audit: {
+    page: "audit",
+    section: "what-is-recorded",
+    summary:
+      "Every change, sign-in, denial, secret read, and agent call: who, from where, and the outcome.",
+  },
   backupMethods: {
     page: "backups",
     section: "backup-methods",

@@ -133,11 +133,12 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
-| `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
+| `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
+| `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
 | `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/host types |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword types |
-| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions | control via interface + types of control/deploy/github/metrics/update |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit types |
+| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/deploy/github/metrics/update/store/audit |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/audit |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -1454,36 +1455,46 @@ record's context. `shed.log` is unchanged.
 
 `audit_events` records one row per mutation, sign-in, denial, and
 security-relevant read, written by `internal/control` after the operation
-(outcome `ok` or `failed`) and by `internal/auth` and `internal/api` for
-denials. The actor comes from the request context: a signed-in user (`user`,
-login), an agent token (`agent`, login, with the OAuth client in `detail`), a
-GitHub delivery (`github`), shed itself (`system`: boot reconciliation,
-schedules, retries), Docker (`docker`), or no one (`anonymous`). `actor_ip` is
-the client IP the proxy resolved. `detail` holds names at the time of the
-event and changed field names, never secret values.
+(outcome `ok` or `failed`, including requests it rejects as invalid), by
+`internal/auth` for sign-ins, grants, and denials, by `internal/api` for
+first-run setup and webhook denials, and by `internal/mcp` for tool calls. The actor comes
+from the request context (`internal/audit`): every HTTP request starts
+`anonymous`; `Require` makes it a signed-in user (`user`, login),
+`RequireBearer` an agent token (`agent`, login, with the OAuth client as
+`detail.client` and `detail.clientId`), and a webhook with a valid signature
+`github`. A context without an actor is shed itself (`system`, such as a push
+deployed on retry). Docker (`docker`) acts in the Docker events below.
+`actor_ip` is the client IP the proxy resolved, as for rate limits but
+without reducing IPv6 to its /64. `detail` holds names at the time of the
+event (service, project, host, mount path, vault) and changed field names or
+variable keys (`added`, `changed`, `removed`), never values: an updated start
+command is recorded as `fields: ["startCommand"]`, a new S3 secret as
+`fields: ["secretAccessKey"]`.
 
 | Action | When |
 |---|---|
 | `auth.signin`, `auth.signin.denied`, `auth.logout` | sign-in flow |
 | `setup.token.invalid`, `setup.github` | first-run setup |
-| `oauth.grant`, `oauth.denied`, `oauth.revoke` | agent authorization |
+| `oauth.grant`, `oauth.denied`, `oauth.revoke` | agent authorization; `oauth.denied` also for a refused token request and an invalid bearer token |
 | `webhook.signature.invalid` | GitHub delivery with a bad signature |
 | `project.create`, `.rename`, `.delete` | |
-| `service.create`, `.update` (changed fields), `.delete`, `.stop`, `.start`, `.restart` | |
+| `service.create`, `.update` (changed fields), `.delete`, `.stop`, `.start`, `.restart`, `service.fence.clear` | |
 | `service.variables.update` (changed keys), `service.variables.read`, `service.variables.resolved.read` | |
-| `deployment.create`, `.redeploy`, `.cancel` | |
+| `deployment.create`, `.redeploy`, `.cancel` | manual, and each push deployed (not each deferred retry) |
 | `domain.create`, `.delete`, `volume.create`, `.delete` | |
 | `backup.run`, `.download`, `.restore`, `.delete`, `backup.policy.update`, `backup.settings.update`, `backup.key.read` | |
 | `onepassword.connect`, `.disconnect` | |
 | `update.download`, `.install`, `update.settings.update` | |
+| `audit.settings.update` | retention changed |
 | `telemetry.enable`, `.disable`, `.settings.update`, `.data.delete`, `telemetry.dashboard.reset` | |
 | `mcp.call` (tool and arguments) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
 Denied events from anonymous actors are coalesced to one row per action and
 IP per minute, with `detail.count`. Rows older than the audit retention
-(default 365 days, `PUT /api/audit/settings`) are pruned hourly. Server →
-Audit lists them with filters. While telemetry is on, a shipper copies rows
+(setting `audit`, JSON `{retentionDays}`: default 365, 1 to 3650 days,
+`PUT /api/audit/settings`) are pruned at startup and hourly. Server → Audit
+lists them with filters. While telemetry is on, a shipper copies rows
 with an `id` above the `audit_mirror_cursor` setting into VictoriaLogs
 (`shed.source=audit`) and advances the cursor after each acknowledged batch,
 so the mirror catches up after any outage.
@@ -1860,9 +1871,9 @@ DELETE /api/telemetry/data                      204  (containers, volumes, dashb
 POST   /api/telemetry/dashboards/{uid}/reset    204  (overwrite with the current default; 404 if not shed's)
 POST   /api/telemetry/dashboards/restore        204  (recreate default dashboards the user deleted)
 GET    /api/telemetry/trace/{traceId}           302 → Grafana Explore
-GET    /api/audit?before=&limit=&actor=&action=&service=&outcome=  → AuditPage  (newest first; limit default 100, at most 500)
+GET    /api/audit?before=&limit=&actor=&action=&service=&outcome=  → AuditPage  (newest first; limit default 100, at most 500; actor = login or actor kind; action = action or dotted prefix; service = service ID; 400 for a bad number or outcome)
 GET    /api/audit/settings                      → AuditSettings
-PUT    /api/audit/settings      AuditSettings   → AuditSettings
+PUT    /api/audit/settings      AuditSettings   → AuditSettings  (400 unless 1 to 3650 days)
 GET    /grafana/*, other methods                Grafana, reverse-proxied as the signed-in user (see Telemetry → Grafana)
 
 GET    /api/github/repos                        → Repo[]
@@ -1908,7 +1919,9 @@ off; the Origin check and the bearer token take its place.
 
 `initialize` returns instructions that explain projects, services,
 deployments, and how to diagnose a failed deploy. Every tool is annotated
-`readOnlyHint` and calls a `control.Plane` method. Results are compact JSON
+`readOnlyHint` and calls a `control.Plane` method. Every call is recorded as
+an `mcp.call` audit event of the agent, with the tool, its arguments, and
+`service_id` as the event's service. Results are compact JSON
 (camelCase; empty strings, zero settings, and false flags left out) as both
 `structuredContent` and a text block, except the log tools, which return the
 lines as one text block. Not-found, invalid, and conflict errors become tool
@@ -1932,7 +1945,7 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
 | `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
 | `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
-| `audit_events` | `actor?`, `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}` |
+| `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
 | `telemetry_status` | — | `{enabled, components: [{name, state, version}], ingest, dropped}` |
 | `query_metrics` | `query` (MetricsQL), `time?` or `start?`/`end?`/`step?` | `{resultType, series: [{labels, values: [[t, v]]}]}`; at most 500 series × 500 points |
 | `query_logs` | `query` (LogsQL), `start?`, `end?`, `limit?` (default 200, at most 2000) | text: one JSON record per line |

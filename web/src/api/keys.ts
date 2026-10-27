@@ -17,4 +17,6 @@ export const keys = {
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
   oauthRequest: (id: string) => ["oauth", "requests", id] as const,
   oauthGrants: ["oauth", "grants"] as const,
+  audit: (filters: object) => ["audit", "events", filters] as const,
+  auditSettings: ["audit", "settings"] as const,
 };
