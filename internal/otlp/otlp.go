@@ -230,3 +230,20 @@ func (h *Handler) masker(src Source) func(string) string {
 	}
 	return h.cfg.Mask(src)
 }
+
+// AdmitLogs takes n log records from serviceID's log cap, the bucket its
+// OTLP logs draw from, and returns how many fit. The rest are counted as
+// dropped (rate_cap). Records shed collects itself, such as container
+// output, use it so one cap covers everything a service logs.
+func (h *Handler) AdmitLogs(ctx context.Context, serviceID string, n int) int {
+	k := h.take(serviceID, n, h.caps(serviceID).LogRecordsPerSecond, func(s *service) *bucket { return &s.logs })
+	h.drop(ctx, serviceID, "logs", reasonRateCap, int64(n-k))
+	return k
+}
+
+// CountIngested adds n records of signal ("traces", "metrics", or "logs")
+// that a store accepted to shed_telemetry_ingested_total, for records shed
+// collects itself.
+func (h *Handler) CountIngested(ctx context.Context, signal string, n int) {
+	h.ingested.Add(ctx, int64(n), metric.WithAttributes(attribute.String("signal", signal)))
+}

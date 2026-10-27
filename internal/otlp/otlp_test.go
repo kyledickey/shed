@@ -1184,3 +1184,21 @@ func TestJSONHexIDs(t *testing.T) {
 		}
 	})
 }
+
+func TestAdmitLogsSharesTheLogCap(t *testing.T) {
+	f := newFixture(t, func(c *otlp.Config) {
+		c.Caps = func(string) otlp.Caps { return otlp.Caps{LogRecordsPerSecond: 10} }
+	})
+	if got := f.h.AdmitLogs(context.Background(), app.ServiceID, 6); got != 6 {
+		t.Fatalf("admitted %d of 6, want 6", got)
+	}
+	w := f.post("/v1/logs", nLogs(6))
+	resp := &collogspb.ExportLogsServiceResponse{}
+	decodeResponse(t, w.Body.Bytes(), false, resp)
+	if got := resp.GetPartialSuccess().GetRejectedLogRecords(); got != 2 {
+		t.Errorf("OTLP logs rejected %d after 6 admitted, want 2", got)
+	}
+	if got := f.h.AdmitLogs(context.Background(), app.ServiceID, 3); got != 0 {
+		t.Errorf("admitted %d with the bucket empty, want 0", got)
+	}
+}
