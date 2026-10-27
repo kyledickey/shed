@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -31,16 +32,20 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/internal/variables"
+	"github.com/kyledickey/shed/internal/victoria"
 	"github.com/kyledickey/shed/web"
 )
 
@@ -88,11 +93,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	tail := logtail.New(shedLogTail)
-	log, err := newLogger(cfg.Log, config.LogFile(*configPath), tail)
+	hostname, _ := os.Hostname()
+	providers, err := telemetry.New(context.Background(), telemetry.Config{
+		Endpoint: fmt.Sprintf("http://127.0.0.1:%d", cfg.Telemetry.OTLPPort),
+		Version:  version,
+		Host:     hostname,
+	})
 	if err != nil {
 		return err
 	}
+	providers.Register()
+	tail := logtail.New(shedLogTail)
+	log, err := newLogger(cfg.Log, config.LogFile(*configPath), tail, providers)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := providers.Shutdown(context.Background()); err != nil {
+			log.Warn("shut down telemetry providers", "err", err)
+		}
+	}()
 	log.Info("starting shed", "version", version, "config", *configPath)
 	binary, err := executable()
 	if err != nil {
@@ -231,6 +251,28 @@ func run() error {
 		return err
 	}
 
+	stack := observability.New(observability.Config{
+		Store:   st,
+		Docker:  dc,
+		Metrics: victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil),
+		Logs:    victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil),
+		Traces:  victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil),
+		Grafana: func(password string) observability.GrafanaAPI {
+			return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
+		},
+		Addrs: observability.Addrs{
+			Metrics: cfg.Telemetry.MetricsAddr,
+			Logs:    cfg.Telemetry.LogsAddr,
+			Traces:  cfg.Telemetry.TracesAddr,
+			Grafana: cfg.Telemetry.GrafanaAddr,
+		},
+		Dir:          filepath.Join(dataDir, "telemetry"),
+		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
+		GrafanaURL:   strings.TrimRight(cfg.Server.URL, "/") + "/grafana/",
+		OTLPEndpoint: fmt.Sprintf("http://shed.internal:%d", cfg.Telemetry.OTLPPort),
+		Log:          log,
+	})
+
 	plane := control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
@@ -246,6 +288,7 @@ func run() error {
 		},
 		Variables:  vars,
 		Audit:      auditLog,
+		Telemetry:  stack,
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
@@ -258,12 +301,13 @@ func run() error {
 			restarting.Store(true)
 			stop()
 		},
-		Auth:    authn,
-		GitHub:  gh,
-		BaseURL: cfg.Server.URL,
-		Web:     web.Dist(),
-		MCP:     mcp.New(mcp.Config{Backend: plane, Version: version, Log: log}).Handler(),
-		Log:     log,
+		Auth:        authn,
+		GitHub:      gh,
+		BaseURL:     cfg.Server.URL,
+		Web:         web.Dist(),
+		MCP:         mcp.New(mcp.Config{Backend: plane, Version: version, Log: log}).Handler(),
+		GrafanaAddr: cfg.Telemetry.GrafanaAddr,
+		Log:         log,
 	})
 	if err != nil {
 		return err
@@ -286,6 +330,7 @@ func run() error {
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
+	background.Go(func() { stack.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.
 		background.Wait()
@@ -344,8 +389,8 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 const shedLogTail = 1000
 
 // newLogger returns a text logger writing to stderr, to a rotated file, and
-// to tail.
-func newLogger(cfg config.Log, file string, tail *logtail.Tail) (*slog.Logger, error) {
+// to tail, whose records also go to shed's telemetry while it is on.
+func newLogger(cfg config.Log, file string, tail *logtail.Tail, providers *telemetry.Providers) (*slog.Logger, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
 		return nil, fmt.Errorf("log level: %w", err)
@@ -358,7 +403,8 @@ func newLogger(cfg config.Log, file string, tail *logtail.Tail) (*slog.Logger, e
 	}
 	// Stderr first: MultiWriter stops at the first failing writer.
 	w := io.MultiWriter(os.Stderr, tail, rotated)
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})), nil
+	h := slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
+	return slog.New(telemetry.NewSlogHandler(h, providers.LoggerProvider())), nil
 }
 
 // dashboardRoute routes the host of the dashboard URL to the listener.
