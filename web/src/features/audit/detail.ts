@@ -42,5 +42,6 @@ export const actionGroups = [
   "onepassword",
   "update",
   "audit",
+  "telemetry",
   "mcp",
 ] as const;

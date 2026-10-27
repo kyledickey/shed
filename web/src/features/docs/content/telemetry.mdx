@@ -1,0 +1,75 @@
+---
+title: Telemetry
+group: Running
+order: 105
+description: "Telemetry is optional. Turned on, shed runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana on the server, and serves Grafana to signed-in users at /grafana/."
+---
+
+## What it runs
+
+Telemetry is off until you turn it on under **Server, Telemetry**. Then shed runs four containers, each on the host network, listening on loopback only, with a pinned image and a named volume for its data:
+
+| Component       | Container                | Listens on (config key)                   | Volume                   |
+| --------------- | ------------------------ | ----------------------------------------- | ------------------------ |
+| VictoriaMetrics | `shed-telemetry-metrics` | `telemetry.metrics_addr` (127.0.0.1:8428) | `shed-telemetry-metrics` |
+| VictoriaLogs    | `shed-telemetry-logs`    | `telemetry.logs_addr` (127.0.0.1:9428)    | `shed-telemetry-logs`    |
+| VictoriaTraces  | `shed-telemetry-traces`  | `telemetry.traces_addr` (127.0.0.1:10428) | `shed-telemetry-traces`  |
+| Grafana         | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | `shed-telemetry-grafana` |
+
+Loopback keeps them unreachable from the internet and from your services' containers. Change the addresses under [`[telemetry]`](/docs/configuration#telemetry-addresses) only if a port is taken. Grafana's provisioning files live in `<data.dir>/telemetry/grafana/provisioning`, and VictoriaMetrics' scrape config in `<data.dir>/telemetry/scrape/scrape.yaml`. Both are mounted read-only.
+
+Every container carries the label `shed.telemetry=<component>`, and `shed.spec` holds a hash of its configuration. shed compares that hash on boot and after every settings change, and recreates a container only when its configuration changed. The volume stays.
+
+## Turning it on
+
+Flip **Collect telemetry**. The switch saves at once and shed brings the stack up in the background:
+
+1. Pull each image the first time.
+2. Start the three stores and wait for each one's `/health`.
+3. Write Grafana's data sources, start Grafana, and wait for it. The first start installs the VictoriaMetrics and VictoriaLogs data source plugins, which needs network access to grafana.com.
+4. Create the `shed` folder in Grafana and load the default alert rules into it.
+
+Components show **Starting** until they answer their health check, then **Running**. A step that fails shows **Failed** with the error, and shed tries again a minute later. **Restart** on a component restarts its container.
+
+Turning telemetry off stops the four containers and keeps their volumes, so turning it on again resumes with all history and anything edited in Grafana. Both are recorded in the [audit log](/docs/audit) as `telemetry.enable` and `telemetry.disable`.
+
+## Signing in to Grafana
+
+Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Open Grafana** on the Telemetry page or in the top bar. There is no separate Grafana login:
+
+- A signed-out page load goes through GitHub sign-in and comes back to the Grafana page. Other signed-out requests get a 401.
+- shed tells Grafana who you are. Grafana creates a user for your GitHub login the first time, with the Admin role. Every allowed user can do everything in shed, so every one is a Grafana admin too.
+- Requests that change something must come from the dashboard's own origin, like the API's. Grafana Live's WebSocket must too.
+- shed's session cookie never reaches Grafana.
+
+Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
+
+## Retention and disk
+
+| Setting                  | Default | Range          |
+| ------------------------ | ------- | -------------- |
+| Keep metrics for         | 30 days | 1 to 3650 days |
+| Keep logs for            | 14 days | 1 to 3650 days |
+| Keep traces for          | 14 days | 1 to 3650 days |
+| Disk for logs and traces | 20 GB   | at least 1 GB  |
+
+The disk limit is split 60% for logs and 40% for traces; when either share is full, its oldest data is deleted first. Metrics have no disk limit of their own. They are bounded by retention, and VictoriaMetrics stops accepting writes rather than let the disk fall below [`build.min_free_mb`](/docs/configuration#build-limits).
+
+Changing a retention or the disk limit recreates that store's container on the same volume. Its data is kept. The Telemetry page shows each store's disk use, as the store reports it.
+
+The default per-service limits (5000 spans and 2000 log records a second, 50000 metric series an hour) are saved with the other settings.
+
+## Resource use
+
+| Component       | Memory  | CPUs |
+| --------------- | ------- | ---- |
+| VictoriaMetrics | 512 MiB | 1    |
+| VictoriaLogs    | 512 MiB | 1    |
+| VictoriaTraces  | 384 MiB | 1    |
+| Grafana         | 512 MiB | 0.5  |
+
+These are caps, not reservations. An idle stack uses far less, apart from Grafana, which sits near 300 MiB. Plan for up to about 2 GB of memory with telemetry on. The Telemetry page shows each container's CPU and memory against its cap.
+
+## Deleting data
+
+**Delete telemetry data** is only available while telemetry is off. It removes the four containers, their volumes, and `<data.dir>/telemetry`: every stored metric, log record, and trace, and Grafana's users, dashboards, and settings. It can't be undone, and it is recorded as `telemetry.data.delete`. Turning telemetry on afterwards starts from empty.

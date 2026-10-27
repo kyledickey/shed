@@ -48,6 +48,7 @@ The IP is the address the request came from. Behind the built-in proxy it is the
 | `onepassword.connect`, `.disconnect`                                                                                  |                                                                                 |
 | `update.download`, `.install`, `update.settings.update`                                                               |                                                                                 |
 | `audit.settings.update`                                                                                               | Changing the retention below.                                                   |
+| `telemetry.enable`, `.disable`, `.settings.update`, `.data.delete`, `telemetry.component.restart`                     | [Telemetry](/docs/telemetry) toggled, tuned, cleared, or a component restarted. |
 | `mcp.call`                                                                                                            | Every MCP tool call, with the tool and its arguments.                           |
 
 A push that has to wait, for a running backup or a fenced service, is recorded once, when it deploys, not on every retry.

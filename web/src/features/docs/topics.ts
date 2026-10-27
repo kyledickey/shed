@@ -74,6 +74,17 @@ export const docTopics = {
     section: "health-checks",
     summary: "A TCP connect, or a 2xx/3xx on the healthcheck path, within 120 seconds.",
   },
+  telemetry: {
+    page: "telemetry",
+    section: "turning-it-on",
+    summary:
+      "Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana; off keeps their data.",
+  },
+  telemetryDisk: {
+    page: "telemetry",
+    section: "retention-and-disk",
+    summary: "Logs get 60% and traces 40%; the oldest data goes first when a share is full.",
+  },
   variables: {
     page: "variables",
     section: "references",

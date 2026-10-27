@@ -78,6 +78,13 @@ min_free_mb = 2048                  # 0 = disk check off
 log_max_mb = 10                     # per-deployment build log cap; 0 = unlimited
 keep       = 50                     # finished deployments kept per service; 0 = keep all
 
+[telemetry]                         # loopback addresses of the telemetry components
+metrics_addr = "127.0.0.1:8428"
+logs_addr    = "127.0.0.1:9428"
+traces_addr  = "127.0.0.1:10428"
+grafana_addr = "127.0.0.1:3001"
+otlp_port    = 4318                 # OTLP/HTTP on each project network's gateway
+
 [log]
 level        = "info"               # debug | info | warn | error
 max_size_mb  = 20
@@ -85,7 +92,7 @@ max_backups  = 5
 max_age_days = 30
 ```
 
-shed validates on boot and refuses to start on a bad value: `server.listen` and `data.dir` can't be empty, `server.url` must be an http(s) URL with a host, ports must be 1-65535, `log.level` must be one of the four levels, and no limit or log setting may be negative.
+shed validates on boot and refuses to start on a bad value: `server.listen` and `data.dir` can't be empty, `server.url` must be an http(s) URL with a host, ports must be 1-65535, `log.level` must be one of the four levels, no limit or log setting may be negative, and each `telemetry.*_addr` must be a loopback IP and port.
 
 Set `allowed_users` before the first sign-in. See [Security](/docs/security#authentication) for what it controls.
 
@@ -131,3 +138,15 @@ Builds run on a dedicated buildx builder named `shed` with the docker-container 
 While a build runs, shed polls free space every three seconds. This is best-effort monitoring, not a hard quota: a build can write quickly between polls, and shed doesn't prune the builder's cache afterwards. One build runs at a time across all services, with a 30-minute deadline that includes queueing.
 
 <BuildLimitsDemo />
+
+## Telemetry addresses
+
+[Telemetry](/docs/telemetry) runs its four containers on the host network, so each listens on a host port. The `[telemetry]` keys choose those ports, and they only matter when one is taken by something else on the host. Every address must be on loopback (`127.0.0.1` or `[::1]`), which keeps the components unreachable from outside the server and from containers. A change applies after a restart of shed, which recreates the affected containers with their data.
+
+| Key                      | Default           | Listener                                                      |
+| ------------------------ | ----------------- | ------------------------------------------------------------- |
+| `telemetry.metrics_addr` | `127.0.0.1:8428`  | VictoriaMetrics                                               |
+| `telemetry.logs_addr`    | `127.0.0.1:9428`  | VictoriaLogs                                                  |
+| `telemetry.traces_addr`  | `127.0.0.1:10428` | VictoriaTraces                                                |
+| `telemetry.grafana_addr` | `127.0.0.1:3001`  | Grafana, served to signed-in users at `<server.url>/grafana/` |
+| `telemetry.otlp_port`    | `4318`            | The OTLP/HTTP port services send to                           |

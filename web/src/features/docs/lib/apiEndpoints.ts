@@ -371,6 +371,40 @@ export const endpointGroups: EndpointGroup[] = [
     ],
   },
   {
+    title: "Telemetry",
+    endpoints: [
+      { method: "GET", path: "/api/telemetry", response: "Telemetry" },
+      {
+        method: "PUT",
+        path: "/api/telemetry",
+        body: "TelemetrySettings",
+        response: "Telemetry",
+        notes:
+          "Turns telemetry on or off and sets retention and caps. 400 out of bounds. The stack follows in the background.",
+      },
+      {
+        method: "POST",
+        path: "/api/telemetry/components/{name}/restart",
+        response: "Telemetry",
+        notes:
+          "name is metrics, logs, traces, or grafana. 409 while telemetry is off, 404 for another name.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/telemetry/data",
+        response: "204",
+        notes: "Removes the containers, volumes, and stored data. 409 while telemetry is on.",
+      },
+      {
+        method: "GET",
+        path: "/grafana/*, other methods",
+        response: "Grafana",
+        notes:
+          "Reverse-proxied as the signed-in user. Signed-out page loads go to sign-in; other requests get 401. Redirects to /server/telemetry while telemetry is off.",
+      },
+    ],
+  },
+  {
     title: "Agents (OAuth and MCP)",
     endpoints: [
       {
