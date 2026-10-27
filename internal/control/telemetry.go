@@ -23,6 +23,12 @@ func (p *Plane) Telemetry(ctx context.Context) (observability.Status, error) {
 	return p.telemetry.Status(ctx)
 }
 
+// TelemetryEnabled reports whether telemetry is on.
+func (p *Plane) TelemetryEnabled(ctx context.Context) (bool, error) {
+	s, err := p.telemetry.Settings(ctx)
+	return s.Enabled, err
+}
+
 // SetTelemetry saves the telemetry settings; the stack follows them in the
 // background. Turning telemetry on or off is recorded as telemetry.enable or
 // telemetry.disable, other changes as telemetry.settings.update.

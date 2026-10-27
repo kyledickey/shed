@@ -23,6 +23,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
@@ -104,6 +105,12 @@ type Control interface {
 	AuditEvents(ctx context.Context, f store.AuditFilter) (audit.Page, error)
 	AuditSettings(ctx context.Context) (audit.Settings, error)
 	SetAuditSettings(ctx context.Context, s audit.Settings) (audit.Settings, error)
+
+	Telemetry(ctx context.Context) (observability.Status, error)
+	TelemetryEnabled(ctx context.Context) (bool, error)
+	SetTelemetry(ctx context.Context, s observability.Settings) (observability.Status, error)
+	RestartTelemetryComponent(ctx context.Context, name string) (observability.Status, error)
+	DeleteTelemetryData(ctx context.Context) error
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -136,7 +143,10 @@ type Config struct {
 	// MCP serves the MCP server, mounted at /mcp behind bearer tokens. Nil
 	// leaves /mcp unmounted.
 	MCP http.Handler
-	Log *slog.Logger
+	// GrafanaAddr is the loopback host:port Grafana listens on, served at
+	// /grafana/.
+	GrafanaAddr string
+	Log         *slog.Logger
 }
 
 // Server is the HTTP interface.
@@ -150,6 +160,7 @@ type Server struct {
 	web        fs.FS
 	httpClient *http.Client
 	mcp        http.Handler
+	grafana    http.Handler
 	log        *slog.Logger
 
 	webhooks   webhookGuard
@@ -174,6 +185,7 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		mcp:        cfg.MCP,
 		log:        cfg.Log,
 	}
+	s.grafana = s.grafanaProxy(cfg.GrafanaAddr)
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err
 	}
@@ -285,6 +297,12 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/audit", s.listAudit)
 	authed("GET /api/audit/settings", s.getAuditSettings)
 	authed("PUT /api/audit/settings", s.putAuditSettings)
+
+	authed("GET /api/telemetry", s.getTelemetry)
+	authed("PUT /api/telemetry", s.putTelemetry)
+	authed("POST /api/telemetry/components/{name}/restart", s.restartTelemetryComponent)
+	authed("DELETE /api/telemetry/data", s.deleteTelemetryData)
+	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))
 
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)

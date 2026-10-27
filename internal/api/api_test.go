@@ -29,6 +29,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/variables"
@@ -187,6 +188,8 @@ type fixture struct {
 	onePassword *fakeOnePassword
 	restarts    int
 	github      *GitHubHolder
+	telemetry   *fakeTelemetry
+	grafana     *fakeGrafana
 	server      *Server
 	handler     http.Handler
 	cookie      *http.Cookie
@@ -206,6 +209,8 @@ func newFixture(t *testing.T) *fixture {
 	authn := auth.New(AuthStore(st), auditLog, func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
 	f.onePassword = &fakeOnePassword{items: make(map[string]onepassword.Item)}
+	f.telemetry = &fakeTelemetry{s: observability.DefaultSettings()}
+	f.grafana = newFakeGrafana(t)
 	plane := control.New(control.Config{
 		Store:     st,
 		Deployer:  f.deployer,
@@ -215,6 +220,7 @@ func newFixture(t *testing.T) *fixture {
 		Updates:   f.updates,
 		Variables: variables.New(st, f.onePassword),
 		Audit:     auditLog,
+		Telemetry: f.telemetry,
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true
@@ -236,8 +242,9 @@ func newFixture(t *testing.T) *fixture {
 			"index.html":      {Data: []byte("<html>shed</html>")},
 			"assets/app-1.js": {Data: []byte("console.log(1)")},
 		},
-		MCP: mcp.New(mcp.Config{Backend: plane, Version: "test", Log: log}).Handler(),
-		Log: log,
+		MCP:         mcp.New(mcp.Config{Backend: plane, Version: "test", Log: log}).Handler(),
+		GrafanaAddr: f.grafana.addr,
+		Log:         log,
 	})
 	if err != nil {
 		t.Fatal(err)
