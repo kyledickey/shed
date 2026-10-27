@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -57,8 +58,10 @@ type databases struct {
 	// a redeployment's progress is checked.
 	every, settle time.Duration
 
-	// prepared holds the deployments of postgres databases that
-	// pg_stat_statements was created in. Only the worker touches it.
+	// prepared holds the containers of postgres databases that
+	// pg_stat_statements was created in. A restore keeps the deployment
+	// but recreates its container on the restored data. Only the worker
+	// touches it.
 	prepared map[string]bool
 	// failed holds the last error logged for each service, so a database
 	// that stays broken is logged once.
@@ -175,6 +178,9 @@ func (d *databases) reconcile(ctx context.Context) error {
 		}
 		d.logOnce(db.svc.ID+"/prepare", d.prepare(ctx, db))
 	}
+	maps.DeleteFunc(d.prepared, func(id string, _ bool) bool {
+		return !slices.ContainsFunc(dbs, func(db database) bool { return db.dep.ContainerID == id })
+	})
 	errs = append(errs, d.publish(targets))
 	return errors.Join(errs...)
 }
@@ -235,12 +241,12 @@ const createExtension = `export PGPASSWORD="$POSTGRES_PASSWORD"
 user="${POSTGRES_USER:-postgres}"
 exec psql -X -q -v ON_ERROR_STOP=1 -U "$user" -d "${POSTGRES_DB:-$user}" -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'`
 
-// prepare creates pg_stat_statements once per deployment of a postgres
+// prepare creates pg_stat_statements once per container of a postgres
 // database that was started with it preloaded. The extension lives in the
-// database's data, so a restore can take it away; the next deployment puts
-// it back.
+// database's data, so a restore can take it away; the container the restore
+// starts puts it back.
 func (d *databases) prepare(ctx context.Context, db database) error {
-	if db.svc.Kind != "postgres" || !db.statements() || d.prepared[db.dep.ID] {
+	if db.svc.Kind != "postgres" || !db.statements() || d.prepared[db.dep.ContainerID] {
 		return nil
 	}
 	var stderr bytes.Buffer
@@ -250,7 +256,7 @@ func (d *databases) prepare(ctx context.Context, db database) error {
 	if err != nil {
 		return fmt.Errorf("create pg_stat_statements: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
 	}
-	d.prepared[db.dep.ID] = true
+	d.prepared[db.dep.ContainerID] = true
 	return nil
 }
 

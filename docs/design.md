@@ -1514,7 +1514,8 @@ Query statistics are part of each database template's start arguments
   pg_stat_statements.track=all -c log_min_duration_statement=250`; after each
   activation the worker runs `CREATE EXTENSION IF NOT EXISTS
   pg_stat_statements` in `POSTGRES_DB` through `docker exec` (once per
-  deployment, retried until it succeeds).
+  container, retried until it succeeds, so a restore, which recreates the
+  container on the restored data, gets it back).
 - mysql: `--performance-schema=ON --slow-query-log=ON --long-query-time=0.25`.
   mysqld cannot log to `/dev/stderr` or a pipe ("Could not use /dev/stderr for
   logging" and it turns the log off), so the start command is a script that

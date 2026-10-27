@@ -380,6 +380,21 @@ func TestDatabasesCreateExtension(t *testing.T) {
 	}
 }
 
+func TestDatabasesCreateExtensionAfterRestore(t *testing.T) {
+	h := newDatabasesHarness(testDatabase("postgres", true))
+	h.reconcile(t)
+	// A restore recreates the container of the same deployment on the
+	// restored data.
+	h.svcs.edit("svcpostgres", func(db *database) { db.dep.ContainerID = "ctr-restored" })
+	h.reconcile(t)
+	if !slices.Equal(h.dock.execs, []string{"ctr-postgres", "ctr-restored"}) {
+		t.Errorf("commands ran in %v, want the restored container too", h.dock.execs)
+	}
+	if len(h.d.prepared) != 1 || !h.d.prepared["ctr-restored"] {
+		t.Errorf("prepared = %v, want only the current container", h.d.prepared)
+	}
+}
+
 func TestDatabasesCreateExtensionRetries(t *testing.T) {
 	h := newDatabasesHarness(testDatabase("postgres", true))
 	h.dock.execErr = errors.New("connection refused")

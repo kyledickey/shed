@@ -116,7 +116,7 @@ Every database template starts with arguments that expose slow queries:
 | MongoDB  | `--profile=1 --slowms=250`                                                                                    |
 | Redis    | `--slowlog-log-slower-than 250000`                                                                            |
 
-Queries slower than 250 ms are written to the container's log, which telemetry ships to VictoriaLogs for the slow-query panels. For Postgres, shed also runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` in `POSTGRES_DB` after each activation, which is what the top-statements panel reads. MySQL cannot write its slow log to a pipe, so its start command writes a file under `/tmp` that a `tail` copies to the container's output; the file is emptied once it passes 10 MiB.
+Queries slower than 250 ms are written to the container's log, which telemetry ships to VictoriaLogs for the slow-query panels. For Postgres, shed also runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` in `POSTGRES_DB` whenever its container is created, including after a restore, which is what the top-statements panel reads. MySQL cannot write its slow log to a pipe, so its start command writes a file under `/tmp` that a `tail` copies to the container's output; the file is emptied once it passes 10 MiB.
 
 ### The one-time restart
 
