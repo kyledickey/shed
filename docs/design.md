@@ -2262,8 +2262,9 @@ when `web/` changes; a build of both release binaries with the real
 dashboard, uploaded as an artifact; shellcheck, actionlint, and zizmor. On
 pull requests it comments the binary and dashboard sizes against the base.
 `ci-ok` fails if any job failed and is the check to require. Jobs run on Namespace runner profiles: `namespace-profile-shed-sm`
-(2 vCPU, 4 GB) for small jobs, `shed-md` (4 vCPU, 8 GB) for Go tests and
-builds and the notes agent, and `shed-lg` (8 vCPU, 16 GB) for the
+(2 vCPU, 4 GB) for small jobs, `shed-md` (4 vCPU, 8 GB) for Go tests,
+builds, the dashboard checks (oxlint's allocator needs more than 4 GB), and
+the notes agent, and `shed-lg` (8 vCPU, 16 GB) for the
 integration tests. Dependabot
 updates actions, Go modules, and dashboard packages weekly, waiting 7 days
 after a release, except `vite` and `vite-plus`, which `bunx vp migrate`

@@ -68,7 +68,7 @@ jobs:
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: namespace-profile-shed-sm
+    runs-on: namespace-profile-shed-md
     timeout-minutes: 15
     defaults:
       run:
