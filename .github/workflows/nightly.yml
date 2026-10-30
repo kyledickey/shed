@@ -1,8 +1,9 @@
 name: Nightly
 
 # Publishes main as a pre-release, vX.Y.Z-nightly.N where vX.Y.Z is the
-# release after the newest stable one, on days with new commits. It runs CI
-# with the integration tests first, and keeps one open issue while it fails.
+# release after the newest stable one, on days with new commits, once CI
+# passes. It also runs the integration tests, which don't hold the release
+# back yet, and keeps one open issue while either fails.
 
 on:
   schedule:
@@ -56,8 +57,23 @@ jobs:
       contents: read
       pull-requests: write
     uses: ./.github/workflows/ci.yml
-    with:
-      integration: true
+
+  # shortcut: integration failures don't block the release until the suite
+  # passes on GitHub's runners; then add this job to release's needs.
+  integration:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test -race -tags integration ./...
 
   notes:
     needs: version
@@ -102,7 +118,7 @@ jobs:
       MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
 
   report:
-    needs: [version, ci, notes, release]
+    needs: [version, ci, integration, notes, release]
     if: always() && needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5

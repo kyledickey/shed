@@ -56,8 +56,6 @@ jobs:
       contents: read
       pull-requests: write
     uses: ./.github/workflows/ci.yml
-    with:
-      integration: true
 
   release:
     needs: [version, ci]

@@ -2211,7 +2211,7 @@ from GitHub or deployed manually.
 A release is cut by committing a new `## vX.Y.Z - date` section at the top
 of `CHANGELOG.md` to `main`. `.github/workflows/release.yml` runs on pushes to
 `main` that change `CHANGELOG.md`; when the newest section's version has no
-tag yet, it runs CI with the integration tests and then publishes that
+tag yet, it runs CI and then publishes that
 version with the section's body as the notes. The **Prepare release**
 workflow (`prepare-release.yml`, run by hand with a version) writes that
 section with `.github/scripts/release-notes.sh` from the commits since the
@@ -2221,9 +2221,11 @@ releases. Release notes follow `.github/release-notes.md`.
 `.github/workflows/nightly.yml` runs daily at 07:00 UTC and on demand. When
 `main` has commits since the newest tag, it publishes them as the pre-release
 `vX.Y.Z-nightly.N`, where `vX.Y.Z` is the patch release after the newest
-stable tag and `N` counts up from 1. It runs CI with the integration tests
-first, and its notes are written from the commits since the previous tag and
-not added to `CHANGELOG.md`. While nightlies fail it keeps one open issue,
+stable tag and `N` counts up from 1. It publishes only once CI passes. It
+also runs the integration tests (the `integration` build tag), which don't
+block the release yet, and its notes are written from the commits since the previous tag and
+not added to `CHANGELOG.md`. While the nightly or its integration tests
+fail it keeps one open issue,
 "Nightly release failing", and closes it on the next success. Nightlies are
 never deleted.
 
@@ -2259,10 +2261,10 @@ dashboard checks, tests, and build (failing if `routeTree.gen.ts` is stale)
 when `web/` changes; a build of both release binaries with the real
 dashboard, uploaded as an artifact; shellcheck, actionlint, and zizmor. On
 pull requests it comments the binary and dashboard sizes against the base.
-`ci-ok` fails if any job failed and is the check to require. Integration
-tests (the `integration` build tag) run in releases, nightlies, and when CI
-is run by hand. Dependabot updates actions, Go
-modules, and dashboard packages weekly, waiting 7 days after a release.
+`ci-ok` fails if any job failed and is the check to require. Dependabot
+updates actions, Go modules, and dashboard packages weekly, waiting 7 days
+after a release, except `vite` and `vite-plus`, which `bunx vp migrate`
+updates together.
 
 `internal/update` checks for the latest release on the update channel one
 minute after start and then every 6 hours; `POST /api/update/check` checks

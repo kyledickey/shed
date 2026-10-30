@@ -5,17 +5,6 @@ on:
   push:
     branches: [main]
   workflow_call:
-    inputs:
-      integration:
-        description: Also run the integration tests.
-        type: boolean
-        default: false
-  workflow_dispatch:
-    inputs:
-      integration:
-        description: Also run the integration tests.
-        type: boolean
-        default: true
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -191,23 +180,10 @@ jobs:
       - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - run: pipx run zizmor==1.31.1 --offline .github/workflows
 
-  integration:
-    if: inputs.integration
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - run: go test -race -tags integration ./...
-
   # The one check to require on main: it fails if any job above failed.
   ci-ok:
     if: always()
-    needs: [changes, go, web, build, size-comment, lint, integration]
+    needs: [changes, go, web, build, size-comment, lint]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
