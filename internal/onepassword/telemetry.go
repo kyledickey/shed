@@ -15,8 +15,12 @@ const scope = "github.com/kyledickey/shed/internal/onepassword"
 // SDK makes its HTTP requests inside its WebAssembly core, out of reach of
 // an instrumented HTTP client. Spans carry no arguments, results, or error
 // text, which could hold variable values or the token.
+//
+// fn never sees ctx's cancellation: a request the SDK's core abandons midway
+// corrupts the core, which every client shares, and each later call then
+// fails with "out of bounds memory access" until shed restarts.
 func traced[T any](ctx context.Context, op string, fn func(context.Context) (T, error)) (T, error) {
-	ctx, span := otel.Tracer(scope).Start(ctx, "1password "+op, trace.WithSpanKind(trace.SpanKindClient))
+	ctx, span := otel.Tracer(scope).Start(context.WithoutCancel(ctx), "1password "+op, trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 	v, err := fn(ctx)
 	if err != nil {

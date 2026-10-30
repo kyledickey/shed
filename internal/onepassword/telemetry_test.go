@@ -48,3 +48,12 @@ func TestCallsAreTracedWithoutTokenOrValues(t *testing.T) {
 		}
 	}
 }
+
+func TestCallsIgnoreCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err, _ := traced(ctx, "test", func(ctx context.Context) (error, error) { return ctx.Err(), nil })
+	if err != nil {
+		t.Errorf("call saw %v", err)
+	}
+}
