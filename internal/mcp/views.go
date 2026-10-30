@@ -167,6 +167,7 @@ type updateOut struct {
 	Staged       string      `json:"staged,omitempty" jsonschema:"version downloaded and ready to install"`
 	Error        string      `json:"error,omitempty" jsonschema:"the last check or download failure"`
 	AutoDownload bool        `json:"autoDownload"`
+	Channel      string      `json:"channel" jsonschema:"stable or nightly"`
 	Unsupported  string      `json:"unsupported,omitempty" jsonschema:"why this build of shed cannot update itself"`
 }
 
@@ -364,6 +365,7 @@ func toUpdate(st update.Status) updateOut {
 		Staged:       st.Staged,
 		Error:        st.Err,
 		AutoDownload: st.AutoDownload,
+		Channel:      string(st.Channel),
 		Unsupported:  st.Unsupported,
 	}
 	if !st.CheckedAt.IsZero() {

@@ -237,6 +237,9 @@ func (fakeUpdates) Download(context.Context) (update.Status, error) { return upd
 func (fakeUpdates) SetAutoDownload(context.Context, bool) (update.Status, error) {
 	return update.Status{}, nil
 }
+func (fakeUpdates) SetChannel(context.Context, update.Channel) (update.Status, error) {
+	return update.Status{}, nil
+}
 func (fakeUpdates) Install(context.Context) (update.Status, error) { return update.Status{}, nil }
 
 // fakeGitHub has one repository, octo/app, whose branches all point at

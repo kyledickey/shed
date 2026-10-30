@@ -16,15 +16,16 @@ type releaseJSON struct {
 }
 
 type updateStatusJSON struct {
-	Current      string       `json:"current"`
-	Latest       *releaseJSON `json:"latest"`
-	Available    bool         `json:"available"`
-	CheckedAt    *time.Time   `json:"checkedAt"`
-	State        update.State `json:"state"`
-	Staged       string       `json:"staged"`
-	Error        string       `json:"error"`
-	AutoDownload bool         `json:"autoDownload"`
-	Unsupported  string       `json:"unsupported"`
+	Current      string         `json:"current"`
+	Latest       *releaseJSON   `json:"latest"`
+	Available    bool           `json:"available"`
+	CheckedAt    *time.Time     `json:"checkedAt"`
+	State        update.State   `json:"state"`
+	Staged       string         `json:"staged"`
+	Error        string         `json:"error"`
+	AutoDownload bool           `json:"autoDownload"`
+	Channel      update.Channel `json:"channel"`
+	Unsupported  string         `json:"unsupported"`
 }
 
 func toUpdateStatus(st update.Status) updateStatusJSON {
@@ -35,6 +36,7 @@ func toUpdateStatus(st update.Status) updateStatusJSON {
 		Staged:       st.Staged,
 		Error:        st.Err,
 		AutoDownload: st.AutoDownload,
+		Channel:      st.Channel,
 		Unsupported:  st.Unsupported,
 	}
 	if r := st.Latest; r != nil {
@@ -74,17 +76,27 @@ func (s *Server) downloadUpdate(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) putUpdateSettings(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
-		AutoDownload *bool `json:"autoDownload"`
+		AutoDownload *bool           `json:"autoDownload"`
+		Channel      *update.Channel `json:"channel"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	if in.AutoDownload == nil {
-		return errorf(http.StatusBadRequest, "autoDownload is required")
+	if in.AutoDownload == nil && in.Channel == nil {
+		return errorf(http.StatusBadRequest, "autoDownload or channel is required")
 	}
-	st, err := s.control.SetAutoDownload(r.Context(), *in.AutoDownload)
-	if err != nil {
-		return err
+	var st update.Status
+	var err error
+	// The channel goes first: it is the one that can be invalid.
+	if in.Channel != nil {
+		if st, err = s.control.SetUpdateChannel(r.Context(), *in.Channel); err != nil {
+			return err
+		}
+	}
+	if in.AutoDownload != nil {
+		if st, err = s.control.SetAutoDownload(r.Context(), *in.AutoDownload); err != nil {
+			return err
+		}
 	}
 	return writeJSON(w, http.StatusOK, toUpdateStatus(st))
 }

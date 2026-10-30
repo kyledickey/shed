@@ -98,6 +98,16 @@ func (p *Plane) SetAutoDownload(ctx context.Context, on bool) (update.Status, er
 	return st, err
 }
 
+// SetUpdateChannel sets the channel of releases shed updates to.
+func (p *Plane) SetUpdateChannel(ctx context.Context, ch update.Channel) (update.Status, error) {
+	if ch != update.Stable && ch != update.Nightly {
+		return update.Status{}, errorf(ErrInvalid, "channel must be stable or nightly")
+	}
+	st, err := p.updates.SetChannel(ctx, ch)
+	p.record(ctx, err, updateEvent("update.settings.update", st, map[string]any{"channel": ch}))
+	return st, err
+}
+
 // InstallUpdate swaps in the downloaded release. shed runs it once
 // restarted, which is up to the caller.
 func (p *Plane) InstallUpdate(ctx context.Context) (update.Status, error) {

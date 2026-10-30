@@ -11,6 +11,7 @@ import (
 	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/update"
 )
 
 // fakeAudit keeps recorded events with their actor, and lists and stores
@@ -165,6 +166,10 @@ func TestAuditRecords(t *testing.T) {
 			_, err := f.plane.SetAutoDownload(ctx, true)
 			return err
 		}, "update.settings.update", audit.OK, `{"autoDownload":true}`},
+		{"update channel", func() error {
+			_, err := f.plane.SetUpdateChannel(ctx, update.Nightly)
+			return err
+		}, "update.settings.update", audit.OK, `{"channel":"nightly"}`},
 		{"audit retention", func() error {
 			_, err := f.plane.SetAuditSettings(ctx, audit.Settings{RetentionDays: 0})
 			return err

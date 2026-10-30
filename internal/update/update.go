@@ -21,8 +21,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// autoDownloadKey is the setting that downloads new releases automatically.
-const autoDownloadKey = "update.auto_download"
+// Keys of the update settings.
+const (
+	autoDownloadKey = "update.auto_download"
+	channelKey      = "update.channel"
+)
+
+// Channel is the kind of release an Updater updates to.
+type Channel string
+
+// Channels of releases.
+const (
+	// Stable updates to stable releases only.
+	Stable Channel = "stable"
+	// Nightly updates to the newest release, nightly pre-releases included.
+	Nightly Channel = "nightly"
+)
 
 const (
 	defaultAPIURL   = "https://api.github.com"
@@ -110,6 +124,7 @@ type Status struct {
 	// Err is the last check or download failure.
 	Err          string
 	AutoDownload bool
+	Channel      Channel
 	// Unsupported says why this build cannot update itself, or is empty.
 	Unsupported string
 }
@@ -191,6 +206,10 @@ func (u *Updater) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
+	ch, err := u.channel(ctx)
+	if err != nil {
+		return Status{}, err
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return Status{
@@ -202,18 +221,23 @@ func (u *Updater) Status(ctx context.Context) (Status, error) {
 		Staged:       u.staged,
 		Err:          u.err,
 		AutoDownload: auto,
+		Channel:      ch,
 		Unsupported:  u.unsupported,
 	}, nil
 }
 
-// Check asks GitHub for the latest release and, with automatic downloads on,
-// starts downloading it if it is newer. A failed check is returned and also
-// reported in the status.
+// Check asks GitHub for the latest release on the channel and, with
+// automatic downloads on, starts downloading it if it is newer. A failed
+// check is returned and also reported in the status.
 func (u *Updater) Check(ctx context.Context) (Status, error) {
 	if err := u.begin(Checking); err != nil {
 		return Status{}, err
 	}
-	rel, err := u.fetchLatest(ctx)
+	ch, err := u.channel(ctx)
+	var rel *Release
+	if err == nil {
+		rel, err = u.fetchLatest(ctx, ch)
+	}
 	u.mu.Lock()
 	u.state = Idle
 	if err != nil {
@@ -277,6 +301,31 @@ func (u *Updater) SetAutoDownload(ctx context.Context, on bool) (Status, error) 
 	return u.Status(ctx)
 }
 
+// SetChannel sets the channel to update from. Changing it forgets the latest
+// release and any download, so Install cannot install a release from the
+// other channel, and checks the new channel.
+func (u *Updater) SetChannel(ctx context.Context, ch Channel) (Status, error) {
+	prev, err := u.channel(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if err := u.cfg.Settings.SetSetting(ctx, channelKey, string(ch)); err != nil {
+		return Status{}, fmt.Errorf("update: save channel: %w", err)
+	}
+	if ch == prev {
+		return u.Status(ctx)
+	}
+	u.mu.Lock()
+	if u.stagedPath != "" {
+		os.Remove(u.stagedPath)
+	}
+	u.latest, u.checkedAt, u.staged, u.stagedPath = nil, time.Time{}, "", ""
+	u.mu.Unlock()
+	// A failed check is reported in the status.
+	u.Check(ctx)
+	return u.Status(ctx)
+}
+
 // Install replaces the shed binary with the downloaded release, keeping the
 // replaced one next to it with a .prev suffix. On success the Updater stays
 // in the Restarting state: the caller is expected to restart shed.
@@ -335,6 +384,23 @@ func (u *Updater) autoDownload(ctx context.Context) (bool, error) {
 	return ok && v == "true", nil
 }
 
+// channel returns the channel setting. Unset, it is the channel the running
+// version came from.
+func (u *Updater) channel(ctx context.Context) (Channel, error) {
+	v, ok, err := u.cfg.Settings.Setting(ctx, channelKey)
+	if err != nil {
+		return "", fmt.Errorf("update: load channel: %w", err)
+	}
+	switch {
+	case ok:
+		return Channel(v), nil
+	case semver.Prerelease(u.cfg.Version) != "":
+		return Nightly, nil
+	default:
+		return Stable, nil
+	}
+}
+
 // download downloads the latest release if Download asked for it, and
 // records the result.
 func (u *Updater) download(ctx context.Context) {
@@ -353,6 +419,13 @@ func (u *Updater) download(ctx context.Context) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.state = Idle
+	if u.latest != rel {
+		// SetChannel changed the channel during the download.
+		if err == nil {
+			os.Remove(path)
+		}
+		return
+	}
 	if err != nil {
 		u.err = err.Error()
 		u.cfg.Log.Warn("update download failed", "version", rel.Version, "err", err)
@@ -365,6 +438,7 @@ func (u *Updater) download(ctx context.Context) {
 // githubRelease is the part of GitHub's release object shed reads.
 type githubRelease struct {
 	TagName     string    `json:"tag_name"`
+	Draft       bool      `json:"draft"`
 	HTMLURL     string    `json:"html_url"`
 	Body        string    `json:"body"`
 	PublishedAt time.Time `json:"published_at"`
@@ -374,34 +448,67 @@ type githubRelease struct {
 	} `json:"assets"`
 }
 
-// fetchLatest returns the latest published release, which excludes drafts
-// and pre-releases, or nil if there is none.
-func (u *Updater) fetchLatest(ctx context.Context) (*Release, error) {
-	url := fmt.Sprintf("%s/repos/%s/releases/latest", u.cfg.APIURL, u.cfg.Repo)
+// fetchLatest returns the latest release on ch, or nil if there is none.
+// Stable asks for GitHub's latest release, which excludes drafts and
+// pre-releases. Nightly picks the highest version of the recent releases.
+func (u *Updater) fetchLatest(ctx context.Context, ch Channel) (*Release, error) {
+	if ch == Nightly {
+		var all []githubRelease
+		if found, err := u.getJSON(ctx, "releases?per_page=30", &all); !found || err != nil {
+			return nil, err
+		}
+		var newest *githubRelease
+		for i, gr := range all {
+			if gr.Draft || !semver.IsValid(gr.TagName) {
+				continue
+			}
+			if newest == nil || semver.Compare(gr.TagName, newest.TagName) > 0 {
+				newest = &all[i]
+			}
+		}
+		if newest == nil {
+			return nil, nil
+		}
+		return newRelease(*newest), nil
+	}
+	var gr githubRelease
+	if found, err := u.getJSON(ctx, "releases/latest", &gr); !found || err != nil {
+		return nil, err
+	}
+	if !semver.IsValid(gr.TagName) {
+		return nil, fmt.Errorf("update: latest release tag %q is not a version", gr.TagName)
+	}
+	return newRelease(gr), nil
+}
+
+// getJSON decodes the GitHub API response for path, relative to the
+// repository, into v. It returns false if GitHub has no such resource.
+func (u *Updater) getJSON(ctx context.Context, path string, v any) (bool, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s", u.cfg.APIURL, u.cfg.Repo, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("update: %w", err)
+		return false, fmt.Errorf("update: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "shed/"+u.cfg.Version)
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("update: check latest release: %w", err)
+		return false, fmt.Errorf("update: check releases: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("update: check latest release: GitHub returned %s", resp.Status)
+		return false, fmt.Errorf("update: check releases: GitHub returned %s", resp.Status)
 	}
-	var gr githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
-		return nil, fmt.Errorf("update: decode latest release: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return false, fmt.Errorf("update: decode releases: %w", err)
 	}
-	if !semver.IsValid(gr.TagName) {
-		return nil, fmt.Errorf("update: latest release tag %q is not a version", gr.TagName)
-	}
+	return true, nil
+}
+
+func newRelease(gr githubRelease) *Release {
 	rel := &Release{
 		Version:     gr.TagName,
 		URL:         gr.HTMLURL,
@@ -412,5 +519,5 @@ func (u *Updater) fetchLatest(ctx context.Context) (*Release, error) {
 	for _, a := range gr.Assets {
 		rel.assets[a.Name] = a.URL
 	}
-	return rel, nil
+	return rel
 }

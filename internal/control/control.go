@@ -148,6 +148,7 @@ type Updates interface {
 	Check(ctx context.Context) (update.Status, error)
 	Download(ctx context.Context) (update.Status, error)
 	SetAutoDownload(ctx context.Context, on bool) (update.Status, error)
+	SetChannel(ctx context.Context, ch update.Channel) (update.Status, error)
 	Install(ctx context.Context) (update.Status, error)
 }
 

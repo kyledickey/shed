@@ -1,4 +1,5 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Local builds are not semver, so they report as development builds.
+VERSION ?= dev-$(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
 DEV_CONFIG ?= shed.dev.toml
 
 .PHONY: web build site test dev

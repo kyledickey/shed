@@ -100,6 +100,7 @@ type Control interface {
 	CheckUpdate(ctx context.Context) (update.Status, error)
 	DownloadUpdate(ctx context.Context) (update.Status, error)
 	SetAutoDownload(ctx context.Context, on bool) (update.Status, error)
+	SetUpdateChannel(ctx context.Context, ch update.Channel) (update.Status, error)
 	InstallUpdate(ctx context.Context) (update.Status, error)
 
 	Repos(ctx context.Context) ([]github.Repo, error)

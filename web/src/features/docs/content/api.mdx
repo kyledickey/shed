@@ -270,7 +270,7 @@ type BackupSettingsInput = {
 ```title="TypeScript"
 type Release = { version: string; url: string; notes: string; publishedAt: string };
 type UpdateStatus = {
-  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  current: string;                     // running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234"
   latest: Release | null;              // null until a check succeeds
   available: boolean;                  // latest is newer than current
   checkedAt: string | null;
@@ -278,6 +278,7 @@ type UpdateStatus = {
   staged: string;                      // verified version ready to install, "" if none
   error: string;                       // last check or download failure, "" if none
   autoDownload: boolean;
+  channel: "stable" | "nightly";
   unsupported: string;                 // why this build can't update itself, "" if it can
 };
 ```

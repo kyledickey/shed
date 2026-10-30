@@ -2,22 +2,24 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, CircleCheck, Download, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
-import type { UpdateStatus } from "../../api/types";
+import type { UpdateChannel, UpdateStatus } from "../../api/types";
 import {
   updateQuery,
   useCheckUpdate,
   useDownloadUpdate,
   useInstallUpdate,
   useSetAutoDownload,
+  useSetUpdateChannel,
 } from "../../api/update";
 import { Button } from "../../components/Button";
 import { LayerCard } from "../../components/Card";
-import { Switch } from "../../components/Form";
+import { Segmented, Switch } from "../../components/Form";
 import { Skeleton } from "../../components/Misc";
 import { formatDate, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
 import { useBeginRestart } from "../update/restart";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ReleaseNotes } from "./ReleaseNotes";
 import settings from "./Settings.module.css";
 import styles from "./UpdatesCard.module.css";
 
@@ -27,10 +29,11 @@ export function UpdatesCard() {
   const check = useCheckUpdate();
   const download = useDownloadUpdate();
   const autoDownload = useSetAutoDownload();
+  const channel = useSetUpdateChannel();
   const install = useInstallUpdate();
   const beginRestart = useBeginRestart();
 
-  const actionError = [check, download, autoDownload].find((m) => m.error)?.error;
+  const actionError = [check, download, autoDownload, channel].find((m) => m.error)?.error;
   return (
     <UpdatesCardView
       status={status.data}
@@ -43,6 +46,7 @@ export function UpdatesCard() {
       onCheck={() => check.mutate()}
       onDownload={() => download.mutate()}
       onAutoDownload={(on) => autoDownload.mutate(on)}
+      onChannel={(ch) => channel.mutate(ch)}
       onInstall={(version) => install.mutate(undefined, { onSuccess: () => beginRestart(version) })}
       onCloseInstall={() => install.reset()}
     />
@@ -60,6 +64,7 @@ type ViewProps = {
   onCheck: () => void;
   onDownload: () => void;
   onAutoDownload: (on: boolean) => void;
+  onChannel: (channel: UpdateChannel) => void;
   onInstall: (version: string) => void;
   onCloseInstall: () => void;
 };
@@ -76,6 +81,7 @@ export function UpdatesCardView({
   onCheck,
   onDownload,
   onAutoDownload,
+  onChannel,
   onInstall,
   onCloseInstall,
 }: ViewProps) {
@@ -193,6 +199,30 @@ export function UpdatesCardView({
 
         {error && <p className={styles.error}>{error}</p>}
 
+        {!unsupported && (
+          <div className={styles.channel}>
+            <div className={styles.channelText}>
+              <span className={styles.channelLabel}>
+                Channel <HelpTip topic="updateChannel" />
+              </span>
+              <span className={styles.muted}>
+                Nightlies are untested daily builds of main. Switching back to stable waits for the
+                next stable release; shed never downgrades.
+              </span>
+            </div>
+            <Segmented
+              label="Update channel"
+              size="sm"
+              value={status.channel}
+              onChange={onChannel}
+              options={[
+                { value: "stable", label: "Stable" },
+                { value: "nightly", label: "Nightly" },
+              ]}
+            />
+          </div>
+        )}
+
         <Switch
           checked={status.autoDownload}
           onChange={onAutoDownload}
@@ -204,7 +234,7 @@ export function UpdatesCardView({
         {latest?.notes && (status.available || status.staged) && (
           <details className={styles.notes}>
             <summary>Release notes for {latest.version}</summary>
-            <pre>{latest.notes}</pre>
+            <ReleaseNotes notes={latest.notes} />
           </details>
         )}
       </div>

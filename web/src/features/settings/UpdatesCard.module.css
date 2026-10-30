@@ -78,18 +78,26 @@
     cursor: pointer;
     font-weight: 550;
   }
+}
 
-  & pre {
-    max-height: 280px;
-    margin: var(--space-2) 0 0;
-    padding: var(--space-3);
-    overflow: auto;
-    background: var(--sunken);
-    border: 1px solid var(--line-soft);
-    border-radius: var(--r-md);
-    font-family: var(--font-sans);
+.channel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.channelText {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  & .muted {
     font-size: var(--text-xs);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
+}
+
+.channelLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
 }

@@ -192,6 +192,12 @@ export const docTopics = {
     summary:
       "shed checks GitHub for releases, verifies downloads, and installs on request with a short restart.",
   },
+  updateChannel: {
+    page: "installation",
+    section: "update-channels",
+    summary:
+      "Nightly also offers untested daily builds of main. shed never downgrades, so switching back to stable waits for the next stable release.",
+  },
   mcp: {
     page: "mcp",
     section: "connecting",

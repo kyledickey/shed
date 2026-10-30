@@ -339,8 +339,9 @@ export const endpointGroups: EndpointGroup[] = [
       {
         method: "PUT",
         path: "/api/update/settings",
-        body: "{autoDownload}",
+        body: "{autoDownload?, channel?}",
         response: "UpdateStatus",
+        notes: 'At least one. channel is "stable" or "nightly".',
       },
       {
         method: "POST",

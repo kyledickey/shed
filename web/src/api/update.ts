@@ -1,7 +1,7 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import type { UpdateStatus } from "./types";
+import type { UpdateChannel, UpdateStatus } from "./types";
 
 const POLL_MS = 2000;
 const IDLE_MS = 10 * 60_000;
@@ -33,6 +33,11 @@ export const useDownloadUpdate = () =>
 export const useSetAutoDownload = () =>
   useUpdateAction((autoDownload: boolean) =>
     api.put<UpdateStatus>("/update/settings", { autoDownload }),
+  );
+
+export const useSetUpdateChannel = () =>
+  useUpdateAction((channel: UpdateChannel) =>
+    api.put<UpdateStatus>("/update/settings", { channel }),
   );
 
 /** useInstallUpdate asks shed to swap in the staged binary and restart. */

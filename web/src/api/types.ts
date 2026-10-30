@@ -278,8 +278,11 @@ export type Release = {
 
 export type UpdateState = "idle" | "checking" | "downloading" | "restarting";
 
+/** Stable updates to stable releases; nightly also to nightly pre-releases. */
+export type UpdateChannel = "stable" | "nightly";
+
 export type UpdateStatus = {
-  /** The running version, e.g. "v1.3.2" or "dev". */
+  /** The running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234". */
   current: string;
   /** Null until a check succeeds. */
   latest: Release | null;
@@ -293,6 +296,7 @@ export type UpdateStatus = {
   /** The last check or download failure, "" if none. */
   error: string;
   autoDownload: boolean;
+  channel: UpdateChannel;
   /** Why this build cannot update itself, "" if it can. */
   unsupported: string;
 };
