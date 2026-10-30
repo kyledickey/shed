@@ -1,0 +1,6 @@
+self-hosted-runner:
+  # Namespace runner profiles, see "Releases and updates" in docs/design.md.
+  labels:
+    - namespace-profile-shed-sm
+    - namespace-profile-shed-md
+    - namespace-profile-shed-lg

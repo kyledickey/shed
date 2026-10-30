@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 5
     outputs:
       go: ${{ steps.filter.outputs.go }}
@@ -44,7 +44,7 @@ jobs:
   go:
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-md
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,7 +68,7 @@ jobs:
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 15
     defaults:
       run:
@@ -93,7 +93,7 @@ jobs:
   # either architecture or in the embed shows up before a release.
   build:
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-md
     timeout-minutes: 20
     outputs:
       sizes: ${{ steps.sizes.outputs.table }}
@@ -153,7 +153,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 5
     permissions:
       pull-requests: write
@@ -167,7 +167,7 @@ jobs:
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md --edit-last --create-if-none
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -184,7 +184,7 @@ jobs:
   ci-ok:
     if: always()
     needs: [changes, go, web, build, size-comment, lint]
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 5
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

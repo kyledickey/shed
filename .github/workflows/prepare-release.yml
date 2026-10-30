@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   notes:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-md
     timeout-minutes: 20
     outputs:
       from: ${{ steps.range.outputs.from }}
@@ -54,7 +54,7 @@ jobs:
   # The model runs above with a read-only token; only this job can write.
   pull-request:
     needs: notes
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 5
     permissions:
       contents: write

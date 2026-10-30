@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-shed-sm
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
