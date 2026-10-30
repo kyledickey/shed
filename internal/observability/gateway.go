@@ -79,7 +79,8 @@ const (
 	// syncEvery is how often the listeners follow the containers, besides
 	// whenever Kick is called, and the caps are reloaded.
 	syncEvery = 5 * time.Second
-	// masksEvery is how often the cached masking functions are rebuilt.
+	// masksEvery is how old a cached masking function gets before it is
+	// rebuilt in the background.
 	masksEvery = 30 * time.Second
 )
 
@@ -98,8 +99,22 @@ type Gateway struct {
 	// failed holds why listening failed, by service ID.
 	failed atomic.Pointer[map[string]string]
 
-	masksMu sync.Mutex
-	masks   map[maskKey]func(string) string // cleared every masksEvery; guarded by masksMu
+	masksMu  sync.Mutex
+	masks    map[maskKey]cachedMask // guarded by masksMu
+	building map[maskKey]*maskBuild // guarded by masksMu
+}
+
+type cachedMask struct {
+	fn    func(string) string
+	built time.Time
+}
+
+// maskBuild is a masking function being built, shared by every request
+// that waits for it.
+type maskBuild struct {
+	done chan struct{}
+	fn   func(string) string
+	err  error
 }
 
 // capsTable holds the default caps and every service's override.
@@ -124,11 +139,12 @@ func keyOf(src otlp.Source) maskKey {
 // NewGateway returns a Gateway. It listens only while Run runs.
 func NewGateway(cfg GatewayConfig) *Gateway {
 	return &Gateway{
-		cfg:    cfg,
-		listen: func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
-		now:    time.Now,
-		kick:   make(chan struct{}, 1),
-		masks:  make(map[maskKey]func(string) string),
+		cfg:      cfg,
+		listen:   func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) },
+		now:      time.Now,
+		kick:     make(chan struct{}, 1),
+		masks:    make(map[maskKey]cachedMask),
+		building: make(map[maskKey]*maskBuild),
 	}
 }
 
@@ -188,7 +204,6 @@ func (g *Gateway) Run(ctx context.Context, h http.Handler) {
 	}()
 	tick := time.NewTicker(syncEvery)
 	defer tick.Stop()
-	masked := g.now()
 	for {
 		if loopback == nil {
 			loopback = g.listenLoopback(h)
@@ -204,10 +219,6 @@ func (g *Gateway) Run(ctx context.Context, h http.Handler) {
 			return
 		case <-tick.C:
 		case <-g.kick:
-		}
-		if g.now().Sub(masked) >= masksEvery {
-			g.forgetMasks()
-			masked = g.now()
 		}
 	}
 }
@@ -376,14 +387,6 @@ func (g *Gateway) serve(srv *http.Server, ln net.Listener) {
 	}
 }
 
-// forgetMasks drops the cached masking functions, so changed variable
-// values are masked from then on.
-func (g *Gateway) forgetMasks() {
-	g.masksMu.Lock()
-	clear(g.masks)
-	g.masksMu.Unlock()
-}
-
 func (g *Gateway) loadCaps(ctx context.Context) error {
 	s, err := g.cfg.Settings(ctx)
 	if err != nil {
@@ -477,26 +480,53 @@ func (g *Gateway) Mask(src otlp.Source) func(string) string {
 }
 
 // mask returns the cached masking function of k, building it if needed.
+// One older than masksEvery is still returned while it is rebuilt in the
+// background, so changed variable values are masked from then on.
 func (g *Gateway) mask(ctx context.Context, k maskKey) (func(string) string, error) {
 	g.masksMu.Lock()
-	m, ok := g.masks[k]
+	c, ok := g.masks[k]
+	b := g.building[k]
+	if b == nil && (!ok || g.now().Sub(c.built) >= masksEvery) {
+		b = g.startBuild(ctx, k)
+	}
 	g.masksMu.Unlock()
 	if ok {
-		return m, nil
+		return c.fn, nil
 	}
-	var err error
-	if k == shedKey {
-		m, err = g.cfg.Masks.ShedMask(ctx)
-	} else {
-		m, err = g.cfg.Masks.TelemetryMask(ctx, k.projectID, k.deploymentID)
+	<-b.done
+	if b.err != nil {
+		return nil, fmt.Errorf("observability: masks: %w", b.err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("observability: masks: %w", err)
-	}
-	g.masksMu.Lock()
-	g.masks[k] = m
-	g.masksMu.Unlock()
-	return m, nil
+	return b.fn, nil
+}
+
+// startBuild builds k's masking function in the background. It is not
+// canceled with ctx: building one reads every variable from 1Password,
+// which can outlast the request that asked. A failed build drops the cached
+// function, so requests wait for the next build rather than use stale
+// values. The caller holds masksMu.
+func (g *Gateway) startBuild(ctx context.Context, k maskKey) *maskBuild {
+	b := &maskBuild{done: make(chan struct{})}
+	g.building[k] = b
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		if k == shedKey {
+			b.fn, b.err = g.cfg.Masks.ShedMask(ctx)
+		} else {
+			b.fn, b.err = g.cfg.Masks.TelemetryMask(ctx, k.projectID, k.deploymentID)
+		}
+		g.masksMu.Lock()
+		delete(g.building, k)
+		if b.err != nil {
+			delete(g.masks, k)
+			g.cfg.Log.Warn("telemetry gateway: build mask", "project", k.projectID, "err", b.err)
+		} else {
+			g.masks[k] = cachedMask{b.fn, g.now()}
+		}
+		g.masksMu.Unlock()
+		close(b.done)
+	}()
+	return b
 }
 
 // Caps returns a service's caps, for [otlp.Config.Caps]: its override, or

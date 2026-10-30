@@ -933,3 +933,76 @@ func TestAuditMirror(t *testing.T) {
 		t.Errorf("event without a service attributed to %q, want shed", got)
 	}
 }
+
+// slowMasks builds shed's mask once release is closed, counting builds.
+type slowMasks struct {
+	release chan struct{}
+	builds  atomic.Int32
+	value   atomic.Pointer[string]
+	fail    atomic.Bool
+}
+
+func (m *slowMasks) ShedMask(ctx context.Context) (func(string) string, error) {
+	<-m.release
+	m.builds.Add(1)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m.fail.Load() {
+		return nil, errors.New("1Password down")
+	}
+	return strings.NewReplacer(*m.value.Load(), "***").Replace, nil
+}
+
+func (m *slowMasks) TelemetryMask(context.Context, string, string) (func(string) string, error) {
+	return nil, errors.New("unused")
+}
+
+func TestGatewayMaskCache(t *testing.T) {
+	m := &slowMasks{release: make(chan struct{})}
+	old := "old"
+	m.value.Store(&old)
+	g := NewGateway(GatewayConfig{Masks: m, Log: slog.New(slog.DiscardHandler)})
+	now := time.Now()
+	g.now = func() time.Time { return now }
+
+	// Concurrent requests share one build, which outlives a canceled one.
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	var wg sync.WaitGroup
+	for range 5 {
+		wg.Go(func() {
+			fn, err := g.mask(canceled, shedKey)
+			if err != nil || fn("old") != "***" {
+				t.Errorf("mask: %v", err)
+			}
+		})
+	}
+	time.Sleep(10 * time.Millisecond)
+	close(m.release)
+	wg.Wait()
+	if n := m.builds.Load(); n != 1 {
+		t.Fatalf("%d builds, want 1", n)
+	}
+
+	// A stale mask is served while it is rebuilt.
+	now = now.Add(masksEvery)
+	changed := "new"
+	m.value.Store(&changed)
+	if fn, err := g.mask(context.Background(), shedKey); err != nil || fn("old") != "***" {
+		t.Fatalf("stale mask: %v", err)
+	}
+	waitFor(t, func() bool {
+		fn, err := g.mask(context.Background(), shedKey)
+		return err == nil && fn("new") == "***"
+	})
+
+	// A failed rebuild drops the mask rather than keep stale values.
+	now = now.Add(masksEvery)
+	m.fail.Store(true)
+	g.mask(context.Background(), shedKey)
+	waitFor(t, func() bool {
+		_, err := g.mask(context.Background(), shedKey)
+		return err != nil
+	})
+}
