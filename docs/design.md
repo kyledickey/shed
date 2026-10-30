@@ -1099,7 +1099,7 @@ bumped with shed releases), restart policy `unless-stopped`, label
 | VictoriaMetrics | `shed-telemetry-metrics` | `telemetry.metrics_addr` (127.0.0.1:8428) | 512 MiB | 1 |
 | VictoriaLogs | `shed-telemetry-logs` | `telemetry.logs_addr` (127.0.0.1:9428) | 512 MiB | 1 |
 | VictoriaTraces | `shed-telemetry-traces` | `telemetry.traces_addr` (127.0.0.1:10428) | 384 MiB | 1 |
-| Grafana | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | 512 MiB | 0.5 |
+| Grafana | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | 1 GiB | 0.5 |
 
 Host networking is what lets VictoriaMetrics scrape exporters at their
 container addresses on every project network (Docker isolates bridges from
@@ -1569,15 +1569,17 @@ Folder titles follow renames. A deleted service's folder moves under Archived
 as `<project> / <service> (deleted <date>)`, a deleted project's folder as
 `<project> (deleted <date>)`; their data ages out through retention.
 
-Dashboard UIDs are `<template>-<scope ID>` (e.g. `svc-http-<serviceID>`);
-shed's own dashboards have no scope (`shed-deploys`). Grafana UIDs are at
-most 40 characters, so template names stay short: `svc-overview`,
-`svc-logs`, `svc-http`, `svc-traces`, `svc-postgres`, `svc-mysql`,
-`svc-mongo`, `svc-redis`, `proj-overview`, and `shed-overview`,
-`shed-deploys`, `shed-api`, `shed-proxy`, `shed-host`, `shed-backups`,
-`shed-runtime`, `shed-telemetry`, `shed-security`. Dashboard titles are the
-template's ("Overview", "HTTP"), never a service or project name, so renames
-only retitle folders.
+Each scope has one Overview dashboard whose concerns are rows of panels,
+rather than a dashboard per concern; only shed's Security dashboard stands
+apart. Dashboard UIDs are `<template>-<scope ID>` (e.g.
+`svc-overview-<serviceID>`); shed's own dashboards have no scope
+(`shed-security`). Grafana UIDs are at most 40 characters, so template names
+stay short: `svc-overview`, `proj-overview`, `shed-overview`, and
+`shed-security`. Dashboard titles are the template's ("Overview",
+"Security"), never a service or project name, so renames only retitle
+folders. A service's Overview links to its project's Overview, the
+project's Services table links each row to that service's Overview, and
+shed's two dashboards link to each other; links keep the time range.
 `grafana_dashboards` records, for each dashboard shed created, its folder,
 the template version, and the Grafana dashboard version that write
 produced. `observability.Dashboards` reconciles folders and dashboards as a
@@ -1607,6 +1609,13 @@ reading and writing makes the write fail (409) instead of being lost; the
 pass then leaves that dashboard to the next pass. Grafana keeps the version
 when a write does not change the dashboard.
 
+A recorded dashboard in a kept folder whose template shed no longer has (the
+Logs, HTTP, Traces, database, Deploys, API & MCP, Proxy, Host & Docker,
+Backups, Runtime, and Telemetry dashboards of earlier versions, now rows of
+an Overview) is retired: deleted from Grafana if its Grafana version is
+still the recorded one and it is not customized, left in place as the
+user's own otherwise, and its row deleted either way.
+
 Folders of recorded dashboards that no longer belong to a project or service
 are archived: project folders first (their service folders move with them),
 then service folders whose project still exists, titled from Grafana's
@@ -1629,16 +1638,33 @@ While telemetry is off, `folderUrl` is empty and both lists are empty.
 
 Templates:
 
-| Scope | Dashboards |
-|---|---|
-| every service | Overview: status, deploy annotations, CPU and memory against limits, network, block I/O, restarts, OOM kills. Logs: volume by level, error rate, a searchable logs panel |
-| apps | HTTP: requests/s by status class, error ratio, p50/p95/p99 latency, bytes, top paths and client IPs (from edge records), per-domain variable. Traces: span rate, errors, and duration by span name, slowest traces |
-| postgres | Postgres: connections by state against `max_connections`, commits and rollbacks/s, cache hit ratio, row operations, locks, deadlocks, database size, WAL, top statements by total time, slow query log |
-| mysql | MySQL: connections against `max_connections`, queries/s by command, InnoDB buffer pool hit ratio, row operations, locks, top digests, slow query log |
-| mongo | MongoDB: operations/s by type, connections, WiredTiger cache, latency by operation, slow operations |
-| redis | Redis: commands/s, hit ratio, memory against `maxmemory`, evictions, clients, keys per database, slowlog |
-| project | Overview: one row per service with status, CPU, memory, requests/s, error ratio, error log rate |
-| shed | Overview; Deploys (stage durations, outcomes, queue depth, build cache use, image pulls); API & MCP (rate and latency by route, tool calls by agent); Proxy (edge totals, route applies); Host & Docker (host resources, container counts, Docker API latency); Backups (duration, size, failures, uploads); Runtime (goroutines, heap, GC, store query latency); Telemetry (ingest per signal, drops by reason, store disk); Security (audit timeline, sign-ins by outcome and IP, webhook signature failures, MCP calls per agent, container exec and OOM, egress first-seen destinations, edge top IPs, 4xx bursts, scanner paths) |
+Service Overview rows, top to bottom:
+
+| Row | Services | Panels |
+|---|---|---|
+| Resources | all | status, deploy annotations, CPU and memory against limits, network, block I/O, restarts, OOM kills |
+| HTTP | apps | requests/s by status class, error ratio, p50/p95/p99 latency, bytes, top paths and client IPs (from edge records), per-domain variable |
+| Traces | apps | span rate, errors, and duration by span name, slowest traces |
+| Postgres | postgres | connections by state against `max_connections`, commits and rollbacks/s, cache hit ratio, row operations, locks, deadlocks, database size, WAL, top statements by total time, slow query log |
+| MySQL | mysql | connections against `max_connections`, queries/s by command, InnoDB buffer pool hit ratio, row operations, locks, top digests, slow query log |
+| MongoDB | mongo | operations/s by type, connections, WiredTiger cache, latency by operation, slow operations |
+| Redis | redis | commands/s, hit ratio, memory against `maxmemory`, evictions, clients, keys per database, slowlog |
+| Logs | all | volume by level, error rate, a searchable logs panel |
+
+The project Overview has a Services table, one row per service with status,
+CPU, memory, requests/s, error ratio, and error log count, each linking to the
+service's Overview, then CPU, memory, requests, and error logs by service.
+
+shed's Overview has host CPU, memory, and disk at the top, then rows:
+Deploys (stage durations, outcomes, queue depth, build cache use, image
+pulls); API & MCP (rate and latency by route, tool calls by agent, webhook
+deliveries); Proxy (edge totals, route applies); Host & Docker (host
+resources, container counts, Docker API latency); Backups (duration, size,
+failures, uploads); Runtime (goroutines, heap, GC, store query latency);
+Telemetry (ingest per signal, drops by reason, store disk); Log (shed's own
+log). Security is separate: audit timeline, sign-ins by outcome and IP,
+webhook signature failures, MCP calls per agent, container exec and OOM,
+egress first-seen destinations, edge top IPs, 4xx bursts, scanner paths.
 
 Annotations: deploy started, active, and failed, redeploys, restarts,
 crashes, stops, backups, and restores become Grafana annotations tagged

@@ -102,6 +102,16 @@ func newFake(t *testing.T) (*fakeGrafana, *Client) {
 		model["version"] = d.version
 		writeJSON(w, map[string]any{"dashboard": model, "meta": map[string]any{"folderUid": d.folderUID}})
 	})
+	mux.HandleFunc("DELETE /grafana/api/dashboards/uid/{uid}", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.dashboards[r.PathValue("uid")]; !ok {
+			http.Error(w, `{"message":"Dashboard not found"}`, http.StatusNotFound)
+			return
+		}
+		delete(f.dashboards, r.PathValue("uid"))
+		writeJSON(w, map[string]any{"title": "deleted"})
+	})
 	mux.HandleFunc("POST /grafana/api/dashboards/db", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Dashboard map[string]any `json:"dashboard"`
@@ -243,7 +253,7 @@ func TestEnsureFolder(t *testing.T) {
 func TestDashboardVersions(t *testing.T) {
 	_, c := newFake(t)
 	ctx := context.Background()
-	d := ServiceDashboards("svc123456789", "app")[0]
+	d := ServiceDashboards("prj123456789", "svc123456789", "app")[0]
 
 	if _, err := c.Dashboard(ctx, d.UID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Dashboard before creating = %v, want ErrNotFound", err)
@@ -267,18 +277,26 @@ func TestDashboardVersions(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("Dashboard = %+v, %v, want %+v", got, err, want)
 	}
+	for range 2 {
+		if err := c.DeleteDashboard(ctx, d.UID); err != nil {
+			t.Fatalf("DeleteDashboard = %v", err)
+		}
+	}
+	if _, err := c.Dashboard(ctx, d.UID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Dashboard after deleting = %v, want ErrNotFound", err)
+	}
 }
 
 func TestSearchDashboards(t *testing.T) {
 	_, c := newFake(t)
 	ctx := context.Background()
-	for _, d := range ServiceDashboards("aaa", "redis") {
+	for _, d := range ServiceDashboards("ppp", "aaa", "redis") {
 		if _, err := c.PutDashboard(ctx, "s-aaa", d.JSON, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, d := range ServiceDashboards("bbb", "app") {
-		if _, err := c.PutDashboard(ctx, "s-bbb", d.JSON, 0); err != nil {
+	for _, d := range ShedDashboards() {
+		if _, err := c.PutDashboard(ctx, "shed", d.JSON, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -290,12 +308,12 @@ func TestSearchDashboards(t *testing.T) {
 		return out
 	}
 	hits, err := c.SearchDashboards(ctx, SearchQuery{FolderUIDs: []string{"s-aaa"}})
-	if want := []string{"svc-logs-aaa", "svc-overview-aaa", "svc-redis-aaa"}; err != nil || !slices.Equal(uids(hits), want) {
+	if want := []string{"svc-overview-aaa"}; err != nil || !slices.Equal(uids(hits), want) {
 		t.Errorf("search folder s-aaa = %v, %v, want %v", uids(hits), err, want)
 	}
-	hits, err = c.SearchDashboards(ctx, SearchQuery{Query: "http", Tags: []string{"service:bbb"}})
-	if want := []string{"svc-http-bbb"}; err != nil || !slices.Equal(uids(hits), want) {
-		t.Errorf("search http in service bbb = %v, %v, want %v", uids(hits), err, want)
+	hits, err = c.SearchDashboards(ctx, SearchQuery{Query: "secur", Tags: []string{"shed"}})
+	if want := []string{"shed-security"}; err != nil || !slices.Equal(uids(hits), want) {
+		t.Errorf("search secur tagged shed = %v, %v, want %v", uids(hits), err, want)
 	}
 }
 

@@ -47,14 +47,16 @@ Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-
 
 ## Folders and dashboards
 
-While telemetry is on, shed keeps a folder in Grafana for itself, each project, and each service, and fills them with default dashboards:
+While telemetry is on, shed keeps a folder in Grafana for itself, each project, and each service, and fills them with default dashboards. Each has one **Overview** that groups its panels into rows:
 
-| Folder                    | Holds                                                                                                      |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| shed                      | Overview, Deploys, API & MCP, Proxy, Host & Docker, Backups, Runtime, Telemetry, Security; the alert rules |
-| `<project>`               | the project's Overview, one row per service                                                                |
-| `<project>` / `<service>` | Overview and Logs; HTTP and Traces for apps; Postgres, MySQL, MongoDB, or Redis for databases              |
-| Archived                  | folders of deleted services and projects                                                                   |
+| Folder                    | Holds                                                                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| shed                      | Overview (host usage, then rows for Deploys, API & MCP, Proxy, Host & Docker, Backups, Runtime, Telemetry, and shed's log); Security; the alert rules |
+| `<project>`               | Overview: a table of the project's services, each linking to its Overview, and usage by service                                                       |
+| `<project>` / `<service>` | Overview: rows for Resources, then HTTP and Traces for apps, or Postgres, MySQL, MongoDB, or Redis for databases, then Logs                           |
+| Archived                  | folders of deleted services and projects                                                                                                              |
+
+A service's Overview links back to its project's, and shed's Overview and Security link to each other. Links keep the time range you're looking at.
 
 shed reconciles them when telemetry turns on, at boot, when a project or service is created, renamed, or deleted, and every 10 minutes. Folder titles follow renames; dashboard titles never carry a name, so links stay put. A deleted service's folder moves under **Archived** as `<project> / <service> (deleted <date>)`, a deleted project's as `<project> (deleted <date>)`, with its dashboards. Their data ages out with retention.
 
@@ -64,7 +66,7 @@ The project page links to its folder with **Open in Grafana**. A service's **Met
 
 Edit and save any dashboard in Grafana. shed remembers the version it last wrote; once a user saves a dashboard it is **customized**, and shed never overwrites it again. A shed upgrade that changes a default updates only the dashboards nobody customized. On customized ones the service page shows **Newer default available**, and **Reset to default** replaces your version with the current default (recorded as `telemetry.dashboard.reset`).
 
-A dashboard you delete stays deleted. **Restore default dashboards** on the Telemetry page brings back every default that is missing, and leaves the others alone (recorded as `telemetry.dashboards.restore`). New dashboards you create in shed's folders are yours; shed doesn't touch them.
+A dashboard you delete stays deleted. **Restore default dashboards** on the Telemetry page brings back every default that is missing, and leaves the others alone (recorded as `telemetry.dashboards.restore`). New dashboards you create in shed's folders are yours; shed doesn't touch them. When an upgrade retires a default dashboard (earlier versions had separate Logs, HTTP, Traces, and database dashboards per service, and eight more for shed), shed deletes it unless you customized it; a customized one stays as yours.
 
 ### Annotations
 
@@ -210,7 +212,7 @@ Records over a cap are dropped. The SDK is told how many with an OTLP partial su
 | VictoriaMetrics | 512 MiB | 1    |
 | VictoriaLogs    | 512 MiB | 1    |
 | VictoriaTraces  | 384 MiB | 1    |
-| Grafana         | 512 MiB | 0.5  |
+| Grafana         | 1 GiB   | 0.5  |
 
 These are caps, not reservations. An idle stack uses far less, apart from Grafana, which sits near 300 MiB. Plan for up to about 2 GB of memory with telemetry on. The Telemetry page shows each container's CPU and memory against its cap.
 

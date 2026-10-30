@@ -19,7 +19,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -151,10 +150,10 @@ func TestDashboardsIntegration(t *testing.T) {
 	}
 
 	start := time.Now()
-	pgUID, logsUID := "svc-postgres-"+db.ID, "svc-logs-"+app.ID
+	pgUID, appUID := "svc-overview-"+db.ID, "svc-overview-"+app.ID
 	eventually("the services' dashboards", func() bool {
 		_, okPg := record(pgUID)
-		_, okLogs := record(logsUID)
+		_, okLogs := record(appUID)
 		return okPg && okLogs
 	})
 	t.Logf("dashboards appeared %s after start", time.Since(start).Round(time.Second))
@@ -172,8 +171,8 @@ func TestDashboardsIntegration(t *testing.T) {
 	wantIn := map[string][]grafana.Dashboard{
 		grafana.ShedFolder:                grafana.ShedDashboards(),
 		grafana.ProjectFolder(project.ID): grafana.ProjectDashboards(project.ID),
-		grafana.ServiceFolder(app.ID):     grafana.ServiceDashboards(app.ID, "app"),
-		grafana.ServiceFolder(db.ID):      grafana.ServiceDashboards(db.ID, "postgres"),
+		grafana.ServiceFolder(app.ID):     grafana.ServiceDashboards(project.ID, app.ID, "app"),
+		grafana.ServiceFolder(db.ID):      grafana.ServiceDashboards(project.ID, db.ID, "postgres"),
 	}
 	eventually("every default dashboard", func() bool {
 		for _, ds := range wantIn {
@@ -195,17 +194,17 @@ func TestDashboardsIntegration(t *testing.T) {
 		}
 	}
 
-	// Save the Logs dashboard as a user would.
-	before, err := gf.Dashboard(ctx, logsUID)
+	// Save the app's Overview as a user would.
+	before, err := gf.Dashboard(ctx, appUID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	logs := slices.IndexFunc(wantIn[grafana.ServiceFolder(app.ID)], func(d grafana.Dashboard) bool { return d.UID == logsUID })
+	i := slices.IndexFunc(wantIn[grafana.ServiceFolder(app.ID)], func(d grafana.Dashboard) bool { return d.UID == appUID })
 	var model map[string]any
-	if err := json.Unmarshal(wantIn[grafana.ServiceFolder(app.ID)][logs].JSON, &model); err != nil {
+	if err := json.Unmarshal(wantIn[grafana.ServiceFolder(app.ID)][i].JSON, &model); err != nil {
 		t.Fatal(err)
 	}
-	model["title"] = "My logs"
+	model["title"] = "My overview"
 	mine, _ := json.Marshal(model)
 	saved, err := gf.PutDashboard(ctx, grafana.ServiceFolder(app.ID), mine, before.Version)
 	if err != nil || saved <= before.Version {
@@ -213,29 +212,29 @@ func TestDashboardsIntegration(t *testing.T) {
 	}
 	dashboards.Refresh()
 	eventually("the saved dashboard marked customized", func() bool {
-		rec, _ := record(logsUID)
+		rec, _ := record(appUID)
 		return rec.Customized && rec.GrafanaVersion == saved
 	})
 	dashboards.Refresh()
 	time.Sleep(2 * time.Second)
-	if got, err := gf.Dashboard(ctx, logsUID); err != nil || got.Title != "My logs" || got.Version != saved {
+	if got, err := gf.Dashboard(ctx, appUID); err != nil || got.Title != "My overview" || got.Version != saved {
 		t.Errorf("customized dashboard = %+v, %v; want the user's at version %d", got, err, saved)
 	}
 	sd, err := dashboards.Service(ctx, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if i := slices.IndexFunc(sd.Dashboards, func(l observability.DashboardLink) bool { return l.UID == logsUID }); i < 0 || !sd.Dashboards[i].Customized {
-		t.Errorf("service dashboards = %+v, want %s customized", sd.Dashboards, logsUID)
+	if i := slices.IndexFunc(sd.Dashboards, func(l observability.DashboardLink) bool { return l.UID == appUID }); i < 0 || !sd.Dashboards[i].Customized {
+		t.Errorf("service dashboards = %+v, want %s customized", sd.Dashboards, appUID)
 	}
 
-	if err := dashboards.Reset(ctx, logsUID); err != nil {
+	if err := dashboards.Reset(ctx, appUID); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := gf.Dashboard(ctx, logsUID); err != nil || got.Title != "Logs" {
+	if got, err := gf.Dashboard(ctx, appUID); err != nil || got.Title != "Overview" {
 		t.Errorf("after reset: %+v, %v; want the default", got, err)
 	}
-	if rec, _ := record(logsUID); rec.Customized {
+	if rec, _ := record(appUID); rec.Customized {
 		t.Errorf("record after reset = %+v, want not customized", rec)
 	}
 
@@ -287,13 +286,13 @@ func TestDashboardsIntegration(t *testing.T) {
 	// The worker moves the folder, then forgets its dashboards.
 	eventually("the deleted service's folder archived and forgotten", func() bool {
 		f, err := gf.Folder(ctx, want.UID)
-		_, recorded := record(logsUID)
+		_, recorded := record(appUID)
 		return err == nil && f == want && !recorded
 	})
-	if _, err := gf.Dashboard(ctx, logsUID); err != nil {
-		t.Errorf("archived service's Logs dashboard: %v", err)
+	if _, err := gf.Dashboard(ctx, appUID); err != nil {
+		t.Errorf("archived service's Overview: %v", err)
 	}
-	if _, err := gf.Dashboard(ctx, pgUID); err != nil || !strings.HasPrefix(pgUID, "svc-postgres-") {
+	if _, err := gf.Dashboard(ctx, pgUID); err != nil {
 		t.Errorf("the remaining service's dashboard: %v", err)
 	}
 

@@ -3,6 +3,7 @@ package grafana
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -46,34 +47,27 @@ type scope struct {
 }
 
 func scopes() []scope {
-	svc := func(kind string, templates ...string) scope {
+	svc := func(kind string) scope {
 		id := (kind + "000000000000")[:12]
-		var uids []string
-		for _, t := range templates {
-			uids = append(uids, t+"-"+id)
-		}
 		return scope{
-			name: "service " + kind, dashboards: ServiceDashboards(id, kind), uids: uids,
+			name: "service " + kind, dashboards: ServiceDashboards("mnopqrstuvwx", id, kind), uids: []string{"svc-overview-" + id},
 			metrics: `shed_service_id="` + id + `"`, logs: `shed.service.id="` + id + `"`,
 			traces: "resource_attr:shed.service.id=" + id, annotation: "service:" + id,
 		}
 	}
 	return []scope{
-		svc("app", "svc-overview", "svc-logs", "svc-http", "svc-traces"),
-		svc("postgres", "svc-overview", "svc-logs", "svc-postgres"),
-		svc("mysql", "svc-overview", "svc-logs", "svc-mysql"),
-		svc("mongo", "svc-overview", "svc-logs", "svc-mongo"),
-		svc("redis", "svc-overview", "svc-logs", "svc-redis"),
+		svc("app"),
+		svc("postgres"),
+		svc("mysql"),
+		svc("mongo"),
+		svc("redis"),
 		{
 			name: "project", dashboards: ProjectDashboards("mnopqrstuvwx"), uids: []string{"proj-overview-mnopqrstuvwx"},
 			metrics: `shed_project_id="mnopqrstuvwx"`, logs: `shed.project.id="mnopqrstuvwx"`, annotation: "project:mnopqrstuvwx",
 		},
 		{
 			name: "shed", dashboards: ShedDashboards(), annotation: "shed",
-			uids: []string{
-				"shed-overview", "shed-deploys", "shed-api", "shed-proxy", "shed-host",
-				"shed-backups", "shed-runtime", "shed-telemetry", "shed-security",
-			},
+			uids: []string{"shed-overview", "shed-security"},
 		},
 	}
 }
@@ -248,18 +242,62 @@ func TestNativeOTLPSeverity(t *testing.T) {
 			t.Errorf("errorLevels %s lacks %s", errorLevels, want)
 		}
 	}
-	js := string(ServiceDashboards("abc", "app")[1].JSON)
+	js := string(ServiceDashboards("p", "abc", "app")[0].JSON)
 	if !strings.Contains(js, "stats by (level, severity, severity_text) count() logs") {
 		t.Errorf("volume by level does not group by severity_text: %s", js)
 	}
 }
 
-func TestServiceDashboardsUnknownKind(t *testing.T) {
-	var got []string
-	for _, d := range ServiceDashboards("abc", "something-new") {
-		got = append(got, d.Template)
+// TestServiceRows checks that each kind's Overview has its rows, and links
+// to its project's Overview.
+func TestServiceRows(t *testing.T) {
+	tests := []struct {
+		kind string
+		rows []string
+	}{
+		{"app", []string{"Resources", "HTTP", "Traces", "Logs"}},
+		{"postgres", []string{"Resources", "Postgres", "Logs"}},
+		{"mysql", []string{"Resources", "MySQL", "Logs"}},
+		{"mongo", []string{"Resources", "MongoDB", "Logs"}},
+		{"redis", []string{"Resources", "Redis", "Logs"}},
+		{"something-new", []string{"Resources", "Logs"}},
 	}
-	if strings.Join(got, ",") != "svc-overview,svc-logs" {
-		t.Errorf("templates for an unknown kind = %v", got)
+	for _, tt := range tests {
+		ds := ServiceDashboards("prj", "abc", tt.kind)
+		if len(ds) != 1 {
+			t.Fatalf("%s: %d dashboards, want 1", tt.kind, len(ds))
+		}
+		var m struct {
+			model
+			Links []link `json:"links"`
+		}
+		if err := json.Unmarshal(ds[0].JSON, &m); err != nil {
+			t.Fatal(err)
+		}
+		var rows []string
+		for _, p := range m.Panels {
+			if p.Type == "row" {
+				rows = append(rows, p.Title)
+			}
+		}
+		if !slices.Equal(rows, tt.rows) {
+			t.Errorf("%s: rows %v, want %v", tt.kind, rows, tt.rows)
+		}
+		if len(m.Links) != 1 || m.Links[0].URL != "/d/proj-overview-prj" || !m.Links[0].KeepTime {
+			t.Errorf("%s: links %+v, want the project's Overview", tt.kind, m.Links)
+		}
+	}
+}
+
+func TestProjectLinksServices(t *testing.T) {
+	js := string(ProjectDashboards("prj")[0].JSON)
+	for _, want := range []string{
+		`"url":"/d/svc-overview-${__data.fields.shed_service_id}?${__url_time_range}"`,
+		`max by (shed_service_name, shed_service_id)`,
+		`{"id":"custom.hidden","value":true}`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("project overview lacks %s", want)
+		}
 	}
 }

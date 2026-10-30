@@ -15,7 +15,17 @@ type dashboard struct {
 	Refresh       string      `json:"refresh"`
 	Annotations   annotations `json:"annotations"`
 	Templating    templating  `json:"templating"`
+	Links         []link      `json:"links"`
 	Panels        []panel     `json:"panels"`
+}
+
+// link is a dashboard link, or a data link when in a field's links.
+type link struct {
+	Title       string `json:"title"`
+	Type        string `json:"type,omitempty"`
+	URL         string `json:"url"`
+	KeepTime    bool   `json:"keepTime,omitempty"`
+	TargetBlank bool   `json:"targetBlank"`
 }
 
 type timeRange struct {
@@ -263,6 +273,25 @@ func (p panel) mapValue(value, text, color string) panel {
 	return p
 }
 
+// hide hides the field named name, which data links can still read.
+func (p panel) hide(name string) panel {
+	p.FieldConfig.Overrides = append(p.FieldConfig.Overrides, override{
+		Matcher:    matcher{ID: "byName", Options: name},
+		Properties: []property{{ID: "custom.hidden", Value: true}},
+	})
+	return p
+}
+
+// linkOf links the values of the field named name to url, a path under
+// Grafana's root that may use data link variables.
+func (p panel) linkOf(name, title, url string) panel {
+	p.FieldConfig.Overrides = append(p.FieldConfig.Overrides, override{
+		Matcher:    matcher{ID: "byName", Options: name},
+		Properties: []property{{ID: "links", Value: []link{{Title: title, URL: url}}}},
+	})
+	return p
+}
+
 // unitOf sets the unit of the field named name.
 func (p panel) unitOf(name, unit string) panel {
 	p.FieldConfig.Overrides = append(p.FieldConfig.Overrides, override{
@@ -300,6 +329,7 @@ func newBoard(uid, title string, tags []string, annotationTags []string) *board 
 			Target:     annotationTarget{Type: "tags", Tags: annotationTags, Limit: 100},
 		}}},
 		Templating: templating{List: []variable{}},
+		Links:      []link{},
 		Panels:     []panel{},
 	}}
 }
@@ -326,6 +356,12 @@ func (b *board) row(title string) {
 	collapsed := false
 	b.add(24, 1, panel{Type: "row", Title: title, Collapsed: &collapsed, Panels: []panel{}})
 	b.newline()
+}
+
+// link adds a link to the dashboard at url, a path under Grafana's root,
+// that keeps the time range.
+func (b *board) link(title, url string) {
+	b.d.Links = append(b.d.Links, link{Title: title, Type: "link", URL: url, KeepTime: true})
 }
 
 // metricVar adds a variable whose values are those of label in the

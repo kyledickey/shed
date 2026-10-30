@@ -30,47 +30,52 @@ type template struct {
 }
 
 // ServiceDashboards renders the dashboards of a service of kind "app" or a
-// database kind.
-func ServiceDashboards(serviceID, kind string) []Dashboard {
-	ts := []template{
-		{"svc-overview", "Overview", 1, serviceOverview},
-		{"svc-logs", "Logs", 1, serviceLogs},
+// database kind in project projectID: one Overview, with a row per concern.
+func ServiceDashboards(projectID, serviceID, kind string) []Dashboard {
+	build := func(b *board, id string) {
+		b.link("Project overview", "/d/"+projectOverviewUID(projectID))
+		b.row("Resources")
+		serviceResources(b, id)
+		switch kind {
+		case "app":
+			b.row("HTTP")
+			appHTTP(b, id)
+			b.row("Traces")
+			appTraces(b, id)
+		case "postgres":
+			b.row("Postgres")
+			postgres(b, id)
+		case "mysql":
+			b.row("MySQL")
+			mysql(b, id)
+		case "mongo":
+			b.row("MongoDB")
+			mongo(b, id)
+		case "redis":
+			b.row("Redis")
+			redis(b, id)
+		}
+		b.row("Logs")
+		serviceLogs(b, id)
 	}
-	switch kind {
-	case "app":
-		ts = append(ts,
-			template{"svc-http", "HTTP", 1, appHTTP},
-			template{"svc-traces", "Traces", 1, appTraces})
-	case "postgres":
-		ts = append(ts, template{"svc-postgres", "Postgres", 1, postgres})
-	case "mysql":
-		ts = append(ts, template{"svc-mysql", "MySQL", 1, mysql})
-	case "mongo":
-		ts = append(ts, template{"svc-mongo", "MongoDB", 1, mongo})
-	case "redis":
-		ts = append(ts, template{"svc-redis", "Redis", 1, redis})
-	}
+	ts := []template{{"svc-overview", "Overview", 2, build}}
 	return render(ts, serviceID, []string{"shed", "service:" + serviceID})
 }
 
 // ProjectDashboards renders the dashboards of a project.
 func ProjectDashboards(projectID string) []Dashboard {
-	ts := []template{{"proj-overview", "Overview", 1, projectOverview}}
+	ts := []template{{"proj-overview", "Overview", 3, projectOverview}}
 	return render(ts, projectID, []string{"shed", "project:" + projectID})
 }
 
-// ShedDashboards renders the dashboards of shed itself.
+func projectOverviewUID(projectID string) string { return "proj-overview-" + projectID }
+
+// ShedDashboards renders the dashboards of shed itself: an Overview with a
+// row per subsystem, and Security.
 func ShedDashboards() []Dashboard {
 	ts := []template{
-		{"shed-overview", "Overview", 1, shedOverview},
-		{"shed-deploys", "Deploys", 1, shedDeploys},
-		{"shed-api", "API & MCP", 1, shedAPI},
-		{"shed-proxy", "Proxy", 1, shedProxy},
-		{"shed-host", "Host & Docker", 1, shedHost},
-		{"shed-backups", "Backups", 1, shedBackups},
-		{"shed-runtime", "Runtime", 1, shedRuntime},
-		{"shed-telemetry", "Telemetry", 1, shedTelemetry},
-		{"shed-security", "Security", 1, shedSecurity},
+		{"shed-overview", "Overview", 2, shedOverview},
+		{"shed-security", "Security", 2, shedSecurity},
 	}
 	return render(ts, "", []string{"shed"})
 }
@@ -140,7 +145,7 @@ func ratio5xx(by, window string, matchers ...string) string {
 	return fmt.Sprintf("sum %s (%s) / sum %s (%s)", by, rateOver(errs, window), by, rateOver(all, window))
 }
 
-func serviceOverview(b *board, id string) {
+func serviceResources(b *board, id string) {
 	s := eq("shed_service_id", id)
 	b.add(6, 4, stat("Status", "", metricNow(fmt.Sprintf("max(present_over_time(%s[2m]))", sel("shed_container_memory_bytes", s)), ""), "Not running").
 		mapValue("1", "Running", "green"))
@@ -335,19 +340,21 @@ func projectOverview(b *board, id string) {
 	by := "by (shed_service_name)"
 	reqs := sel("shed_http_requests_total", s)
 	b.add(24, 10, table("Services",
-		metricNow(fmt.Sprintf("max %s (present_over_time(%s[2m]))", by, sel("shed_container_memory_bytes", s)), ""),
+		metricNow(fmt.Sprintf("max by (shed_service_name, shed_service_id) (present_over_time(%s[2m]))", sel("shed_container_memory_bytes", s)), ""),
 		metricNow(fmt.Sprintf("sum %s (%s)", by, sel("shed_container_cpu_percent", s)), ""),
 		metricNow(fmt.Sprintf("sum %s (%s)", by, sel("shed_container_memory_bytes", s)), ""),
 		metricNow(fmt.Sprintf("sum %s (rate(%s[5m]))", by, reqs), ""),
 		metricNow(ratio5xx(by, "5m", s), ""),
 		logTotals(stream(eq("shed.project.id", id), appLogs)+" "+errorLevels+
-			" | rename shed.service.name as shed_service_name | stats by (shed_service_name) count() errors", ""),
+			" | rename shed.service.name as shed_service_name | stats by (shed_service_name) count() errors", "errors"),
 	).
 		unitOf("Value #B", "percent").unitOf("Value #C", "bytes").unitOf("Value #D", "reqps").unitOf("Value #E", "percentunit").
+		hide("shed_service_id").
+		linkOf("service", "Service overview", "/d/svc-overview-${__data.fields.shed_service_id}?${__url_time_range}").
 		transform("labelsToFields", map[string]any{}).
 		transform("joinByField", map[string]any{"byField": "shed_service_name", "mode": "outer"}).
 		transform("organize", map[string]any{
-			"excludeByName": map[string]bool{"Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "Time 6": true},
+			"excludeByName": map[string]bool{"__name__": true, "Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true, "Time 6": true},
 			"renameByName": map[string]string{
 				"shed_service_name": "service", "Value #A": "running", "Value #B": "CPU", "Value #C": "memory",
 				"Value #D": "requests/s", "Value #E": "5xx ratio", "errors": "error logs",
@@ -373,26 +380,31 @@ const (
 	shedLogs = `{shed.service.id="shed", shed.source="shed"}`
 )
 
-func hostUsage(b *board) {
-	b.add(12, 8, timeseries("Host CPU", "percent", metric("max(shed_host_cpu_percent)", "busy")))
-	b.add(12, 8, timeseries("Host memory", "bytes",
-		metric("max(shed_host_memory_bytes)", "used"),
-		metric("max(shed_host_memory_total_bytes)", "total"),
-	).limitLine("B"))
-}
-
 func shedOverview(b *board, _ string) {
+	b.link("Security", "/d/shed-security")
 	b.add(8, 4, stat("Host CPU", "percent", metricNow("max(shed_host_cpu_percent)", ""), "-"))
 	b.add(8, 4, stat("Host memory", "percentunit", metricNow("max(shed_host_memory_bytes) / max(shed_host_memory_total_bytes)", ""), "-"))
 	b.add(8, 4, stat("Host disk", "percentunit", metricNow("max(shed_host_disk_used_bytes) / max(shed_host_disk_total_bytes)", ""), "-"))
-	b.add(12, 8, bars("Deployments by outcome", "short",
-		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_deployments_total", shedRecorded), "$__rate_interval")), "{{outcome}}")))
-	b.add(12, 8, timeseries("Edge requests/s by status", "reqps", metric(statusClass("shed_http_requests_total"), "{{class}}")))
-	hostUsage(b)
+	for _, r := range []struct {
+		title string
+		build func(*board)
+	}{
+		{"Deploys", shedDeploys},
+		{"API & MCP", shedAPI},
+		{"Proxy", shedProxy},
+		{"Host & Docker", shedHost},
+		{"Backups", shedBackups},
+		{"Runtime", shedRuntime},
+		{"Telemetry", shedTelemetry},
+	} {
+		b.row(r.title)
+		r.build(b)
+	}
+	b.row("Log")
 	b.add(24, 12, logsPanel("shed log", logLines(shedLogs)))
 }
 
-func shedDeploys(b *board, _ string) {
+func shedDeploys(b *board) {
 	b.add(12, 8, timeseries("Stage duration p95", "s",
 		metric(quantile(0.95, "stage, le", sel("shed_deploy_stage_duration_seconds_bucket", shedRecorded)), "{{stage}}")))
 	b.add(12, 8, bars("Outcomes", "short",
@@ -404,7 +416,7 @@ func shedDeploys(b *board, _ string) {
 		metric(fmt.Sprintf("sum(%s)", rate(sel("shed_docker_request_duration_seconds_count", shedSelf, `op=~"(?i).*pull.*"`))), "pulls")))
 }
 
-func shedAPI(b *board, _ string) {
+func shedAPI(b *board) {
 	spans := sel("shed_span_duration_seconds_count", shedSelf)
 	b.add(12, 8, timeseries("Requests/s by route", "reqps",
 		metric(fmt.Sprintf("topk(15, sum by (span_name) (%s))", rate(spans)), "{{span_name}}")))
@@ -418,7 +430,7 @@ func shedAPI(b *board, _ string) {
 		metric(fmt.Sprintf("sum by (event, outcome) (%s)", rate(sel("shed_webhook_deliveries_total", shedSelf))), "{{event}} {{outcome}}")))
 }
 
-func shedProxy(b *board, _ string) {
+func shedProxy(b *board) {
 	b.add(12, 8, timeseries("Edge requests/s by status", "reqps", metric(statusClass("shed_http_requests_total"), "{{class}}")))
 	b.add(12, 8, timeseries("Edge requests/s by host", "reqps",
 		metric(fmt.Sprintf("topk(10, sum by (host) (%s))", rate("shed_http_requests_total")), "{{host}}")))
@@ -428,8 +440,12 @@ func shedProxy(b *board, _ string) {
 		metric(quantile(0.95, "le", sel("shed_route_apply_duration_seconds_bucket", shedSelf)), "p95")))
 }
 
-func shedHost(b *board, _ string) {
-	hostUsage(b)
+func shedHost(b *board) {
+	b.add(12, 8, timeseries("Host CPU", "percent", metric("max(shed_host_cpu_percent)", "busy")))
+	b.add(12, 8, timeseries("Host memory", "bytes",
+		metric("max(shed_host_memory_bytes)", "used"),
+		metric("max(shed_host_memory_total_bytes)", "total"),
+	).limitLine("B"))
 	b.add(8, 8, timeseries("Host network", "Bps",
 		metric("max(shed_host_network_rx_bytes_per_second)", "received"),
 		metric("max(shed_host_network_tx_bytes_per_second)", "sent"),
@@ -448,7 +464,7 @@ func shedHost(b *board, _ string) {
 		metric(quantile(0.95, "op, le", sel("shed_docker_request_duration_seconds_bucket", shedSelf)), "{{op}}")))
 }
 
-func shedBackups(b *board, _ string) {
+func shedBackups(b *board) {
 	mean := func(name string) string {
 		return fmt.Sprintf("sum(%s) / sum(%s)", rate(sel(name+"_sum", shedRecorded)), rate(sel(name+"_count", shedRecorded)))
 	}
@@ -461,7 +477,7 @@ func shedBackups(b *board, _ string) {
 	b.add(24, 10, logsPanel("Backup and upload log", logLines(shedLogs+" (backup or upload)")))
 }
 
-func shedRuntime(b *board, _ string) {
+func shedRuntime(b *board) {
 	b.add(12, 8, timeseries("Goroutines", "short", metric(sel("go_goroutine_count", shedSelf), "goroutines")))
 	b.add(12, 8, timeseries("Heap", "bytes",
 		metric(fmt.Sprintf("sum by (go_memory_type) (%s)", sel("go_memory_used_bytes", shedSelf)), "{{go_memory_type}}"),
@@ -476,7 +492,7 @@ func shedRuntime(b *board, _ string) {
 	))
 }
 
-func shedTelemetry(b *board, _ string) {
+func shedTelemetry(b *board) {
 	b.add(12, 8, timeseries("Ingested/s by signal", "ops",
 		metric(fmt.Sprintf("sum by (signal) (%s)", rate(sel("shed_telemetry_ingested_total", shedSelf))), "{{signal}}")))
 	b.add(12, 8, timeseries("Dropped/s by reason", "ops",
@@ -491,6 +507,7 @@ func shedTelemetry(b *board, _ string) {
 }
 
 func shedSecurity(b *board, _ string) {
+	b.link("Overview", "/d/shed-overview")
 	audit := stream(eq("shed.source", "audit"))
 	edge := stream(eq("shed.source", "edge"))
 	b.add(24, 10, logsPanel("Audit timeline", logLines(audit)))

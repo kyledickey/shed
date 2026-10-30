@@ -185,7 +185,7 @@ func TestIntegration(t *testing.T) {
 		if err := c.EnsureFolder(ctx, f); err != nil {
 			t.Fatal(err)
 		}
-		for _, d := range ServiceDashboards(id, kind) {
+		for _, d := range ServiceDashboards("proj00000000", id, kind) {
 			all = append(all, placed{f.UID, d})
 		}
 	}
@@ -211,7 +211,7 @@ func TestIntegration(t *testing.T) {
 		}
 	}
 	hits, err := c.SearchDashboards(ctx, SearchQuery{FolderUIDs: []string{ServiceFolder("app000000000")}})
-	if err != nil || len(hits) != 4 {
+	if err != nil || len(hits) != 1 {
 		t.Errorf("search app folder = %d hits, %v", len(hits), err)
 	}
 

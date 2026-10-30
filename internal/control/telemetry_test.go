@@ -64,7 +64,7 @@ func (d *fakeDashboards) List(context.Context, string) ([]observability.Dashboar
 }
 
 func (d *fakeDashboards) Reset(_ context.Context, uid string) error {
-	if uid != "svc-logs-s1" {
+	if uid != "svc-overview-s1" {
 		return observability.ErrNotDashboard
 	}
 	return nil
@@ -79,7 +79,7 @@ func (d *fakeDashboards) Service(context.Context, string) (observability.Service
 func TestDashboardsAudit(t *testing.T) {
 	f := newFixture(t)
 	ctx := audit.WithActor(context.Background(), audit.Actor{Kind: audit.User, Name: "octocat"})
-	if err := f.plane.ResetDashboard(ctx, "svc-logs-s1"); err != nil {
+	if err := f.plane.ResetDashboard(ctx, "svc-overview-s1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.plane.ResetDashboard(ctx, "elsewhere"); !errors.Is(err, observability.ErrNotDashboard) {
@@ -99,7 +99,7 @@ func TestDashboardsAudit(t *testing.T) {
 		got = append(got, event{e.Action, e.Target, e.Outcome})
 	}
 	want := []event{
-		{"telemetry.dashboard.reset", "svc-logs-s1", audit.OK},
+		{"telemetry.dashboard.reset", "svc-overview-s1", audit.OK},
 		{"telemetry.dashboard.reset", "elsewhere", audit.Failed},
 		{"telemetry.dashboards.restore", "", audit.OK},
 	}

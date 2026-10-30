@@ -127,7 +127,7 @@ func TestWebhookDeliveriesAreTracedAndCounted(t *testing.T) {
 	}
 }
 
-// fakeDashboards knows one dashboard, svc-logs-<service>, of every service,
+// fakeDashboards knows one dashboard, svc-overview-<service>, of every service,
 // and works while f.telemetry is on.
 type fakeDashboards struct {
 	telemetry *fakeTelemetry
@@ -145,7 +145,7 @@ func (d *fakeDashboards) Reset(_ context.Context, uid string) error {
 	if !d.telemetry.s.Enabled {
 		return observability.ErrDisabled
 	}
-	if !strings.HasPrefix(uid, "svc-logs-") {
+	if !strings.HasPrefix(uid, "svc-overview-") {
 		return observability.ErrNotDashboard
 	}
 	d.resets = append(d.resets, uid)
@@ -166,7 +166,7 @@ func (d *fakeDashboards) Service(_ context.Context, id string) (observability.Se
 	}
 	return observability.ServiceDashboards{
 		FolderURL:  "http://localhost/grafana/dashboards/f/s-" + id + "/",
-		Dashboards: []observability.DashboardLink{{UID: "svc-logs-" + id, Title: "Logs", URL: "http://localhost/grafana/d/svc-logs-" + id, Customized: true, Outdated: true}},
+		Dashboards: []observability.DashboardLink{{UID: "svc-overview-" + id, Title: "Overview", URL: "http://localhost/grafana/d/svc-overview-" + id, Customized: true, Outdated: true}},
 		Alerts:     []observability.Alert{{Name: "Service restarting", ServiceID: id, Since: time.Date(2026, 10, 27, 11, 0, 0, 0, time.UTC)}},
 	}, nil
 }
@@ -174,7 +174,7 @@ func (d *fakeDashboards) Service(_ context.Context, id string) (observability.Se
 func TestDashboardsAPI(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	reset := "/api/telemetry/dashboards/svc-logs-" + svc.ID + "/reset"
+	reset := "/api/telemetry/dashboards/svc-overview-" + svc.ID + "/reset"
 
 	off := f.decode(f.do("GET", "/api/services/"+svc.ID+"/telemetry", ""), http.StatusOK)
 	if off["folderUrl"] != "" || len(off["dashboards"].([]any)) != 0 || len(off["firingAlerts"].([]any)) != 0 {
@@ -192,7 +192,7 @@ func TestDashboardsAPI(t *testing.T) {
 		"listenerError": "",
 		"folderUrl":     "http://localhost/grafana/dashboards/f/s-" + svc.ID + "/",
 		"dashboards": []any{map[string]any{
-			"uid": "svc-logs-" + svc.ID, "title": "Logs", "url": "http://localhost/grafana/d/svc-logs-" + svc.ID,
+			"uid": "svc-overview-" + svc.ID, "title": "Overview", "url": "http://localhost/grafana/d/svc-overview-" + svc.ID,
 			"customized": true, "outdated": true,
 		}},
 		"firingAlerts": []any{map[string]any{"name": "Service restarting", "since": "2026-10-27T11:00:00Z"}},
@@ -208,7 +208,7 @@ func TestDashboardsAPI(t *testing.T) {
 	if rec := f.do("POST", "/api/telemetry/dashboards/restore", ""); rec.Code != http.StatusNoContent {
 		t.Errorf("restore = %d %s", rec.Code, rec.Body)
 	}
-	if !slices.Equal(f.dashboards.resets, []string{"svc-logs-" + svc.ID}) || f.dashboards.restores != 1 {
+	if !slices.Equal(f.dashboards.resets, []string{"svc-overview-" + svc.ID}) || f.dashboards.restores != 1 {
 		t.Errorf("resets %v, restores %d", f.dashboards.resets, f.dashboards.restores)
 	}
 

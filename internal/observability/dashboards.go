@@ -29,6 +29,7 @@ type DashboardStore interface {
 	GrafanaDashboards(ctx context.Context) ([]store.GrafanaDashboard, error)
 	PutGrafanaDashboard(ctx context.Context, d store.GrafanaDashboard) error
 	ForgetGrafanaFolder(ctx context.Context, folder string) error
+	ForgetGrafanaDashboard(ctx context.Context, uid string) error
 }
 
 var _ DashboardStore = (*store.Store)(nil)
@@ -40,6 +41,7 @@ type DashboardAPI interface {
 	EnsureFolder(ctx context.Context, f grafana.Folder) error
 	Dashboard(ctx context.Context, uid string) (grafana.DashboardMeta, error)
 	PutDashboard(ctx context.Context, folderUID string, dashboard json.RawMessage, replaces int) (int, error)
+	DeleteDashboard(ctx context.Context, uid string) error
 	CreateAnnotation(ctx context.Context, a grafana.Annotation) (int64, error)
 	FiringAlerts(ctx context.Context) ([]grafana.Alert, error)
 	SearchDashboards(ctx context.Context, q grafana.SearchQuery) ([]grafana.DashboardHit, error)
@@ -172,7 +174,7 @@ func scopes(projects []store.Project, services []store.Service) []scope {
 	}
 	for _, s := range services {
 		f := grafana.Folder{UID: grafana.ServiceFolder(s.ID), Title: s.Name, ParentUID: grafana.ProjectFolder(s.ProjectID)}
-		out = append(out, scope{f, grafana.ServiceDashboards(s.ID, s.Kind)})
+		out = append(out, scope{f, grafana.ServiceDashboards(s.ProjectID, s.ID, s.Kind)})
 	}
 	return out
 }
@@ -202,9 +204,10 @@ func (d *Dashboards) records(ctx context.Context) (map[string]store.GrafanaDashb
 }
 
 // reconcile makes every folder exist with its title and parent, creates or
-// updates the default dashboards as [grafana.Reconcile] decides, and
-// archives the folders of deleted projects and services. With restore, it
-// also recreates dashboards the user deleted.
+// updates the default dashboards as [grafana.Reconcile] decides, retires
+// recorded dashboards that are no longer defaults, and archives the folders
+// of deleted projects and services. With restore, it also recreates
+// dashboards the user deleted.
 func (d *Dashboards) reconcile(ctx context.Context, api DashboardAPI, restore bool) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -218,8 +221,12 @@ func (d *Dashboards) reconcile(ctx context.Context, api DashboardAPI, restore bo
 	}
 	var errs []error
 	kept := make(map[string]bool, len(all))
+	defaults := make(map[string]bool)
 	for _, s := range all {
 		kept[s.folder.UID] = true
+		for _, db := range s.dashboards {
+			defaults[db.UID] = true
+		}
 		if err := api.EnsureFolder(ctx, s.folder); err != nil {
 			errs = append(errs, err)
 			continue
@@ -234,8 +241,11 @@ func (d *Dashboards) reconcile(ctx context.Context, api DashboardAPI, restore bo
 	}
 	gone := make(map[string]bool)
 	for _, r := range recs {
-		if !kept[r.Folder] {
+		switch {
+		case !kept[r.Folder]:
 			gone[r.Folder] = true
+		case !defaults[r.UID]:
+			errs = append(errs, d.retire(ctx, api, r))
 		}
 	}
 	errs = append(errs, d.archive(ctx, api, gone))
@@ -285,6 +295,23 @@ func (d *Dashboards) sync(ctx context.Context, api DashboardAPI, folder string, 
 		return nil
 	}
 	return d.cfg.Store.PutGrafanaDashboard(ctx, row)
+}
+
+// retire handles rec, a dashboard whose template shed no longer has, as
+// after the Logs and HTTP dashboards became rows of Overview: it deletes the
+// dashboard unless a user saved it, and forgets it either way, so a
+// customized one stays as the user's own.
+func (d *Dashboards) retire(ctx context.Context, api DashboardAPI, rec store.GrafanaDashboard) error {
+	meta, err := api.Dashboard(ctx, rec.UID)
+	switch {
+	case err == nil && !rec.Customized && meta.Version == rec.GrafanaVersion:
+		if err := api.DeleteDashboard(ctx, rec.UID); err != nil {
+			return err
+		}
+	case err != nil && !errors.Is(err, grafana.ErrNotFound):
+		return err
+	}
+	return d.cfg.Store.ForgetGrafanaDashboard(ctx, rec.UID)
 }
 
 // archive moves the folders in gone, those of deleted projects and
@@ -417,7 +444,7 @@ func (d *Dashboards) Service(ctx context.Context, id string) (ServiceDashboards,
 		return ServiceDashboards{}, err
 	}
 	out := ServiceDashboards{FolderURL: d.cfg.GrafanaURL + "dashboards/f/" + grafana.ServiceFolder(id) + "/"}
-	for _, db := range grafana.ServiceDashboards(svc.ID, svc.Kind) {
+	for _, db := range grafana.ServiceDashboards(svc.ProjectID, svc.ID, svc.Kind) {
 		link := DashboardLink{UID: db.UID, Title: db.Title, URL: d.cfg.GrafanaURL + "d/" + db.UID}
 		if rec, ok := recs[db.UID]; ok && rec.Customized {
 			link.Customized, link.Outdated = true, db.Version > rec.TemplateVersion

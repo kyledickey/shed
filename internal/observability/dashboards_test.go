@@ -8,6 +8,7 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -98,6 +99,13 @@ func (g *fakeDashboardAPI) PutDashboard(_ context.Context, folder string, js jso
 	cur.folder, cur.json = folder, string(js)
 	cur.version++
 	return cur.version, nil
+}
+
+func (g *fakeDashboardAPI) DeleteDashboard(_ context.Context, uid string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.dashboards, uid)
+	return nil
 }
 
 func (g *fakeDashboardAPI) CreateAnnotation(_ context.Context, a grafana.Annotation) (int64, error) {
@@ -284,8 +292,8 @@ func TestDashboardsCreate(t *testing.T) {
 	placed := map[string][]grafana.Dashboard{
 		grafana.ShedFolder:                  grafana.ShedDashboards(),
 		grafana.ProjectFolder(h.project.ID): grafana.ProjectDashboards(h.project.ID),
-		grafana.ServiceFolder(h.app.ID):     grafana.ServiceDashboards(h.app.ID, "app"),
-		grafana.ServiceFolder(h.db.ID):      grafana.ServiceDashboards(h.db.ID, "postgres"),
+		grafana.ServiceFolder(h.app.ID):     grafana.ServiceDashboards(h.project.ID, h.app.ID, "app"),
+		grafana.ServiceFolder(h.db.ID):      grafana.ServiceDashboards(h.project.ID, h.db.ID, "postgres"),
 	}
 	n := 0
 	for folder, ds := range placed {
@@ -303,8 +311,8 @@ func TestDashboardsCreate(t *testing.T) {
 			}
 		}
 	}
-	if !slices.ContainsFunc(placed[grafana.ServiceFolder(h.db.ID)], func(d grafana.Dashboard) bool { return d.Template == "svc-postgres" }) {
-		t.Error("the postgres service has no Postgres dashboard")
+	if !strings.Contains(h.api.dashboard("svc-overview-"+h.db.ID).json, "pg_stat_activity_count") {
+		t.Error("the postgres service's Overview has no Postgres panels")
 	}
 
 	h.reconcile(t)
@@ -324,12 +332,11 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 	h := newDashboardsHarness(t)
 	ctx := context.Background()
 	h.reconcile(t)
-	ds := grafana.ServiceDashboards(h.app.ID, "app")
-	overview := template(t, "svc-overview-"+h.app.ID, ds)
-	logs := template(t, "svc-logs-"+h.app.ID, ds)
+	overview := template(t, "svc-overview-"+h.app.ID, grafana.ServiceDashboards(h.project.ID, h.app.ID, "app"))
+	security := template(t, "shed-security", grafana.ShedDashboards())
 
 	// Pretend shed wrote an older template of both.
-	for _, d := range []grafana.Dashboard{overview, logs} {
+	for _, d := range []grafana.Dashboard{overview, security} {
 		h.api.dashboards[d.UID].json = `{"uid":"` + d.UID + `","title":"old"}`
 		rec, _ := h.record(t, d.UID)
 		rec.TemplateVersion = d.Version - 1
@@ -337,7 +344,7 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.api.userSave(t, logs.UID)
+	h.api.userSave(t, security.UID)
 	h.reconcile(t)
 
 	if got := h.api.dashboard(overview.UID); got.json != string(overview.JSON) || got.version != 2 {
@@ -346,12 +353,12 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 	if rec, _ := h.record(t, overview.UID); rec.TemplateVersion != overview.Version || rec.GrafanaVersion != 2 || rec.Customized {
 		t.Errorf("overview record = %+v, want template %d at Grafana version 2", rec, overview.Version)
 	}
-	if got := h.api.dashboard(logs.UID); got.json == string(logs.JSON) || got.version != 2 {
-		t.Errorf("customized logs dashboard overwritten: version %d %s", got.version, got.json)
+	if got := h.api.dashboard(security.UID); got.json == string(security.JSON) || got.version != 2 {
+		t.Errorf("customized security dashboard overwritten: version %d %s", got.version, got.json)
 	}
-	rec, _ := h.record(t, logs.UID)
-	if !rec.Customized || rec.GrafanaVersion != 2 || rec.TemplateVersion != logs.Version-1 {
-		t.Errorf("logs record = %+v, want customized at Grafana version 2, template %d", rec, logs.Version-1)
+	rec, _ := h.record(t, security.UID)
+	if !rec.Customized || rec.GrafanaVersion != 2 || rec.TemplateVersion != security.Version-1 {
+		t.Errorf("security record = %+v, want customized at Grafana version 2, template %d", rec, security.Version-1)
 	}
 
 	h.start(t)
@@ -362,37 +369,31 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 	if want := "https://shed.example.com/grafana/dashboards/f/" + grafana.ServiceFolder(h.app.ID) + "/"; sd.FolderURL != want {
 		t.Errorf("folder URL = %q, want %q", sd.FolderURL, want)
 	}
-	wantLinks := []DashboardLink{
-		{UID: overview.UID, Title: "Overview", URL: "https://shed.example.com/grafana/d/" + overview.UID},
-		{UID: logs.UID, Title: "Logs", URL: "https://shed.example.com/grafana/d/" + logs.UID, Customized: true, Outdated: true},
-	}
-	if got := sd.Dashboards[:2]; !slices.Equal(got, wantLinks) {
-		t.Errorf("dashboards = %+v, want %+v", got, wantLinks)
-	}
-	if len(sd.Dashboards) != len(ds) {
-		t.Errorf("%d dashboards listed, want %d", len(sd.Dashboards), len(ds))
+	wantLinks := []DashboardLink{{UID: overview.UID, Title: "Overview", URL: "https://shed.example.com/grafana/d/" + overview.UID}}
+	if !slices.Equal(sd.Dashboards, wantLinks) {
+		t.Errorf("dashboards = %+v, want %+v", sd.Dashboards, wantLinks)
 	}
 
-	list, err := h.d.List(ctx, grafana.ServiceFolder(h.app.ID))
+	list, err := h.d.List(ctx, grafana.ShedFolder)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantList := []Dashboard{
-		{UID: logs.UID, Title: "mine", Folder: "web", URL: "https://shed.example.com/grafana/d/" + logs.UID, Customized: true, Outdated: true},
-		{UID: overview.UID, Title: "Overview", Folder: "web", URL: "https://shed.example.com/grafana/d/" + overview.UID},
+		{UID: "shed-overview", Title: "Overview", Folder: "shed", URL: "https://shed.example.com/grafana/d/shed-overview"},
+		{UID: security.UID, Title: "mine", Folder: "shed", URL: "https://shed.example.com/grafana/d/" + security.UID, Customized: true, Outdated: true},
 	}
-	if len(list) != len(ds) || !slices.Equal(list[1:3], wantList) {
+	if !slices.Equal(list, wantList) {
 		t.Errorf("List = %+v, want %+v", list, wantList)
 	}
 
-	if err := h.d.Reset(ctx, logs.UID); err != nil {
+	if err := h.d.Reset(ctx, security.UID); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.api.dashboard(logs.UID); got.json != string(logs.JSON) || got.version != 3 {
+	if got := h.api.dashboard(security.UID); got.json != string(security.JSON) || got.version != 3 {
 		t.Errorf("after reset: version %d %s, want the template at version 3", got.version, got.json)
 	}
-	if rec, _ := h.record(t, logs.UID); rec.Customized || rec.TemplateVersion != logs.Version || rec.GrafanaVersion != 3 {
-		t.Errorf("record after reset = %+v, want not customized at template %d, Grafana version 3", rec, logs.Version)
+	if rec, _ := h.record(t, security.UID); rec.Customized || rec.TemplateVersion != security.Version || rec.GrafanaVersion != 3 {
+		t.Errorf("record after reset = %+v, want not customized at template %d, Grafana version 3", rec, security.Version)
 	}
 	if err := h.d.Reset(ctx, "svc-overview-elsewhere"); !errors.Is(err, ErrNotDashboard) {
 		t.Errorf("Reset of an unknown UID = %v, want ErrNotDashboard", err)
@@ -402,7 +403,7 @@ func TestDashboardsOverwriteUnlessCustomized(t *testing.T) {
 func TestDashboardsLostRecord(t *testing.T) {
 	h := newDashboardsHarness(t)
 	h.reconcile(t)
-	uid := "svc-http-" + h.app.ID
+	uid := "svc-overview-" + h.app.ID
 	if err := h.st.ForgetGrafanaFolder(context.Background(), grafana.ServiceFolder(h.app.ID)); err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +421,7 @@ func TestDashboardsDeletedByUserStayGone(t *testing.T) {
 	h := newDashboardsHarness(t)
 	ctx := context.Background()
 	h.reconcile(t)
-	uid := "svc-traces-" + h.app.ID
+	uid := "svc-overview-" + h.db.ID
 	h.api.userDelete(uid)
 	h.reconcile(t)
 	if h.api.dashboard(uid) != nil {
@@ -434,11 +435,50 @@ func TestDashboardsDeletedByUserStayGone(t *testing.T) {
 	if err := h.d.Restore(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.api.dashboard(uid); got == nil || got.folder != grafana.ServiceFolder(h.app.ID) {
+	if got := h.api.dashboard(uid); got == nil || got.folder != grafana.ServiceFolder(h.db.ID) {
 		t.Fatalf("after Restore: %+v, want it back in the service folder", got)
 	}
 	if rec, _ := h.record(t, uid); rec.Customized || rec.GrafanaVersion != 1 {
 		t.Errorf("record after Restore = %+v", rec)
+	}
+}
+
+// TestDashboardsRetire checks that dashboards whose templates are gone, as
+// the Logs and HTTP dashboards that became rows of Overview, are deleted
+// unless a user saved them, and forgotten either way.
+func TestDashboardsRetire(t *testing.T) {
+	h := newDashboardsHarness(t)
+	ctx := context.Background()
+	h.reconcile(t)
+	folder := grafana.ServiceFolder(h.app.ID)
+	old := map[string]bool{"svc-logs-" + h.app.ID: false, "svc-http-" + h.app.ID: true, "shed-deploys": false}
+	for uid, customized := range old {
+		f := folder
+		if !strings.HasPrefix(uid, "svc-") {
+			f = grafana.ShedFolder
+		}
+		v, err := h.api.PutDashboard(ctx, f, json.RawMessage(`{"uid":"`+uid+`","title":"old"}`), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := h.st.PutGrafanaDashboard(ctx, store.GrafanaDashboard{UID: uid, Template: "old", Folder: f, TemplateVersion: 1, GrafanaVersion: v}); err != nil {
+			t.Fatal(err)
+		}
+		if customized {
+			h.api.userSave(t, uid)
+		}
+	}
+	h.reconcile(t)
+	for uid, customized := range old {
+		if got := h.api.dashboard(uid) != nil; got != customized {
+			t.Errorf("%s in Grafana = %v, want %v", uid, got, customized)
+		}
+		if _, ok := h.record(t, uid); ok {
+			t.Errorf("%s still recorded", uid)
+		}
+	}
+	if h.api.dashboard("svc-overview-"+h.app.ID) == nil || h.api.dashboard("shed-overview") == nil {
+		t.Error("retiring removed a current dashboard")
 	}
 }
 

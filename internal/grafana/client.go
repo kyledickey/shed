@@ -167,6 +167,16 @@ func (c *Client) PutDashboard(ctx context.Context, folderUID string, dashboard j
 	return resp.Version, nil
 }
 
+// DeleteDashboard deletes the dashboard with uid. A missing dashboard is
+// not an error.
+func (c *Client) DeleteDashboard(ctx context.Context, uid string) error {
+	err := c.do(ctx, http.MethodDelete, "/api/dashboards/uid/"+url.PathEscape(uid), nil, nil)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("grafana: delete dashboard %s: %w", uid, err)
+	}
+	return nil
+}
+
 // SearchQuery filters [Client.SearchDashboards]. Empty fields match all.
 type SearchQuery struct {
 	Query      string

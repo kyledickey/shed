@@ -64,6 +64,14 @@ func (s *Store) ForgetGrafanaFolder(ctx context.Context, folder string) error {
 	return nil
 }
 
+// ForgetGrafanaDashboard deletes the record of dashboard uid.
+func (s *Store) ForgetGrafanaDashboard(ctx context.Context, uid string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM grafana_dashboards WHERE uid = ?`, uid); err != nil {
+		return fmt.Errorf("store: forget grafana dashboard %s: %w", uid, err)
+	}
+	return nil
+}
+
 // DeleteGrafanaDashboards deletes every dashboard record.
 func (s *Store) DeleteGrafanaDashboards(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM grafana_dashboards`); err != nil {
