@@ -50,6 +50,11 @@ jobs:
   ci:
     needs: version
     if: needs.version.outputs.tag != ''
+    # Covers every job in ci.yml, including the pull request size comment,
+    # which never runs here.
+    permissions:
+      contents: read
+      pull-requests: write
     uses: ./.github/workflows/ci.yml
     with:
       integration: true
