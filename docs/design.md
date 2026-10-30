@@ -2208,9 +2208,30 @@ from GitHub or deployed manually.
 
 ## Releases and updates
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
-dashboard once and `shed` for `linux/amd64` and `linux/arm64`
-(`CGO_ENABLED=0`, `-X main.version=<tag>`) and publishes a GitHub release
+A release is cut by committing a new `## vX.Y.Z - date` section at the top
+of `CHANGELOG.md` to `main`. `.github/workflows/release.yml` runs on pushes to
+`main` that change `CHANGELOG.md`; when the newest section's version has no
+tag yet, it runs CI with the integration tests and then publishes that
+version with the section's body as the notes. The **Prepare release**
+workflow (`prepare-release.yml`, run by hand with a version) writes that
+section with `.github/scripts/release-notes.sh` from the commits since the
+last stable tag and opens a pull request with it; merging the pull request
+releases. Release notes follow `.github/release-notes.md`.
+
+`.github/workflows/nightly.yml` runs daily at 07:00 UTC and on demand. When
+`main` has commits since the newest tag, it publishes them as the pre-release
+`vX.Y.Z-nightly.N`, where `vX.Y.Z` is the patch release after the newest
+stable tag and `N` counts up from 1. It runs CI with the integration tests
+first, and its notes are written from the commits since the previous tag and
+not added to `CHANGELOG.md`. While nightlies fail it keeps one open issue,
+"Nightly release failing", and closes it on the next success. Nightlies are
+never deleted.
+
+Both call `.github/workflows/_release.yml`, which builds the dashboard once
+and `shed` for `linux/amd64` and `linux/arm64` (`CGO_ENABLED=0`,
+`-X main.version=<tag>`) in a job with no secrets, signs `checksums.txt` in a
+job that gets only the built files and the minisign key, and publishes a
+GitHub release (a pre-release, not marked latest, for tags with a suffix)
 with:
 
 - `shed_<version>_linux_<arch>.tar.gz` (version without the `v`), holding
@@ -2220,21 +2241,44 @@ with:
   the `MINISIGN_SECRET_KEY` repository secret
 - `install.sh`
 
-The release notes are the tag's `## vX.Y.Z - date` section of `CHANGELOG.md`;
-the release fails if there is none, so add the entry before tagging. The
-dashboard shows those notes for the latest release.
+The archives get GitHub build provenance attestations
+(`gh attestation verify <archive> --repo kyledickey/shed`). A stable release
+also moves the `stable` branch to its commit; shed.land deploys from
+`stable`, so the public site matches the latest stable release. The
+dashboard shows the latest release's notes.
 
-Tags with a pre-release suffix (`v1.2.0-rc.1`) publish pre-releases, which
-the update check ignores. `.github/workflows/ci.yml` runs gofmt, vet,
-`go test -race`, the dashboard checks, tests, and build (failing if
-`routeTree.gen.ts` is stale), and shellcheck on every pull request and push
-to `main`.
+The notes script runs an OpenCode agent (`opencode-ai`; model from the
+`NOTES_MODEL` repository variable, default `opencode-go/kimi-k3`; key from the
+`OPENCODE_API_KEY` secret) that may only read the repository, run `git log`,
+`git show`, and `git diff`, and write files, in a job with a read-only token.
+If it fails, the notes are the list of commits.
 
-`internal/update` checks `GET https://api.github.com/repos/<repo>/releases/latest`
-one minute after start and then every 6 hours; `POST /api/update/check` checks
-now. A release is newer when its tag is a greater semver than the running
-version. Development builds (`version` not a semver tag) report
-`unsupported` and never download or install.
+`.github/workflows/ci.yml` runs on every pull request and push to `main`:
+gofmt, vet, `go test -race`, and govulncheck when Go files change; the
+dashboard checks, tests, and build (failing if `routeTree.gen.ts` is stale)
+when `web/` changes; a build of both release binaries with the real
+dashboard, uploaded as an artifact; shellcheck, actionlint, and zizmor. On
+pull requests it comments the binary and dashboard sizes against the base.
+`ci-ok` fails if any job failed and is the check to require. Integration
+tests (the `integration` build tag) run in releases, nightlies, and when CI
+is run by hand. Dependabot updates actions, Go
+modules, and dashboard packages weekly, waiting 7 days after a release.
+
+`internal/update` checks for the latest release on the update channel one
+minute after start and then every 6 hours; `POST /api/update/check` checks
+now. The channel is `update.channel` in `settings`, `stable` or `nightly`;
+unset, it is `nightly` when the running version has a semver pre-release
+suffix (`v1.3.0-nightly.4`) and `stable` otherwise. `stable` checks
+`GET https://api.github.com/repos/<repo>/releases/latest`, which excludes
+drafts and pre-releases. `nightly` lists
+`GET https://api.github.com/repos/<repo>/releases?per_page=30` and takes the
+highest semver tag that is not a draft, stable releases included. A release
+is newer when its tag is a greater semver than the running version, so shed
+never downgrades: switching from `nightly` to `stable` offers no update until
+a stable release is newer than the running nightly. Changing the channel
+discards the latest release and any staged download, then checks again.
+Development builds (`version` not a semver tag; `make build` stamps
+`dev-<git describe>`) report `unsupported` and never download or install.
 
 Downloading fetches `checksums.txt` and its signature, verifies the signature
 with the minisign public key built into shed, downloads the archive for
@@ -2351,7 +2395,7 @@ GET    /api/backups/settings/key                → { identity: string }  (age s
 GET    /api/update                              → UpdateStatus
 POST   /api/update/check                        → UpdateStatus  (checks GitHub now; a failed check is reported in error; 409 if unsupported or busy)
 POST   /api/update/download                     202 → UpdateStatus  (409 if unsupported, no newer release, or busy)
-PUT    /api/update/settings  {autoDownload}     → UpdateStatus
+PUT    /api/update/settings  {autoDownload?, channel?}  → UpdateStatus  (at least one; channel "stable" or "nightly", 400 otherwise)
 POST   /api/update/install                      202 → UpdateStatus  (state restarting; 409 if nothing is downloaded or busy; then shed restarts)
 
 GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → LogPage  (see Telemetry → Log history; 400 for a bad parameter, 409 if telemetry is off)
@@ -2437,7 +2481,7 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `list_variables` | `service_id` | `{variables: [{name, injected?, reference?}], resolveError?}` (`VariableNames`): names only |
 | `list_backups` | `service_id` | `{policy, backups (newest 20), omitted?, restore?}` |
 | `shed_log` | `lines?` | text: last lines of shed's own log (`ShedLog`) |
-| `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
+| `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, channel, unsupported?}` |
 | `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
 | `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
 | `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
@@ -2629,8 +2673,9 @@ type Release = {
   publishedAt: string;
 };
 type UpdateState = "idle" | "checking" | "downloading" | "restarting";
+type UpdateChannel = "stable" | "nightly";
 type UpdateStatus = {
-  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  current: string;                     // running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234"
   latest: Release | null;              // null until a check succeeds
   available: boolean;                  // latest is newer than current
   checkedAt: string | null;            // last successful check
@@ -2638,6 +2683,7 @@ type UpdateStatus = {
   staged: string;                      // verified version ready to install, "" if none
   error: string;                       // last check or download failure, "" if none
   autoDownload: boolean;
+  channel: UpdateChannel;
   unsupported: string;                 // why this build cannot update itself, "" if it can
 };
 type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };

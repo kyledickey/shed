@@ -139,6 +139,13 @@ cd web && bunx vp check          # format, lint, typecheck
 
 Runtime requirements: Linux, Docker with buildx, `git`, and `railpack`.
 
+## Releases
+
+Don't push tags. A stable release is a new `## vX.Y.Z - date` section at
+the top of `CHANGELOG.md` landing on `main`; the **Prepare release** workflow
+writes one and opens a pull request. Nightlies publish themselves. See
+"Releases and updates" in `docs/design.md`.
+
 ## Commits
 
 Use short, standard commit messages with little or no body. Don't add

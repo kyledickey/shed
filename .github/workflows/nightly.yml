@@ -1,0 +1,125 @@
+name: Nightly
+
+# Publishes main as a pre-release, vX.Y.Z-nightly.N where vX.Y.Z is the
+# release after the newest stable one, on days with new commits. It runs CI
+# with the integration tests first, and keeps one open issue while it fails.
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      from: ${{ steps.version.outputs.from }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
+        run: |
+          set -euo pipefail
+          from="$(git describe --tags --abbrev=0)"
+          if [ "$(git rev-list --count "$from..HEAD")" = 0 ]; then
+            echo "No commits since $from."
+            exit 0
+          fi
+          stable="$(git describe --tags --abbrev=0 --exclude '*-*')"
+          IFS=. read -r major minor patch <<<"${stable#v}"
+          base="v$major.$minor.$((patch + 1))"
+          last="$(git tag -l "$base-nightly.*" | sed 's/.*-nightly\.//' | sort -n | tail -1)"
+          {
+            echo "tag=$base-nightly.$((${last:-0} + 1))"
+            echo "from=$from"
+            echo "sha=$(git rev-parse HEAD)"
+          } >>"$GITHUB_OUTPUT"
+
+  ci:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      integration: true
+
+  notes:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - id: notes
+        env:
+          NOTES_MODEL: ${{ vars.NOTES_MODEL }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          FROM: ${{ needs.version.outputs.from }}
+        run: |
+          set -euo pipefail
+          .github/scripts/release-notes.sh "$FROM" HEAD notes.md
+          {
+            echo 'notes<<EOF_NOTES'
+            cat notes.md
+            echo EOF_NOTES
+          } >>"$GITHUB_OUTPUT"
+
+  release:
+    needs: [version, ci, notes]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/_release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+      ref: ${{ needs.version.outputs.sha }}
+      notes: ${{ needs.notes.outputs.notes }}
+    secrets:
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+
+  report:
+    needs: [version, ci, notes, release]
+    if: always() && needs.version.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+      TAG: ${{ needs.version.outputs.tag }}
+      RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - run: |
+          set -euo pipefail
+          title='Nightly release failing'
+          issue="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')"
+          if [ "$FAILED" = true ]; then
+            if [ -n "$issue" ]; then
+              gh issue comment "$issue" --body "$TAG failed again: $RUN"
+            else
+              gh issue create --title "$title" --body "$TAG failed: $RUN"
+            fi
+          elif [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "$TAG published: $RUN"
+          fi

@@ -1,0 +1,4 @@
+rules:
+  # The $/ syntax is new; ./ works and reads plainly.
+  self-repository:
+    disable: true

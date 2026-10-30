@@ -1,84 +1,69 @@
 name: Release
 
+# A push to main whose CHANGELOG.md starts with an untagged version releases
+# that version, with its section as the notes. Prepare release writes the
+# section; you can also write it by hand.
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: [CHANGELOG.md]
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
-
-  release:
-    needs: ci
+  version:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      TAG: ${{ github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
-      MINISIGN_PUBLIC_KEY: RWRBeRUdMkDg7PI7SQWikYL/5Evv0feGGQ07ZbVIfV5Q80snhMX7QaMK
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      notes: ${{ steps.version.outputs.notes }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: go.mod
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Build dashboard
-        working-directory: web
-        run: bun ci && bun run build
-
-      - name: Build archives
+          fetch-depth: 0
+          persist-credentials: false
+      - id: version
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            stage="$(mktemp -d)"
-            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-              go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o "$stage/shed" ./cmd/shed
-            cp deploy/shed.service deploy/shed.example.toml "$stage/"
-            tar -czf "dist/shed_${version}_linux_${arch}.tar.gz" -C "$stage" shed shed.service shed.example.toml
-          done
-          cd dist
-          sha256sum shed_*.tar.gz > checksums.txt
-          cat checksums.txt
-
-      - name: Sign checksums
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-        run: |
-          set -euo pipefail
-          keyfile="$(mktemp)"
-          trap 'rm -f "$keyfile"' EXIT
-          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile")
-          cd dist
-          go run aead.dev/minisign/cmd/minisign@v0.3.0 -S -W -s "$keyfile" -m checksums.txt
-          go run aead.dev/minisign/cmd/minisign@v0.3.0 -V -P "$MINISIGN_PUBLIC_KEY" -m checksums.txt
-
-      - name: Release notes
-        run: |
-          set -euo pipefail
-          # The tag's section of CHANGELOG.md, without its heading.
-          awk -v tag="$TAG" '
+          tag="$(awk '/^## v/ { print $2; exit }' CHANGELOG.md)"
+          if [ -z "$tag" ] || git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "Nothing to release: the newest CHANGELOG.md section ($tag) is already tagged."
+            exit 0
+          fi
+          # The section's body, without its heading.
+          awk -v tag="$tag" '
             /^## / { if (found) exit; found = ($2 == tag); next }
             found
-          ' CHANGELOG.md | sed -e '/./,$!d' > dist/notes.md
-          if [ ! -s dist/notes.md ]; then
-            echo "::error file=CHANGELOG.md::CHANGELOG.md has no section for $TAG"
-            exit 1
-          fi
-          cat dist/notes.md
+          ' CHANGELOG.md | sed -e '/./,$!d' > notes.md
+          {
+            echo "tag=$tag"
+            echo 'notes<<EOF_NOTES'
+            cat notes.md
+            echo EOF_NOTES
+          } >>"$GITHUB_OUTPUT"
 
-      - name: Publish release
-        run: |
-          set -euo pipefail
-          prerelease=()
-          if [[ "$TAG" == *-* ]]; then
-            prerelease=(--prerelease)
-          fi
-          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file dist/notes.md "${prerelease[@]}" \
-            dist/shed_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig deploy/install.sh
+  ci:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      integration: true
+
+  release:
+    needs: [version, ci]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/_release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+      ref: ${{ github.sha }}
+      notes: ${{ needs.version.outputs.notes }}
+    secrets:
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
