@@ -74,6 +74,8 @@ func TestLoadEnvOverridesFile(t *testing.T) {
 	t.Setenv("SHED_BUILD_CPUS", "1.5")
 	t.Setenv("SHED_BUILD_MIN_FREE_MB", "0")
 	t.Setenv("SHED_DEPLOYMENTS_LOG_MAX_MB", "5")
+	t.Setenv("SHED_TELEMETRY_GRAFANA_ADDR", "[::1]:3002")
+	t.Setenv("SHED_TELEMETRY_OTLP_PORT", "4319")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +85,9 @@ func TestLoadEnvOverridesFile(t *testing.T) {
 	}
 	if want := (Deployments{LogMaxMB: 5, Keep: 50}); cfg.Deployments != want {
 		t.Errorf("Deployments = %+v, want %+v", cfg.Deployments, want)
+	}
+	if cfg.Telemetry.GrafanaAddr != "[::1]:3002" || cfg.Telemetry.OTLPPort != 4319 || cfg.Telemetry.MetricsAddr != "127.0.0.1:8428" {
+		t.Errorf("Telemetry = %+v", cfg.Telemetry)
 	}
 	if cfg.Server.URL != "https://env.example.com" {
 		t.Errorf("Server.URL = %q", cfg.Server.URL)
@@ -103,6 +108,10 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative build memory", "[build]\nmemory_mb = -1\n", "build limits"},
 		{"negative build cpus", "[build]\ncpus = -0.5\n", "build limits"},
 		{"negative keep", "[deployments]\nkeep = -1\n", "deployments limits"},
+		{"public telemetry address", "[telemetry]\nmetrics_addr = \"0.0.0.0:8428\"\n", "telemetry.metrics_addr"},
+		{"telemetry host name", "[telemetry]\ngrafana_addr = \"localhost:3001\"\n", "telemetry.grafana_addr"},
+		{"telemetry address without port", "[telemetry]\nlogs_addr = \"127.0.0.1\"\n", "telemetry.logs_addr"},
+		{"bad otlp port", "[telemetry]\notlp_port = 0\n", "telemetry.otlp_port"},
 		{"bad toml", "[server\n", "load"},
 	}
 	for _, tt := range tests {

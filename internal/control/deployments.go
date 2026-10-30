@@ -59,25 +59,30 @@ func (p *Plane) Deployment(ctx context.Context, id string) (DeploymentView, erro
 
 // Deploy deploys the head of a service's branch, or its image.
 func (p *Plane) Deploy(ctx context.Context, serviceID string) (DeploymentView, error) {
-	svc, err := p.store.Service(ctx, serviceID)
+	dep, err := p.deploy(ctx, serviceID)
+	p.recordDeployment(ctx, err, "deployment.create", serviceID, dep, nil)
 	if err != nil {
 		return DeploymentView{}, err
+	}
+	return toDeployment(dep), nil
+}
+
+func (p *Plane) deploy(ctx context.Context, serviceID string) (store.Deployment, error) {
+	svc, err := p.store.Service(ctx, serviceID)
+	if err != nil {
+		return store.Deployment{}, err
 	}
 	var commit deploy.Commit
 	if svc.Kind == "app" && svc.Repo != "" {
 		if commit, err = p.branchHead(ctx, svc); err != nil {
-			return DeploymentView{}, err
+			return store.Deployment{}, err
 		}
 	}
 	// Under pushMu, so that a pending push cannot pass its check against
 	// the latest deployment and then supersede this one.
 	p.pushMu.Lock()
-	dep, err := p.deployer.Deploy(ctx, svc.ID, store.TriggerManual, commit)
-	p.pushMu.Unlock()
-	if err != nil {
-		return DeploymentView{}, err
-	}
-	return toDeployment(dep), nil
+	defer p.pushMu.Unlock()
+	return p.deployer.Deploy(ctx, svc.ID, store.TriggerManual, commit)
 }
 
 // Redeploy deploys the image of an earlier deployment again.
@@ -85,6 +90,8 @@ func (p *Plane) Redeploy(ctx context.Context, deploymentID string) (DeploymentVi
 	p.pushMu.Lock() // see Deploy
 	dep, err := p.deployer.Redeploy(ctx, deploymentID)
 	p.pushMu.Unlock()
+	p.recordDeployment(ctx, err, "deployment.redeploy", p.deploymentService(ctx, deploymentID), dep,
+		map[string]any{"from": deploymentID})
 	if err != nil {
 		return DeploymentView{}, err
 	}
@@ -95,9 +102,41 @@ func (p *Plane) Redeploy(ctx context.Context, deploymentID string) (DeploymentVi
 func (p *Plane) CancelDeployment(ctx context.Context, deploymentID string) (DeploymentView, error) {
 	dep, err := p.deployer.Cancel(ctx, deploymentID)
 	if err != nil {
+		dep.ID = deploymentID
+	}
+	p.recordDeployment(ctx, err, "deployment.cancel", p.deploymentService(ctx, deploymentID), dep, nil)
+	if err != nil {
 		return DeploymentView{}, err
 	}
 	return toDeployment(dep), nil
+}
+
+// deploymentService returns the ID of the service of a deployment, or "" if
+// there is no such deployment.
+func (p *Plane) deploymentService(ctx context.Context, deploymentID string) string {
+	d, err := p.store.Deployment(ctx, deploymentID)
+	if err != nil {
+		return ""
+	}
+	return d.ServiceID
+}
+
+// recordDeployment records action on deployment dep of service serviceID,
+// with its trigger and commit.
+func (p *Plane) recordDeployment(ctx context.Context, err error, action, serviceID string, dep store.Deployment, detail map[string]any) {
+	svc, lerr := p.store.Service(ctx, serviceID)
+	if lerr != nil {
+		svc = store.Service{ID: serviceID}
+	}
+	e := serviceEvent(action, svc, detail)
+	e.Target = dep.ID
+	if dep.Trigger != "" {
+		e.Detail["trigger"] = dep.Trigger
+	}
+	if dep.CommitSHA != "" {
+		e.Detail["commit"] = dep.CommitSHA
+	}
+	p.record(ctx, err, e)
 }
 
 // MaxLogLines is the most lines BuildLog, RuntimeLogs, and ShedLog return.

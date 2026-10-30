@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/variables"
 )
@@ -36,14 +37,27 @@ func (p *Plane) OnePasswordVaults(ctx context.Context, token string) ([]onepassw
 // 1Password fails partway, shed.db keeps the variables and connecting again
 // picks up where it stopped.
 func (p *Plane) ConnectOnePassword(ctx context.Context, token, vault string) (variables.Status, error) {
+	err := p.connectOnePassword(ctx, token, vault)
+	status, serr := p.variables.Status(ctx)
+	if err == nil {
+		err = serr
+	}
+	p.record(ctx, err, audit.Event{Action: "onepassword.connect", Detail: map[string]any{"vault": status.Vault}})
+	if err != nil {
+		return variables.Status{}, err
+	}
+	return status, nil
+}
+
+func (p *Plane) connectOnePassword(ctx context.Context, token, vault string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return variables.Status{}, errorf(ErrInvalid, "a service account token is required")
+		return errorf(ErrInvalid, "a service account token is required")
 	}
 	if err := p.variables.Connect(ctx, token, strings.TrimSpace(vault)); err != nil {
-		return variables.Status{}, onePasswordError(ctx, err)
+		return onePasswordError(ctx, err)
 	}
-	return p.variables.Status(ctx)
+	return nil
 }
 
 // onePasswordError makes a rejected token or a missing vault an invalid
@@ -64,7 +78,10 @@ func onePasswordError(ctx context.Context, err error) error {
 // into shed.db and forgets the token. The vault and its items stay in
 // 1Password. If 1Password fails, nothing changes.
 func (p *Plane) DisconnectOnePassword(ctx context.Context) (variables.Status, error) {
-	if err := p.variables.Disconnect(ctx); err != nil {
+	was, _ := p.variables.Status(ctx)
+	err := p.variables.Disconnect(ctx)
+	p.record(ctx, err, audit.Event{Action: "onepassword.disconnect", Detail: map[string]any{"vault": was.Vault}})
+	if err != nil {
 		return variables.Status{}, err
 	}
 	return p.variables.Status(ctx)

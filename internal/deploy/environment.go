@@ -67,6 +67,14 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 	if err != nil {
 		return Resolved{}, err
 	}
+	telemetry, err := d.telemetryOn(ctx)
+	if err != nil {
+		return Resolved{}, err
+	}
+	otlp := ""
+	if telemetry {
+		otlp = d.otlp
+	}
 	type layers struct {
 		svc      store.Service
 		injected map[string]string
@@ -84,7 +92,7 @@ func (d *Deployer) environment(ctx context.Context, svc store.Service, project s
 			commit = sha
 			s.Port = svc.Port
 		}
-		byName[s.Name] = &layers{svc: s, injected: injected(project, s, domains, commit)}
+		byName[s.Name] = &layers{svc: s, injected: injected(project, s, domains, commit, otlp)}
 	}
 	own := func(l *layers) (map[string]string, error) {
 		if !l.read {

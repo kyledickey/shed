@@ -79,8 +79,13 @@ func New(cfg Config) (*Client, error) {
 	if cfg.PathStyle {
 		lookup = minio.BucketLookupPath
 	}
+	base, err := minio.DefaultTransport(u.Scheme == "https")
+	if err != nil {
+		return nil, fmt.Errorf("s3: create transport: %w", err)
+	}
 	mc, err := minio.New(u.Host, &minio.Options{
 		Creds:        credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
+		Transport:    tracedTransport(base),
 		Secure:       u.Scheme == "https",
 		Region:       cfg.Region,
 		BucketLookup: lookup,

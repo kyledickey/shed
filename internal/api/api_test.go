@@ -22,12 +22,14 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/variables"
@@ -122,6 +124,16 @@ func (f *fakeDeployer) DeleteVolume(context.Context, string) error       { retur
 func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
 	return deploy.Resolved{Env: map[string]string{}}, nil
 }
+func (f *fakeDeployer) RuntimeSecrets(_ context.Context, dep store.Deployment) ([]string, error) {
+	if dep.Runtime == nil {
+		return nil, nil
+	}
+	var values []string
+	for _, k := range dep.Runtime.SecretKeys {
+		values = append(values, dep.Runtime.Env[k])
+	}
+	return values, nil
+}
 func (f *fakeDeployer) RuntimeLogs(context.Context, string, int, bool, io.Writer) error {
 	return deploy.ErrNoContainer
 }
@@ -186,6 +198,10 @@ type fixture struct {
 	onePassword *fakeOnePassword
 	restarts    int
 	github      *GitHubHolder
+	telemetry   *fakeTelemetry
+	dashboards  *fakeDashboards
+	grafana     *fakeGrafana
+	logStore    *fakeLogStore
 	server      *Server
 	handler     http.Handler
 	cookie      *http.Cookie
@@ -201,17 +217,26 @@ func newFixture(t *testing.T) *fixture {
 
 	log := slog.New(slog.DiscardHandler)
 	gh := &GitHubHolder{}
-	authn := auth.New(AuthStore(st), func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
+	auditLog := audit.New(st, log)
+	authn := auth.New(AuthStore(st), auditLog, func() (auth.OAuth, bool) { return nil, false }, "http://localhost", []string{"octocat"}, log)
 	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{st: st}, metrics: &fakeMetrics{}, updates: &fakeUpdates{}, github: gh}
 	f.onePassword = &fakeOnePassword{items: make(map[string]onepassword.Item)}
+	f.telemetry = &fakeTelemetry{s: observability.DefaultSettings()}
+	f.dashboards = &fakeDashboards{telemetry: f.telemetry}
+	f.grafana = newFakeGrafana(t)
+	f.logStore = &fakeLogStore{}
 	plane := control.New(control.Config{
-		Store:     st,
-		Deployer:  f.deployer,
-		Backups:   f.backups,
-		Metrics:   f.metrics,
-		Logs:      fakeLogs{},
-		Updates:   f.updates,
-		Variables: variables.New(st, f.onePassword),
+		Store:      st,
+		Deployer:   f.deployer,
+		Backups:    f.backups,
+		Metrics:    f.metrics,
+		Logs:       fakeLogs{},
+		Updates:    f.updates,
+		Variables:  variables.New(st, f.onePassword),
+		Audit:      auditLog,
+		Telemetry:  f.telemetry,
+		Dashboards: f.dashboards,
+		Stores:     control.TelemetryStores{Logs: f.logStore},
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {
 				return c, true
@@ -233,8 +258,9 @@ func newFixture(t *testing.T) *fixture {
 			"index.html":      {Data: []byte("<html>shed</html>")},
 			"assets/app-1.js": {Data: []byte("console.log(1)")},
 		},
-		MCP: mcp.New(mcp.Config{Backend: plane, Version: "test", Log: log}).Handler(),
-		Log: log,
+		MCP:         mcp.New(mcp.Config{Backend: plane, Version: "test", Log: log}).Handler(),
+		GrafanaAddr: f.grafana.addr,
+		Log:         log,
 	})
 	if err != nil {
 		t.Fatal(err)

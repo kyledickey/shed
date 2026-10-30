@@ -1,4 +1,5 @@
 import {
+  Activity,
   Check,
   CloudUpload,
   GitBranch,
@@ -24,6 +25,7 @@ const triggerLabels: Record<DeploymentTrigger, { label: string; icon: ReactNode 
   manual: { label: "Manual", icon: <Rocket size={12} /> },
   redeploy: { label: "Redeploy", icon: <RotateCcw size={12} /> },
   create: { label: "Created", icon: <CloudUpload size={12} /> },
+  telemetry: { label: "Telemetry", icon: <Activity size={12} /> },
 };
 
 type DeployRowProps = {

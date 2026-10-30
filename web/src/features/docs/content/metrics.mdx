@@ -2,7 +2,7 @@
 title: Metrics
 group: Running
 order: 90
-description: shed samples every running container and the host itself every 10 seconds, keeps a week of history in SQLite, and serves it as 180 evenly spaced buckets per chart.
+description: shed samples every running container and the host itself every 10 seconds, keeps a week of history in SQLite (or in VictoriaMetrics while telemetry is on), and serves it as 180 evenly spaced buckets per chart.
 ---
 
 import { SamplingDiagram } from "../components/metrics/diagrams";
@@ -24,6 +24,12 @@ disk    = Δbytes / Δseconds                          # block reads and writes
 ```
 
 CPU is a percentage of _one_ core, so a busy two-thread app can show 200%. A service's limit in the same units is `cpuLimit × 100`. During a zero-downtime deploy two containers of a service run side by side, and their rates are summed into one row per service per tick. Samples older than 7 days are deleted hourly.
+
+## With telemetry on
+
+While [telemetry](/docs/telemetry) is on, the collector pushes each tick to VictoriaMetrics instead of writing SQLite, and the charts read it from there. The series are `shed_container_cpu_percent`, `shed_container_memory_bytes`, `shed_container_network_{rx,tx}_bytes_per_second`, `shed_container_disk_{read,write}_bytes_per_second`, the limits `shed_container_cpu_limit_percent` and `shed_container_memory_limit_bytes` (0 is unlimited), and the host's `shed_host_*`, including `shed_host_memory_total_bytes` and `shed_host_disk_total_bytes`. They carry the service's `shed_*` labels, and the same names work in Grafana and in the `query_metrics` [MCP tool](/docs/mcp).
+
+The charts are the same: 180 buckets of the same width, aligned the same way, each the average of the samples in it. If VictoriaMetrics fails, has no samples in the window, or telemetry is off, the charts read SQLite, which has nothing for the time telemetry was on. A tick that VictoriaMetrics refuses is stored in SQLite instead.
 
 ## Host metrics
 

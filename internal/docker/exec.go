@@ -43,6 +43,7 @@ func (c *Client) Exec(ctx context.Context, id string, cmd []string, stdin io.Rea
 	if err != nil {
 		return fmt.Errorf("docker: exec in %s: create: %w", id, err)
 	}
+	c.execs.add(created.ID)
 	hr, err := c.api.ExecAttach(ctx, created.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return fmt.Errorf("docker: exec in %s: attach: %w", id, err)

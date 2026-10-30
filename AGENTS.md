@@ -29,13 +29,20 @@ internal/vars      ${{ KEY }} / ${{ service.KEY }} reference resolution
 internal/onepassword 1Password vault and item operations (service account)
 internal/variables where variables live: shed.db or a 1Password vault
 internal/catalog   database templates
+internal/telemetry shed's own OpenTelemetry providers, slog bridge, annotation events
+internal/otlp      OTLP/HTTP receiver: decode, attribution, masking, caps
+internal/victoria  VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients
+internal/grafana   Grafana config, provisioning, HTTP API, dashboard templates
 internal/s3        S3-compatible object storage client
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
-internal/host      host resource usage from procfs, sysfs, and statfs
+internal/netns     TCP listeners inside other processes' network namespaces
+internal/host      host resource usage from procfs, sysfs, and statfs, conntrack flows
 internal/logtail   in-memory tail of shed's own log
 internal/metrics   container and host resource sampling, time series
 internal/backup    backups and restores: dumps, archives, zstd, age, schedules, S3
+internal/audit     audit log: actor in request context, recording, retention
 internal/update    release checks, verified downloads, replacing the binary
+internal/observability telemetry stack, ingest, shipping, exporters, dashboards
 internal/auth      sessions, GitHub sign-in, middleware, OAuth server for agents
 internal/control   operations and rules behind every interface (control.Plane)
 internal/mcp       read-only MCP server for agents, mounted at /mcp
@@ -51,15 +58,18 @@ Each package under `internal/` should work as a self-contained piece that
 can be understood, tested, and replaced on its own.
 
 - Leaf packages (`config`, `store`, `docker`, `build`, `proxy`, `github`,
-  `vars`, `catalog`, `host`, `logtail`, `s3`, `update`) import nothing from
-  `internal/`. Keep it that way.
+  `vars`, `catalog`, `netns`, `host`, `logtail`, `s3`, `update`,
+  `onepassword`, `telemetry`, `otlp`, `victoria`, `grafana`) import nothing
+  from `internal/`. Keep it that way.
 - Interfaces belong to the consumer. A package that needs another's behavior
   declares the small interface it uses (`deploy.Docker`, `auth.Store`, …)
   instead of importing a concrete type. `cmd/shed` wires real
   implementations together, with tiny adapters where needed.
 - Pass dependencies in explicitly: no package-level state, no `init` side
-  effects, no global loggers. The only exception is Caddy's process-global
-  state, which stays contained in `internal/proxy`.
+  effects, no global loggers. There are two exceptions. Caddy's
+  process-global state stays contained in `internal/proxy`. The OpenTelemetry
+  globals are registered once by `cmd/shed` through `internal/telemetry`, and
+  packages instrument through `otel.Tracer` and `otel.Meter`.
 - Keep APIs narrow. Export only what callers need. Prefer plain structs and
   functions over frameworks and abstractions.
 - New functionality goes in the package that owns it, or in a new leaf

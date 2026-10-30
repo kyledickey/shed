@@ -27,6 +27,11 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/github"
 )
 
@@ -77,9 +82,17 @@ type OAuth interface {
 
 var _ OAuth = (*github.Client)(nil)
 
+// Audit records sign-ins, grants, and denials. *audit.Log implements it.
+type Audit interface {
+	Record(ctx context.Context, e audit.Event)
+}
+
+var _ Audit = (*audit.Log)(nil)
+
 // Auth serves the sign-in endpoints and guards routes behind a session.
 type Auth struct {
 	store   Store
+	audit   Audit
 	oauth   func() (OAuth, bool)
 	baseURL string
 	allowed map[string]bool // Lowercase logins.
@@ -93,20 +106,28 @@ type Auth struct {
 
 	cleanMu   sync.Mutex
 	cleanedAt time.Time // Last removal of expired OAuth rows; guarded by cleanMu.
+
+	signinCount metric.Int64Counter
 }
 
-// New returns an Auth that keeps sessions in store. oauth reports the GitHub
-// client, or false until the GitHub App has been configured. baseURL is the
-// public dashboard URL; cookies are marked Secure when it is https.
+// New returns an Auth that keeps sessions in store and records sign-ins,
+// grants, and denials in rec. oauth reports the GitHub client, or false
+// until the GitHub App has been configured. baseURL is the public dashboard
+// URL; cookies are marked Secure when it is https.
 // allowedUsers are the GitHub logins permitted to sign in, compared without
 // regard to case.
-func New(store Store, oauth func() (OAuth, bool), baseURL string, allowedUsers []string, log *slog.Logger) *Auth {
+func New(store Store, rec Audit, oauth func() (OAuth, bool), baseURL string, allowedUsers []string, log *slog.Logger) *Auth {
 	allowed := make(map[string]bool, len(allowedUsers))
 	for _, login := range allowedUsers {
 		allowed[strings.ToLower(login)] = true
 	}
+	// Creating an instrument fails only for an invalid name, and the
+	// instrument returned works regardless.
+	signins, _ := otel.Meter("github.com/kyledickey/shed/internal/auth").Int64Counter("shed_signins_total",
+		metric.WithDescription("Dashboard sign-ins through GitHub, by outcome."))
 	return &Auth{
 		store:   store,
+		audit:   rec,
 		oauth:   oauth,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		allowed: allowed,
@@ -116,6 +137,7 @@ func New(store Store, oauth func() (OAuth, bool), baseURL string, allowedUsers [
 		requests:      newRequests(),
 		signins:       newRequests(),
 		registrations: newLimiter(registerBurst, registerPeriod, maxRegistrants),
+		signinCount:   signins,
 	}
 }
 
@@ -147,6 +169,10 @@ func (a *Auth) Login(w http.ResponseWriter, r *http.Request) {
 // session and redirects to the dashboard; otherwise it redirects to the login
 // page with an error.
 func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
+	outcome := "failed"
+	defer func() {
+		a.signinCount.Add(r.Context(), 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+	}()
 	oauth, ok := a.oauth()
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "github app is not configured")
@@ -164,6 +190,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil || state == "" || subtle.ConstantTimeCompare([]byte(want), []byte(state)) != 1 {
+		outcome = "invalid_state"
 		writeError(w, http.StatusBadRequest, "invalid oauth state")
 		return
 	}
@@ -172,6 +199,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" { // The user declined, or GitHub reported an error.
+		outcome = "declined"
 		http.Redirect(w, r, "/login?error=denied", http.StatusFound)
 		return
 	}
@@ -186,11 +214,17 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	token, err := a.admit(r.Context(), user)
 	switch {
 	case errors.Is(err, errDenied):
-		a.log.Info("sign-in denied", "login", user.Login)
+		outcome = "denied"
+		a.log.InfoContext(r.Context(), "sign-in denied", "login", user.Login)
+		a.audit.Record(anonymous(r), audit.Event{
+			Action: "auth.signin.denied", Outcome: audit.Denied, Detail: map[string]any{"login": user.Login},
+		})
 		http.Redirect(w, r, "/login?error=denied", http.StatusFound)
 	case err != nil:
 		a.fail(w, "sign in", err)
 	default:
+		outcome = "ok"
+		a.audit.Record(withUser(r, user), audit.Event{Action: "auth.signin", Outcome: audit.OK})
 		a.setCookie(w, sessionCookie, token, "/", sessionTTL)
 		http.Redirect(w, r, next, http.StatusFound)
 	}
@@ -199,8 +233,14 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 // Logout ends the current session.
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
+		user, ok, err := a.sessionUser(r)
+		if err != nil {
+			a.log.Error("look up session", "err", err)
+		}
 		if err := a.store.DeleteSession(r.Context(), hashToken(c.Value)); err != nil {
 			a.log.Error("delete session", "err", err)
+		} else if ok {
+			a.audit.Record(withUser(r, user), audit.Event{Action: "auth.logout", Outcome: audit.OK})
 		}
 	}
 	a.clearCookie(w, sessionCookie, "/")
@@ -208,9 +248,26 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Require returns a handler that serves next only for requests with a valid
-// session, making the user available through [UserFrom]. Other requests get a
-// 401 JSON error.
+// session, making the user available through [UserFrom] and the audit actor
+// through [audit.ActorFrom]. Other requests get a 401 JSON error.
 func (a *Auth) Require(next http.Handler) http.Handler {
+	return a.require(next, unauthorized)
+}
+
+// RequirePage is [Auth.Require] for pages a browser opens: a navigation
+// without a valid session is redirected to sign in and back, instead of
+// getting a 401.
+func (a *Auth) RequirePage(next http.Handler) http.Handler {
+	return a.require(next, func(w http.ResponseWriter, r *http.Request) {
+		if !navigation(r) {
+			unauthorized(w, r)
+			return
+		}
+		http.Redirect(w, r, "/api/auth/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+	})
+}
+
+func (a *Auth) require(next http.Handler, deny http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, ok, err := a.sessionUser(r)
 		if err != nil {
@@ -218,11 +275,29 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			deny(w, r)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		ctx := context.WithValue(withUser(r, user), userKey{}, user)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func unauthorized(w http.ResponseWriter, _ *http.Request) {
+	writeError(w, http.StatusUnauthorized, "unauthorized")
+}
+
+// navigation reports whether r is a browser opening a page, rather than a
+// script fetching data. Browsers without Fetch Metadata are judged by
+// whether they accept HTML.
+func navigation(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if mode := r.Header.Get("Sec-Fetch-Mode"); mode != "" {
+		return mode == "navigate"
+	}
+	return strings.Contains(r.Header.Get("Accept"), "text/html")
 }
 
 // sessionUser returns the permitted user of the request's session cookie,
@@ -261,6 +336,18 @@ func localPath(p string) bool {
 }
 
 type userKey struct{}
+
+// withUser returns the context of r with user, signed in from the client
+// address of r, as the audit actor.
+func withUser(r *http.Request, user User) context.Context {
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.User, Name: user.Login, IP: audit.ClientIP(r)})
+}
+
+// anonymous returns the context of r with an anonymous audit actor at the
+// client address of r.
+func anonymous(r *http.Request) context.Context {
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous, IP: audit.ClientIP(r)})
+}
 
 // UserFrom returns the user that [Auth.Require] attached to ctx.
 func UserFrom(ctx context.Context) (User, bool) {

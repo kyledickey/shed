@@ -2,6 +2,7 @@ import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   Archive,
+  ChartNoAxesCombined,
   BookOpen,
   ChartArea,
   Command as CommandIcon,
@@ -25,9 +26,10 @@ import { errorMessage } from "../../api/client";
 import { useDeploy } from "../../api/deployments";
 import { projectQuery, projectsQuery } from "../../api/projects";
 import { serviceQuery } from "../../api/services";
+import { telemetryQuery } from "../../api/telemetry";
 import { updateQuery } from "../../api/update";
 import type { Service } from "../../api/types";
-import { Button } from "../../components/Button";
+import { Button, LinkButton } from "../../components/Button";
 import { CommandPalette, type Command } from "../../components/CommandPalette";
 import { Badge } from "../../components/Badge";
 import { Avatar, Kbd, ServiceIcon } from "../../components/Misc";
@@ -86,6 +88,7 @@ export function AppShell() {
       actions={
         <>
           <UpdateBadge />
+          <GrafanaButton />
           <Tooltip
             content={
               <>
@@ -257,6 +260,27 @@ function UpdateBadge() {
         Update available
       </Badge>
     </Link>
+  );
+}
+
+/** GrafanaButton opens Grafana in a new tab while telemetry is on. */
+function GrafanaButton() {
+  // A failed request just hides the button; Server → Telemetry reports it.
+  const { data } = useQuery({ ...telemetryQuery, retry: false, refetchInterval: false });
+  if (!data?.settings.enabled) return null;
+  return (
+    <Tooltip content="Open Grafana">
+      <LinkButton
+        variant="ghost"
+        icon
+        aria-label="Open Grafana"
+        href={data.grafanaUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <ChartNoAxesCombined size={16} />
+      </LinkButton>
+    </Tooltip>
   );
 }
 

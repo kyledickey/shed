@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -8,9 +9,19 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func freePort(t *testing.T) int {
@@ -38,13 +49,25 @@ func (s spoofTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // state, so this is the only test that starts it.
 func TestApply(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "hello from upstream, host=%s, xfh=%s, xff=%s", r.Host, r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Forwarded-For"))
+		fmt.Fprintf(w, "hello from upstream, host=%s, xfh=%s, tp=%s, xff=%s", r.Host, r.Header.Get("X-Forwarded-Host"), r.Header.Get("Traceparent"), r.Header.Get("X-Forwarded-For"))
 	}))
 	defer upstream.Close()
 
 	// Cloudflare is on so Caddy validates the trusted proxy config. Loopback
 	// clients are not in its ranges, so requests here are unaffected.
-	cfg := Config{HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir(), Cloudflare: true}
+	reader := sdkmetric.NewManualReader()
+	prev := otel.GetMeterProvider()
+	otel.SetMeterProvider(sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader)))
+	t.Cleanup(func() { otel.SetMeterProvider(prev) })
+	collector := &spanCollector{}
+	otlp := httptest.NewServer(collector)
+	defer otlp.Close()
+	entries := make(chan AccessEntry, 16)
+	cfg := Config{
+		HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir(), Cloudflare: true,
+		Access:    func(e AccessEntry) { entries <- e },
+		TracesURL: otlp.URL + "/v1/traces",
+	}
 	p := New(cfg)
 	t.Cleanup(func() { p.Stop() })
 
@@ -54,6 +77,9 @@ func TestApply(t *testing.T) {
 	}
 	if err := p.Apply(routes); err != nil {
 		t.Fatalf("second Apply() error = %v", err)
+	}
+	if n := applyCount(t, reader); n != 1 {
+		t.Errorf("shed_route_apply_duration_seconds count = %d, want 1 for one changed route set", n)
 	}
 
 	client := &http.Client{
@@ -101,8 +127,170 @@ func TestApply(t *testing.T) {
 		t.Errorf("Location = %q, want %q", hdr.Get("Location"), want)
 	}
 
+	if len(entries) != 0 {
+		t.Errorf("got %d access entries while telemetry is off", len(entries))
+	}
+
+	t.Run("telemetry", func(t *testing.T) {
+		if err := p.SetTelemetry(true); err != nil {
+			t.Fatalf("SetTelemetry(true) error = %v", err)
+		}
+		if os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == cfg.TracesURL {
+			t.Error("the tracer's endpoint stayed in the process environment, where builds would inherit it")
+		}
+		const traceID, parentID = "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7"
+		req, _ := http.NewRequest("GET", fmt.Sprintf("https://localhost:%d/edge?token=abc", cfg.HTTPSPort), nil)
+		req.Header.Set("Traceparent", "00-"+traceID+"-"+parentID+"-01")
+		req.Header.Set("User-Agent", "edge-test")
+		req.Header.Set("Referer", "https://example.com/from")
+		req.Header.Set("Authorization", "Bearer secret-token")
+		req.Header.Set("Cookie", "session=secret-cookie")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// Caddy continues the incoming trace with a span of its own and
+		// forwards that span as the upstream's parent.
+		_, rest, _ := strings.Cut(string(body), "tp=")
+		tp, _, _ := strings.Cut(rest, ",")
+		if !strings.HasPrefix(tp, "00-"+traceID+"-") || strings.Contains(tp, parentID) {
+			t.Errorf("upstream traceparent = %q, want trace %s with Caddy's span", tp, traceID)
+		}
+
+		e := receive(t, entries)
+		if e.Method != "GET" || e.Host != "localhost" || e.Path != "/edge" || e.Query != "token=abc" ||
+			e.Status != 200 || e.BytesOut != int64(len(body)) || e.Duration <= 0 ||
+			e.UserAgent != "edge-test" || e.Referer != "https://example.com/from" ||
+			e.TLSVersion != "TLS 1.3" || e.TraceID != traceID || time.Since(e.Time) > time.Minute {
+			t.Errorf("access entry = %+v", e)
+		}
+		if ip, err := netip.ParseAddr(e.ClientIP); err != nil || !ip.IsLoopback() {
+			t.Errorf("access entry client IP = %q, want the loopback client", e.ClientIP)
+		}
+
+		// Requests for hosts without a route are logged too.
+		req, _ = http.NewRequest("GET", fmt.Sprintf("https://localhost:%d/.env", cfg.HTTPSPort), nil)
+		req.Host = "Unknown.Example:443"
+		if resp, err := client.Do(req); err == nil {
+			resp.Body.Close()
+		}
+		if e := receive(t, entries); e.Host != "unknown.example" || e.Status != 404 || e.TraceID != "" {
+			t.Errorf("unrouted access entry = %+v", e)
+		}
+
+		// Turning telemetry off removes the tracing handlers, which flushes
+		// Caddy's spans.
+		if err := p.SetTelemetry(false); err != nil {
+			t.Fatalf("SetTelemetry(false) error = %v", err)
+		}
+		get(fmt.Sprintf("https://localhost:%d/", cfg.HTTPSPort))
+		if len(entries) != 0 {
+			t.Errorf("got %d access entries after telemetry was turned off", len(entries))
+		}
+		span := collector.find(traceID)
+		if span == nil {
+			t.Fatal("no span exported for the traced request")
+		}
+		// The gateway attributes edge spans by these two attributes.
+		if got := stringAttr(span.Attributes, "server.address"); got != "localhost" {
+			t.Errorf("span server.address = %q, want localhost", got)
+		}
+		if got := stringAttr(span.resource, "webengine.name"); got != "Caddy" {
+			t.Errorf("span resource webengine.name = %q, want Caddy", got)
+		}
+		if got := fmt.Sprintf("%x", span.ParentSpanId); got != parentID {
+			t.Errorf("span parent = %s, want %s", got, parentID)
+		}
+		if span.Kind != tracepb.Span_SPAN_KIND_SERVER || span.Name != "GET" {
+			t.Errorf("span kind %v name %q, want a server span named GET", span.Kind, span.Name)
+		}
+	})
+
 	// Reload with the route removed.
 	if err := p.Apply(nil); err != nil {
 		t.Fatalf("Apply(nil) error = %v", err)
 	}
+}
+
+func applyCount(t *testing.T, reader *sdkmetric.ManualReader) uint64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	var n uint64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if h, ok := m.Data.(metricdata.Histogram[float64]); ok && m.Name == "shed_route_apply_duration_seconds" {
+				for _, dp := range h.DataPoints {
+					n += dp.Count
+				}
+			}
+		}
+	}
+	return n
+}
+
+func receive(t *testing.T, entries <-chan AccessEntry) AccessEntry {
+	t.Helper()
+	select {
+	case e := <-entries:
+		return e
+	case <-time.After(5 * time.Second):
+		t.Fatal("no access entry")
+		return AccessEntry{}
+	}
+}
+
+// spanCollector is an OTLP/HTTP traces endpoint that keeps every span.
+type spanCollector struct {
+	mu    sync.Mutex
+	spans []collectedSpan
+}
+
+type collectedSpan struct {
+	*tracepb.Span
+	resource []*commonpb.KeyValue
+}
+
+func (c *spanCollector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var req coltracepb.ExportTraceServiceRequest
+	if err := proto.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, rs := range req.ResourceSpans {
+		for _, ss := range rs.ScopeSpans {
+			for _, sp := range ss.Spans {
+				c.spans = append(c.spans, collectedSpan{sp, rs.Resource.GetAttributes()})
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/x-protobuf")
+}
+
+func (c *spanCollector) find(traceID string) *collectedSpan {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, s := range c.spans {
+		if fmt.Sprintf("%x", s.TraceId) == traceID {
+			return &s
+		}
+	}
+	return nil
+}
+
+func stringAttr(kvs []*commonpb.KeyValue, key string) string {
+	for _, kv := range kvs {
+		if kv.Key == key {
+			return kv.Value.GetStringValue()
+		}
+	}
+	return ""
 }

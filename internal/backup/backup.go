@@ -26,14 +26,18 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // Store persists backups, restores, policies, and settings. *store.Store
 // implements it.
 type Store interface {
 	Service(ctx context.Context, id string) (store.Service, error)
+	Project(ctx context.Context, id string) (store.Project, error)
 	SetServiceStopped(ctx context.Context, id string, stopped bool) error
 	Volumes(ctx context.Context, serviceID string) ([]store.Volume, error)
 	ActiveDeployment(ctx context.Context, serviceID string) (store.Deployment, error)
@@ -128,7 +132,10 @@ type Config struct {
 	// Dir holds the local archives, in a subdirectory per service and
 	// "system" for shed.db.
 	Dir string
-	Log *slog.Logger
+	// Events receives the outcome of every backup and restore. It must
+	// not block. Nil drops them.
+	Events func(telemetry.Event)
+	Log    *slog.Logger
 	// Now returns the current time. Nil means time.Now.
 	Now func() time.Time
 }
@@ -194,6 +201,7 @@ type Manager struct {
 	services  Services
 	newRemote func(S3Config) (Remote, error)
 	dir       string
+	events    func(telemetry.Event)
 	log       *slog.Logger
 	now       func() time.Time
 	// readyTimeout is how long the isolated database that a dump is
@@ -213,6 +221,10 @@ type Manager struct {
 	// destroying holds the IDs of backups whose archives Delete or prune
 	// is removing. Restore refuses them.
 	destroying map[string]bool
+
+	runs     metric.Int64Counter
+	bytes    metric.Int64Histogram
+	duration metric.Float64Histogram
 }
 
 // New returns a Manager. Call Recover and then Run.
@@ -225,16 +237,21 @@ func New(cfg Config) *Manager {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
+	events := cfg.Events
+	if events == nil {
+		events = func(telemetry.Event) {}
+	}
 	newRemote := cfg.NewRemote
 	if newRemote == nil {
 		newRemote = func(S3Config) (Remote, error) { return nil, errors.New("S3 is not available") }
 	}
-	return &Manager{
+	m := &Manager{
 		store:        cfg.Store,
 		docker:       cfg.Docker,
 		services:     cfg.Services,
 		newRemote:    newRemote,
 		dir:          cfg.Dir,
+		events:       events,
 		log:          log,
 		now:          func() time.Time { return now().UTC().Truncate(time.Millisecond) },
 		readyTimeout: 5 * time.Minute,
@@ -244,6 +261,8 @@ func New(cfg Config) *Manager {
 		paused:       make(map[string]int),
 		destroying:   make(map[string]bool),
 	}
+	m.instrument()
+	return m
 }
 
 // targetDir returns the local directory of a target's archives.

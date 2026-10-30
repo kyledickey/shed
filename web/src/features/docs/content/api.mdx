@@ -296,6 +296,39 @@ type OnePassword = {
 type OnePasswordVault = { id: string; name: string };
 ```
 
+### Telemetry
+
+```title="TypeScript"
+type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
+type TelemetrySettings = {
+  enabled: boolean;
+  metricsRetentionDays: number;        // 1 to 3650, default 30
+  logsRetentionDays: number;           // 1 to 3650, default 14
+  tracesRetentionDays: number;         // 1 to 3650, default 14
+  diskLimitGB: number;                 // logs + traces, default 20
+  defaultCaps: TelemetryCaps;          // 5000 spans/s, 2000 log records/s, 50000 series
+};
+type TelemetryComponent = {
+  name: "metrics" | "logs" | "traces" | "grafana";
+  state: "running" | "starting" | "stopped" | "failed";
+  version: string;
+  error: string;                       // last failure starting it, "" if none
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimit: number;
+  diskBytes: number | null;            // null for grafana
+};
+type Telemetry = {
+  settings: TelemetrySettings;
+  components: TelemetryComponent[];    // empty while never enabled
+  ingest: { spans: number; logs: number; points: number };   // per second, last minute
+  droppedLastHour: { reason: string; signal: string; count: number }[];
+  firingAlerts: { name: string; serviceId: string; since: string }[];
+  grafanaUrl: string;                  // "<server.url>/grafana/"
+  otlpEndpoint: string;                // "http://localhost:4318"
+};
+```
+
 ### Agents
 
 ```title="TypeScript"

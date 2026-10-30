@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
+	"github.com/kyledickey/shed/internal/grafana"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
@@ -85,6 +88,14 @@ var known = []struct {
 	{update.ErrNoUpdate, ErrConflict, "there is no newer release"},
 	{update.ErrBusy, ErrConflict, "an update check, download, or install is already in progress"},
 	{update.ErrNotStaged, ErrConflict, "download the update before installing it"},
+	{audit.ErrRetention, ErrInvalid, ""},
+	{observability.ErrInvalid, ErrInvalid, ""},
+	{observability.ErrEnabled, ErrConflict, "turn telemetry off before deleting its data"},
+	{observability.ErrDisabled, ErrConflict, ""},
+	{observability.ErrUnknownComponent, ErrNotFound, ""},
+	{observability.ErrNoContainer, ErrConflict, ""},
+	{observability.ErrNotDashboard, ErrNotFound, ""},
+	{grafana.ErrConflict, ErrConflict, "the dashboard changed in Grafana meanwhile; try again"},
 }
 
 // Explain returns err as an *Error: itself if it is one, or the kind and

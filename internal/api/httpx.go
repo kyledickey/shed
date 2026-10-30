@@ -17,13 +17,19 @@ import (
 // response.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
-		h.Set("X-Frame-Options", "DENY")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "same-origin")
+		for _, sh := range shedHeaders {
+			w.Header().Set(sh.name, sh.value)
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// shedHeaders are the security headers of every response.
+var shedHeaders = []struct{ name, value string }{
+	{"Content-Security-Policy", "frame-ancestors 'none'"},
+	{"X-Frame-Options", "DENY"},
+	{"X-Content-Type-Options", "nosniff"},
+	{"Referrer-Policy", "same-origin"},
 }
 
 // handlerFunc is an HTTP handler that reports failure by returning an error.

@@ -1,6 +1,8 @@
 // Package control holds shed's operations on projects, services,
-// deployments, variables, domains, volumes, backups, metrics, and updates:
-// the rules every interface to shed shares. The HTTP API and the MCP server
+// deployments, variables, domains, volumes, backups, metrics, updates, and
+// telemetry:
+// the rules every interface to shed shares. Every operation that changes
+// state, and every read of secrets, is recorded in the audit log. The HTTP API and the MCP server
 // call a [Plane] instead of the store and the deployer directly, so that both
 // validate the same way, serialize deployments under the same lock, and show
 // the same state.
@@ -51,9 +53,11 @@ type Store interface {
 	Variables(ctx context.Context, serviceID string) (map[string]string, error)
 
 	Domains(ctx context.Context, serviceID string) ([]store.Domain, error)
+	Domain(ctx context.Context, id string) (store.Domain, error)
 	CreateDomain(ctx context.Context, serviceID, host string, generated bool) (store.Domain, error)
 	DeleteDomain(ctx context.Context, id string) error
 	Volumes(ctx context.Context, serviceID string) ([]store.Volume, error)
+	Volume(ctx context.Context, id string) (store.Volume, error)
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
 
 	Deployment(ctx context.Context, id string) (store.Deployment, error)
@@ -68,6 +72,10 @@ type Store interface {
 	PendingPush(ctx context.Context, serviceID string) (store.PendingPush, error)
 	PendingPushes(ctx context.Context) ([]store.PendingPush, error)
 	DeletePendingPush(ctx context.Context, serviceID, id string) error
+
+	TelemetryCaps(ctx context.Context, serviceID string) (store.TelemetryCaps, error)
+	SetTelemetryCaps(ctx context.Context, serviceID string, c store.TelemetryCaps) error
+	DeleteTelemetryCaps(ctx context.Context, serviceID string) error
 }
 
 var _ Store = (*store.Store)(nil)
@@ -92,6 +100,7 @@ type Deployer interface {
 	BuildLog(ctx context.Context, deploymentID string, n int) ([]string, error)
 	RuntimeLogs(ctx context.Context, serviceID string, tail int, follow bool, w io.Writer) error
 	ResolveVariables(ctx context.Context, serviceID string) (deploy.Resolved, error)
+	RuntimeSecrets(ctx context.Context, dep store.Deployment) ([]string, error)
 }
 
 var _ Deployer = (*deploy.Deployer)(nil)
@@ -180,8 +189,17 @@ type Config struct {
 	Updates  Updates
 	// GitHub returns the GitHub client, or false until the GitHub App is
 	// configured.
-	GitHub    func() (GitHub, bool)
-	Variables Variables
+	GitHub     func() (GitHub, bool)
+	Variables  Variables
+	Audit      Audit
+	Telemetry  Telemetry
+	Dashboards Dashboards
+	// ListenerError returns why the telemetry gateway cannot listen inside
+	// a service's container, or "". Nil reports none.
+	ListenerError func(serviceID string) string
+	// Stores answer telemetry queries; they are not asked while telemetry
+	// is off.
+	Stores TelemetryStores
 	// BaseURL is the public dashboard URL. Its host cannot be a service
 	// domain.
 	BaseURL string
@@ -202,6 +220,11 @@ type Plane struct {
 	updates       Updates
 	github        func() (GitHub, bool)
 	variables     Variables
+	audit         Audit
+	telemetry     Telemetry
+	dashboards    Dashboards
+	listenerError func(serviceID string) string
+	stores        TelemetryStores
 	dashboardHost string
 	baseDomain    string
 	log           *slog.Logger
@@ -216,19 +239,24 @@ type Plane struct {
 // New returns a Plane.
 func New(cfg Config) *Plane {
 	p := &Plane{
-		store:      cfg.Store,
-		deployer:   cfg.Deployer,
-		backups:    cfg.Backups,
-		metrics:    cfg.Metrics,
-		logs:       cfg.Logs,
-		updates:    cfg.Updates,
-		github:     cfg.GitHub,
-		variables:  cfg.Variables,
-		baseDomain: strings.ToLower(cfg.BaseDomain),
-		log:        cfg.Log,
-		routes:     newRouteState(),
-		pushRetry:  pushRetryInterval,
-		pushErrs:   make(map[string]string),
+		store:         cfg.Store,
+		deployer:      cfg.Deployer,
+		backups:       cfg.Backups,
+		metrics:       cfg.Metrics,
+		logs:          cfg.Logs,
+		updates:       cfg.Updates,
+		github:        cfg.GitHub,
+		variables:     cfg.Variables,
+		audit:         cfg.Audit,
+		telemetry:     cfg.Telemetry,
+		dashboards:    cfg.Dashboards,
+		stores:        cfg.Stores,
+		listenerError: cfg.ListenerError,
+		baseDomain:    strings.ToLower(cfg.BaseDomain),
+		log:           cfg.Log,
+		routes:        newRouteState(),
+		pushRetry:     pushRetryInterval,
+		pushErrs:      make(map[string]string),
 	}
 	if u, err := url.Parse(cfg.BaseURL); err == nil {
 		p.dashboardHost = strings.TrimSuffix(u.Hostname(), ".")

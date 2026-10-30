@@ -13,10 +13,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -142,6 +144,7 @@ func (s *Server) setupGitHub(w http.ResponseWriter, r *http.Request) error {
 	}
 	token := r.URL.Query().Get("token")
 	if !s.validSetupToken(token) {
+		s.deny(r, "setup.token.invalid")
 		setupRedirect(w, r, "invalid_token")
 		return nil
 	}
@@ -178,6 +181,7 @@ func (s *Server) setupCallback(w http.ResponseWriter, r *http.Request) error {
 	}
 	q := r.URL.Query()
 	if !s.validSetupToken(q.Get("state")) {
+		s.deny(r, "setup.token.invalid")
 		setupRedirect(w, r, "invalid_token")
 		return nil
 	}
@@ -204,7 +208,7 @@ func (s *Server) createApp(ctx context.Context, code string) (github.App, error)
 	if err != nil {
 		return github.App{}, err
 	}
-	return app, s.saveApp(ctx, client)
+	return app, s.saveApp(ctx, client, "manifest")
 }
 
 // importRequest is the body of POST /api/setup/github/import.
@@ -231,6 +235,7 @@ func (s *Server) importApp(w http.ResponseWriter, r *http.Request) error {
 		return errorf(http.StatusConflict, "GitHub App is already configured")
 	}
 	if !s.validSetupToken(in.Token) {
+		s.deny(r, "setup.token.invalid")
 		return errorf(http.StatusForbidden, "invalid setup token")
 	}
 	in.ClientID = strings.TrimSpace(in.ClientID)
@@ -259,15 +264,15 @@ func (s *Server) importApp(w http.ResponseWriter, r *http.Request) error {
 	if client, err = github.New(app, s.httpClient); err != nil {
 		return err
 	}
-	if err := s.saveApp(r.Context(), client); err != nil {
+	if err := s.saveApp(r.Context(), client, "import"); err != nil {
 		return err
 	}
 	return writeJSON(w, http.StatusOK, setupJSON{GitHubConfigured: true, AppSlug: slug, InstallURL: installURL(slug)})
 }
 
 // saveApp stores the client's App credentials, installs the client, and ends
-// setup. The caller holds setupMu.
-func (s *Server) saveApp(ctx context.Context, client *github.Client) error {
+// setup. how is manifest or import. The caller holds setupMu.
+func (s *Server) saveApp(ctx context.Context, client *github.Client, how string) error {
 	app := client.App()
 	raw, err := json.Marshal(storedApp{
 		ID: app.ID, Slug: app.Slug, ClientID: app.ClientID, ClientSecret: app.ClientSecret,
@@ -284,12 +289,18 @@ func (s *Server) saveApp(ctx context.Context, client *github.Client) error {
 	s.setupToken = ""
 	s.tokenMu.Unlock()
 	s.log.Info("GitHub App configured", "slug", app.Slug)
+	s.control.Record(ctx, audit.Event{
+		Action: "setup.github", Outcome: audit.OK, Target: strconv.FormatInt(app.ID, 10),
+		Detail: map[string]any{"slug": app.Slug, "how": how},
+	})
 	return nil
 }
 
 // webhook handles GitHub deliveries: a push to a branch deploys every app
 // service that tracks it.
-func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
+// receiveWebhook verifies a delivery and deploys the services a push is for,
+// recording what it learns in d.
+func (s *Server) receiveWebhook(w http.ResponseWriter, r *http.Request, d *delivery) error {
 	// Keep the deadline through net/http's post-handler body drain. The server
 	// resets deadlines before reading the next request on this connection.
 	controller := http.NewResponseController(w)
@@ -302,9 +313,11 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 	}
 	signature := r.Header.Get("X-Hub-Signature-256")
 	if !strings.HasPrefix(signature, "sha256=") || len(signature) != 71 {
+		s.deny(r, "webhook.signature.invalid")
 		return errorf(http.StatusUnauthorized, "invalid signature")
 	}
 	if _, err := hex.DecodeString(signature[7:]); err != nil {
+		s.deny(r, "webhook.signature.invalid")
 		return errorf(http.StatusUnauthorized, "invalid signature")
 	}
 	if !s.webhooks.acquire(time.Now()) {
@@ -323,9 +336,13 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		return errorf(http.StatusBadRequest, "read body: %v", err)
 	}
 	if !github.VerifySignature(gh.App().WebhookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
+		s.deny(r, "webhook.signature.invalid")
 		return errorf(http.StatusUnauthorized, "invalid signature")
 	}
-	if r.Header.Get("X-GitHub-Event") != "push" {
+	d.event = r.Header.Get("X-GitHub-Event")
+	r = r.WithContext(audit.WithActor(r.Context(), audit.Actor{Kind: audit.GitHub, IP: audit.ClientIP(r)}))
+	if d.event != "push" {
+		d.ignored = true
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	}
@@ -334,6 +351,7 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 		return errorf(http.StatusBadRequest, "invalid push event")
 	}
 	if ev.Deleted || ev.Branch == "" || ev.SHA == "" {
+		d.ignored = true
 		w.WriteHeader(http.StatusAccepted)
 		return nil
 	}
@@ -362,12 +380,12 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) error {
 			continue // deleted meanwhile
 		}
 		if err != nil {
-			s.log.Error("store push", "service", svc.ID, "err", err)
+			s.log.ErrorContext(r.Context(), "store push", "service", svc.ID, "err", err)
 			return errorf(http.StatusServiceUnavailable, "could not store delivery; redeliver it later")
 		}
 		s.control.DeployPush(r.Context(), svc.ID)
 	}
-	s.log.Info("push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
+	s.log.InfoContext(r.Context(), "push received", "repo", ev.Repo, "branch", ev.Branch, "services", len(services))
 	w.WriteHeader(http.StatusAccepted)
 	return nil
 }

@@ -11,10 +11,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 	"github.com/kyledickey/shed/internal/variables"
@@ -147,6 +149,16 @@ func (f *fakeDeployer) RuntimeLogs(_ context.Context, _ string, _ int, follow bo
 func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
 	return f.resolved, f.resolveErr
 }
+func (f *fakeDeployer) RuntimeSecrets(_ context.Context, dep store.Deployment) ([]string, error) {
+	if dep.Runtime == nil {
+		return nil, nil
+	}
+	var values []string
+	for _, k := range dep.Runtime.SecretKeys {
+		values = append(values, dep.Runtime.Env[k])
+	}
+	return values, nil
+}
 
 // fakeBackups records pauses and the deletions they cover.
 type fakeBackups struct {
@@ -257,7 +269,12 @@ type fixture struct {
 	logs     fakeLogs // set by tests after the fixture is built
 	github   bool     // whether GitHub is configured
 	op       *fakeOnePassword
-	plane    *Plane
+	audit    *fakeAudit
+	tel      *fakeTelemetry
+	// listenerErrs are the gateway's listener errors by service ID.
+	listenerErrs map[string]string
+	dash         *fakeDashboards
+	plane        *Plane
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -267,7 +284,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword()}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword(),
+		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}, tel: &fakeTelemetry{s: observability.DefaultSettings()}, dash: &fakeDashboards{}}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -282,6 +300,12 @@ func newFixture(t *testing.T) *fixture {
 			return nil, false
 		},
 		Variables:  variables.New(st, f.op),
+		Audit:      f.audit,
+		Telemetry:  f.tel,
+		Dashboards: f.dash,
+		ListenerError: func(serviceID string) string {
+			return f.listenerErrs[serviceID]
+		},
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",
 		Log:        slog.New(slog.DiscardHandler),

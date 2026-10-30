@@ -23,11 +23,15 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // Docker runs containers. *docker.Client implements it.
@@ -77,6 +81,15 @@ type Variables interface {
 	Get(ctx context.Context, svc store.Service) (map[string]string, error)
 }
 
+// Attached removes containers that join a project's network without being
+// its services, such as database exporters, so that DeleteProject can remove
+// the network. *observability.Manager implements it.
+type Attached interface {
+	// DetachProject removes the containers on project projectID's network
+	// and keeps them from coming back until release is called.
+	DetachProject(ctx context.Context, projectID string) (release func(), err error)
+}
+
 // Config configures a Deployer.
 type Config struct {
 	Store   *store.Store
@@ -101,7 +114,20 @@ type Config struct {
 	KeepDeployments int
 	// Dashboard, if its Host is set, is included in every route set.
 	Dashboard proxy.Route
-	Log       *slog.Logger
+	// Telemetry reports whether telemetry is on. While it is, apps get the
+	// OTEL_* variables. Nil means off.
+	Telemetry func(ctx context.Context) (bool, error)
+	// OTLPEndpoint is the URL apps send telemetry to, such as
+	// http://localhost:4318, where the gateway listens inside each app's
+	// container.
+	OTLPEndpoint string
+	// Events receives deployments starting and ending, stops, and
+	// restarts. It must not block. Nil drops them.
+	Events func(telemetry.Event)
+	// Attached removes other containers from a project's network before
+	// DeleteProject removes it. Nil means there are none.
+	Attached Attached
+	Log      *slog.Logger
 }
 
 // Commit identifies the source revision of a deployment.
@@ -162,6 +188,10 @@ type Deployer struct {
 	logLimit  int64
 	keep      int // deployments kept per service; 0 keeps all
 	dashboard proxy.Route
+	telemetry func(ctx context.Context) (bool, error)
+	otlp      string
+	events    func(telemetry.Event)
+	attached  Attached
 	log       *slog.Logger
 
 	// Timings and the health probe, replaced in tests.
@@ -191,11 +221,22 @@ type Deployer struct {
 	deletingServices map[string]bool
 	deletingProjects map[string]bool
 	held             map[string]string // project ID by held service ID; changes under controlMu
+
+	deployments metric.Int64Counter
+	stages      metric.Float64Histogram
+	queueDepth  metric.Registration
+}
+
+// queued is a deployment waiting for its worker.
+type queued struct {
+	store.Deployment
+	// queuedBy is the span of the request or webhook that queued it.
+	queuedBy trace.SpanContext
 }
 
 // worker runs the deployments of one service, one at a time.
 type worker struct {
-	pending *store.Deployment       // next to run, or nil
+	pending *queued                 // next to run, or nil
 	running string                  // ID of the running deployment, or ""
 	cancel  context.CancelCauseFunc // cancels the running deployment
 	ran     chan struct{}           // closed when the running deployment ends
@@ -217,6 +258,10 @@ func New(cfg Config) *Deployer {
 		logLimit:         cfg.LogLimit,
 		keep:             cfg.KeepDeployments,
 		dashboard:        cfg.Dashboard,
+		telemetry:        cfg.Telemetry,
+		otlp:             cfg.OTLPEndpoint,
+		events:           cfg.Events,
+		attached:         cfg.Attached,
 		log:              cfg.Log,
 		ciInterval:       10 * time.Second,
 		ciTimeout:        60 * time.Minute,
@@ -239,6 +284,10 @@ func New(cfg Config) *Deployer {
 	if d.variables == nil {
 		d.variables = savedVariables{cfg.Store}
 	}
+	if d.events == nil {
+		d.events = func(telemetry.Event) {}
+	}
+	d.instrument()
 	return d
 }
 
@@ -250,6 +299,7 @@ func (d *Deployer) Stop() {
 	d.mu.Unlock()
 	d.shutdown(errShutdown)
 	d.wg.Wait()
+	d.queueDepth.Unregister()
 }
 
 // Deploy queues a new deployment of a service and returns it. Older
@@ -270,6 +320,11 @@ func (d *Deployer) Deploy(ctx context.Context, serviceID string, trigger store.T
 // if the deployment has no image to reuse, and ErrImageUnavailable if its
 // image is no longer on this host.
 func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Deployment, error) {
+	return d.RedeployAs(ctx, deploymentID, store.TriggerRedeploy)
+}
+
+// RedeployAs is Redeploy with the deployment recorded under trigger.
+func (d *Deployer) RedeployAs(ctx context.Context, deploymentID string, trigger store.Trigger) (store.Deployment, error) {
 	old, err := d.store.Deployment(ctx, deploymentID)
 	if err != nil {
 		return store.Deployment{}, err
@@ -284,7 +339,7 @@ func (d *Deployer) Redeploy(ctx context.Context, deploymentID string) (store.Dep
 	}
 	return d.enqueue(ctx, store.Deployment{
 		ServiceID:     old.ServiceID,
-		Trigger:       store.TriggerRedeploy,
+		Trigger:       trigger,
 		CommitSHA:     old.CommitSHA,
 		CommitMessage: old.CommitMessage,
 		CommitAuthor:  old.CommitAuthor,
@@ -323,12 +378,12 @@ func (d *Deployer) enqueue(ctx context.Context, dep store.Deployment) (store.Dep
 		go d.work(dep.ServiceID, w)
 	}
 	if w.pending != nil {
-		d.abandon(*w.pending, store.StatusCanceled, errSuperseded.Error())
+		d.abandon(w.pending.Deployment, store.StatusCanceled, errSuperseded.Error())
 	}
 	if w.cancel != nil {
 		w.cancel(errSuperseded)
 	}
-	w.pending = &dep
+	w.pending = &queued{dep, trace.SpanContextFromContext(ctx)}
 	return dep, nil
 }
 
@@ -348,7 +403,7 @@ func (d *Deployer) work(serviceID string, w *worker) {
 		w.pending, w.running, w.cancel, w.ran = nil, dep.ID, cancel, make(chan struct{})
 		d.mu.Unlock()
 
-		d.run(ctx, *dep)
+		d.run(ctx, dep.Deployment, dep.queuedBy)
 		cancel(nil)
 		d.pruneHistory(serviceID)
 
@@ -402,7 +457,7 @@ func (d *Deployer) halt(serviceID string, cause error) {
 		return
 	}
 	if w.pending != nil {
-		d.abandon(*w.pending, store.StatusCanceled, cause.Error())
+		d.abandon(w.pending.Deployment, store.StatusCanceled, cause.Error())
 		w.pending = nil
 	}
 	if w.cancel != nil {

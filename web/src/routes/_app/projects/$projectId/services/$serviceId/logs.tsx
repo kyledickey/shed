@@ -1,15 +1,19 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
 import { useState } from "react";
 import { useLogStream } from "../../../../../../api/events";
 import { serviceQuery } from "../../../../../../api/services";
+import { telemetryQuery } from "../../../../../../api/telemetry";
 import type { Service } from "../../../../../../api/types";
 import { Button, buttonClass } from "../../../../../../components/Button";
 import { Card } from "../../../../../../components/Card";
 import { FillHeight } from "../../../../../../components/logs/FillHeight";
 import { RuntimeLogView } from "../../../../../../components/logs/RuntimeLogView";
+import { Segmented } from "../../../../../../components/Form";
+import { Stack } from "../../../../../../components/Layout";
 import { EmptyState } from "../../../../../../components/Misc";
+import { LogHistory } from "../../../../../../features/logs/LogHistory";
 import { HelpTip } from "../../../../../../features/docs/HelpTip";
 
 export const Route = createFileRoute("/_app/projects/$projectId/services/$serviceId/logs")({
@@ -20,14 +24,33 @@ function LogsPage() {
   const { serviceId } = Route.useParams();
   const { data: service } = useSuspenseQuery(serviceQuery(serviceId));
   const [attempt, setAttempt] = useState(0);
+  const [mode, setMode] = useState<"live" | "history">("live");
+  const { data: telemetry } = useQuery(telemetryQuery);
+  const historyOn = telemetry?.settings.enabled === true;
   // The stream ends when the container stops, so reconnect whenever the
   // service status changes (e.g. a new deployment goes live).
-  return (
+  const live = (
     <RuntimeLogs
       key={`${service.id}-${service.status}-${attempt}`}
       service={service}
       onReconnect={() => setAttempt((n) => n + 1)}
     />
+  );
+  if (!historyOn) return live;
+  return (
+    <Stack gap={3}>
+      <Segmented
+        size="sm"
+        label="Log mode"
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "live", label: "Live" },
+          { value: "history", label: "History" },
+        ]}
+      />
+      {mode === "live" ? live : <LogHistory serviceId={service.id} name={service.name} />}
+    </Stack>
   );
 }
 

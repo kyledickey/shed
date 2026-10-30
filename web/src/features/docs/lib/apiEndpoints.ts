@@ -351,6 +351,60 @@ export const endpointGroups: EndpointGroup[] = [
     ],
   },
   {
+    title: "Audit log",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/audit?before=&limit=&actor=&action=&service=&outcome=",
+        response: "AuditPage",
+        notes:
+          "Newest first. limit default 100, at most 500. actor is a login or kind; action an action or its dotted prefix.",
+      },
+      { method: "GET", path: "/api/audit/settings", response: "AuditSettings" },
+      {
+        method: "PUT",
+        path: "/api/audit/settings",
+        body: "AuditSettings",
+        response: "AuditSettings",
+        notes: "400 unless 1 to 3650 days.",
+      },
+    ],
+  },
+  {
+    title: "Telemetry",
+    endpoints: [
+      { method: "GET", path: "/api/telemetry", response: "Telemetry" },
+      {
+        method: "PUT",
+        path: "/api/telemetry",
+        body: "TelemetrySettings",
+        response: "Telemetry",
+        notes:
+          "Turns telemetry on or off and sets retention and caps. 400 out of bounds. The stack follows in the background.",
+      },
+      {
+        method: "POST",
+        path: "/api/telemetry/components/{name}/restart",
+        response: "Telemetry",
+        notes:
+          "name is metrics, logs, traces, or grafana. 409 while telemetry is off, 404 for another name.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/telemetry/data",
+        response: "204",
+        notes: "Removes the containers, volumes, and stored data. 409 while telemetry is on.",
+      },
+      {
+        method: "GET",
+        path: "/grafana/*, other methods",
+        response: "Grafana",
+        notes:
+          "Reverse-proxied as the signed-in user. Signed-out page loads go to sign-in; other requests get 401. Redirects to /server/telemetry while telemetry is off.",
+      },
+    ],
+  },
+  {
     title: "Agents (OAuth and MCP)",
     endpoints: [
       {

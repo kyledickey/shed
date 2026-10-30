@@ -61,3 +61,45 @@ func TestWorkloadResourcesUnlimited(t *testing.T) {
 type testTransport func(*http.Request) (*http.Response, error)
 
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCreateHostNetworkWithBinds(t *testing.T) {
+	var body struct {
+		HostConfig       container.HostConfig
+		NetworkingConfig *struct{ EndpointsConfig map[string]any }
+	}
+	transport := testTransport(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"Id":"test-container"}`))
+		return w.Result(), nil
+	})
+	api, err := client.New(client.WithHost("http://docker.invalid"), client.WithAPIVersion("1.54"), client.WithHTTPClient(&http.Client{Transport: transport}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.Close()
+	c := &Client{api: api}
+	_, err = c.Create(context.Background(), RunSpec{
+		Name: "test", Image: "app", Network: HostNetwork,
+		Mounts: []Mount{{Volume: "data", Target: "/data"}},
+		Binds:  []Bind{{Source: "/srv/conf", Target: "/etc/conf", ReadOnly: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := body.HostConfig
+	if h.NetworkMode != "host" {
+		t.Errorf("network mode %q, want host", h.NetworkMode)
+	}
+	if body.NetworkingConfig != nil && len(body.NetworkingConfig.EndpointsConfig) > 0 {
+		t.Errorf("endpoints %v on the host network", body.NetworkingConfig.EndpointsConfig)
+	}
+	if len(h.Mounts) != 2 || h.Mounts[0].Type != "volume" || h.Mounts[1].Type != "bind" ||
+		h.Mounts[1].Source != "/srv/conf" || h.Mounts[1].Target != "/etc/conf" || !h.Mounts[1].ReadOnly {
+		t.Errorf("mounts %+v, want the volume and a read-only bind", h.Mounts)
+	}
+}

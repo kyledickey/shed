@@ -9,6 +9,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -17,11 +18,16 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
@@ -98,6 +104,23 @@ type Control interface {
 
 	Repos(ctx context.Context) ([]github.Repo, error)
 	Branches(ctx context.Context, owner, repo string) ([]string, error)
+
+	Record(ctx context.Context, e audit.Event)
+	AuditEvents(ctx context.Context, f store.AuditFilter) (audit.Page, error)
+	AuditSettings(ctx context.Context) (audit.Settings, error)
+	SetAuditSettings(ctx context.Context, s audit.Settings) (audit.Settings, error)
+
+	Telemetry(ctx context.Context) (observability.Status, error)
+	TelemetryEnabled(ctx context.Context) (bool, error)
+	SetTelemetry(ctx context.Context, s observability.Settings) (observability.Status, error)
+	RestartTelemetryComponent(ctx context.Context, name string) (observability.Status, error)
+	DeleteTelemetryData(ctx context.Context) error
+	ResetDashboard(ctx context.Context, uid string) error
+	RestoreDashboards(ctx context.Context) error
+	ServiceTelemetry(ctx context.Context, serviceID string) (control.ServiceTelemetry, error)
+	SetServiceTelemetryCaps(ctx context.Context, serviceID string, caps *observability.Caps) (control.ServiceTelemetry, error)
+	LogHistory(ctx context.Context, serviceID string, q control.LogQuery) (control.LogPage, error)
+	TraceExploreURL(ctx context.Context, traceID string) (string, error)
 }
 
 var _ Control = (*control.Plane)(nil)
@@ -130,7 +153,10 @@ type Config struct {
 	// MCP serves the MCP server, mounted at /mcp behind bearer tokens. Nil
 	// leaves /mcp unmounted.
 	MCP http.Handler
-	Log *slog.Logger
+	// GrafanaAddr is the loopback host:port Grafana listens on, served at
+	// /grafana/.
+	GrafanaAddr string
+	Log         *slog.Logger
 }
 
 // Server is the HTTP interface.
@@ -144,13 +170,15 @@ type Server struct {
 	web        fs.FS
 	httpClient *http.Client
 	mcp        http.Handler
+	grafana    http.Handler
 	log        *slog.Logger
 
-	webhooks   webhookGuard
-	deliveries deliveryCache
-	setupMu    sync.Mutex // serializes completing the GitHub setup
-	tokenMu    sync.Mutex
-	setupToken string // guarded by tokenMu; empty once GitHub is configured
+	webhooks          webhookGuard
+	deliveries        deliveryCache
+	webhookDeliveries metric.Int64Counter
+	setupMu           sync.Mutex // serializes completing the GitHub setup
+	tokenMu           sync.Mutex
+	setupToken        string // guarded by tokenMu; empty once GitHub is configured
 }
 
 // New returns a Server. It loads the GitHub App from the store, or, if none is
@@ -167,6 +195,13 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 		httpClient: cfg.HTTPClient,
 		mcp:        cfg.MCP,
 		log:        cfg.Log,
+	}
+	s.grafana = s.grafanaProxy(cfg.GrafanaAddr)
+	var err error
+	s.webhookDeliveries, err = otel.Meter(scope).Int64Counter("shed_webhook_deliveries_total",
+		metric.WithDescription("GitHub webhook deliveries, by event and outcome."))
+	if err != nil {
+		return nil, fmt.Errorf("api: webhook deliveries counter: %w", err)
 	}
 	if err := s.loadGitHub(ctx); err != nil {
 		return nil, err
@@ -252,6 +287,7 @@ func (s *Server) Handler() http.Handler {
 	authed("POST /api/deployments/{id}/cancel", s.cancelDeployment)
 	authed("GET /api/deployments/{id}/logs", s.deploymentLogs)
 	authed("GET /api/services/{id}/logs", s.serviceLogs)
+	authed("GET /api/services/{id}/logs/history", s.logHistory)
 	authed("GET /api/services/{id}/metrics", s.serviceMetrics)
 	authed("GET /api/host/metrics", s.hostMetrics)
 	authed("GET /api/logs", s.shedLogs)
@@ -276,6 +312,21 @@ func (s *Server) Handler() http.Handler {
 	authed("PUT /api/update/settings", s.putUpdateSettings)
 	authed("POST /api/update/install", s.installUpdate)
 
+	authed("GET /api/audit", s.listAudit)
+	authed("GET /api/audit/settings", s.getAuditSettings)
+	authed("PUT /api/audit/settings", s.putAuditSettings)
+
+	authed("GET /api/telemetry", s.getTelemetry)
+	authed("PUT /api/telemetry", s.putTelemetry)
+	authed("POST /api/telemetry/components/{name}/restart", s.restartTelemetryComponent)
+	authed("DELETE /api/telemetry/data", s.deleteTelemetryData)
+	authed("POST /api/telemetry/dashboards/{uid}/reset", s.resetDashboard)
+	authed("POST /api/telemetry/dashboards/restore", s.restoreDashboards)
+	authed("GET /api/services/{id}/telemetry", s.getServiceTelemetry)
+	authed("PUT /api/services/{id}/telemetry", s.putServiceTelemetry)
+	authed("GET /api/telemetry/trace/{traceId}", s.traceRedirect)
+	mux.Handle("/grafana/", s.auth.RequirePage(protectMutations(s.baseURL, s.grafana)))
+
 	authed("GET /api/github/repos", s.repos)
 	authed("GET /api/github/repos/{owner}/{repo}/branches", s.branches)
 
@@ -284,7 +335,7 @@ func (s *Server) Handler() http.Handler {
 	}))
 	mux.Handle("/", spa(s.web))
 
-	return s.logRequests(securityHeaders(mux))
+	return s.logRequests(securityHeaders(withAnonymous(traced(mux))))
 }
 
 // logRequests logs every request at debug level.

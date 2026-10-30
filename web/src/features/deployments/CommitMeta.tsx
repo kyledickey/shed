@@ -1,4 +1,4 @@
-import { CloudUpload, GitCommitHorizontal, Rocket, RotateCcw } from "lucide-react";
+import { Activity, CloudUpload, GitCommitHorizontal, Rocket, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Deployment, DeploymentTrigger, Service } from "../../api/types";
 import { Avatar } from "../../components/Misc";
@@ -10,6 +10,7 @@ const triggers: Record<DeploymentTrigger, { label: string; icon: ReactNode }> = 
   manual: { label: "Manual", icon: <Rocket size={12} /> },
   redeploy: { label: "Redeploy", icon: <RotateCcw size={12} /> },
   create: { label: "Initial deploy", icon: <CloudUpload size={12} /> },
+  telemetry: { label: "Telemetry", icon: <Activity size={12} /> },
 };
 
 /** deploymentTitle is a one-line name: the commit subject, else the image. */

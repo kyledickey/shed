@@ -615,3 +615,40 @@ func TestHoldExcludesConcurrentDeployments(t *testing.T) {
 	}
 	f.settle(t)
 }
+
+// fakeAttached keeps a container that is not a service on a project's
+// network, as a database exporter is.
+type fakeAttached struct {
+	docker   *fakeDocker
+	id       string
+	released bool
+}
+
+func (a *fakeAttached) DetachProject(ctx context.Context, projectID string) (func(), error) {
+	if err := a.docker.Remove(ctx, a.id); err != nil {
+		return nil, err
+	}
+	return func() { a.released = true }, nil
+}
+
+func TestDeleteProjectDetachesOtherContainers(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.wait(t, f.deploy(t).ID, terminal)
+	id, err := f.docker.Run(ctx, docker.RunSpec{Name: "shed-exp-db", Network: networkName(f.svc.ProjectID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := &fakeAttached{docker: f.docker, id: id}
+	f.d.attached = attached
+
+	if err := f.d.DeleteProject(ctx, f.svc.ProjectID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if _, err := f.st.Project(ctx, f.svc.ProjectID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("project after delete: err = %v, want ErrNotFound", err)
+	}
+	if !attached.released {
+		t.Error("DetachProject was not released")
+	}
+}

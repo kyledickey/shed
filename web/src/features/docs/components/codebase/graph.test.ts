@@ -3,8 +3,22 @@ import { importedBy, packages } from "./graph";
 
 describe("package graph", () => {
   it("lists importers", () => {
-    expect(importedBy("store")).toEqual(["api", "backup", "control", "deploy", "metrics"]);
+    expect(importedBy("store")).toEqual([
+      "api",
+      "audit",
+      "backup",
+      "control",
+      "deploy",
+      "mcp",
+      "metrics",
+      "observability",
+      "variables",
+    ]);
+    expect(importedBy("audit")).toEqual(["api", "auth", "control", "mcp", "observability"]);
     expect(importedBy("control")).toEqual(["api", "mcp"]);
+    expect(importedBy("observability")).toEqual(["api", "control", "mcp"]);
+    expect(importedBy("telemetry")).toEqual(["backup", "deploy", "observability"]);
+    expect(importedBy("victoria")).toEqual(["control", "mcp", "metrics", "observability"]);
     expect(importedBy("mcp")).toEqual([]);
     expect(importedBy("api")).toEqual([]);
   });
