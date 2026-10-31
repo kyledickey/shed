@@ -40,13 +40,34 @@ func ptr[T any](v T) *T { return &v }
 
 // catalog lists the event rules. All of them default to enabled.
 var catalog = []RuleDef{
-	{ID: RuleDeployFailed, Title: "Deploy failed", Description: "A deployment failed to go live."},
-	{ID: RuleBackupFailed, Title: "Backup failed", Description: "A backup failed."},
-	{ID: RuleRestoreFailed, Title: "Restore failed", Description: "A restore failed."},
-	{ID: RuleCrashLoop, Title: "Service crash loop",
+	{
+		ID:          RuleDeployFailed,
+		Title:       "Deploy failed",
+		Description: "A deployment failed to go live.",
+	},
+	{
+		ID:          RuleBackupFailed,
+		Title:       "Backup failed",
+		Description: "A backup failed.",
+	},
+	{
+		ID:          RuleRestoreFailed,
+		Title:       "Restore failed",
+		Description: "A restore failed.",
+	},
+	{
+		ID:          RuleCrashLoop,
+		Title:       "Service crash loop",
 		Description: "A service crashed repeatedly within 10 minutes. Sent at most once every 30 minutes per service.",
-		Threshold:   ptr(3.0), Unit: "crashes", Whole: true},
-	{ID: RuleOOM, Title: "Service out of memory", Description: "A service was killed for running out of memory."},
+		Threshold:   ptr(3.0),
+		Unit:        "crashes",
+		Whole:       true,
+	},
+	{
+		ID:          RuleOOM,
+		Title:       "Service out of memory",
+		Description: "A service was killed for running out of memory.",
+	},
 }
 
 // EventRules returns the rules that [Notifier.Event] evaluates. Metric rules

@@ -122,7 +122,13 @@ const (
 
 // retryDelays is the wait after each failed attempt. A delivery that fails
 // once more after the last delay is given up.
-var retryDelays = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour}
+var retryDelays = []time.Duration{
+	time.Minute,
+	5 * time.Minute,
+	30 * time.Minute,
+	2 * time.Hour,
+	6 * time.Hour,
+}
 
 // Notifier enqueues messages and delivers them. It is safe for concurrent
 // use.
@@ -150,7 +156,14 @@ func New(store Store, baseURL string, log *slog.Logger, providers ...Provider) *
 		}
 		m[p.Name] = p
 	}
-	return &Notifier{store: store, baseURL: strings.TrimSuffix(baseURL, "/"), providers: m, log: log, wake: make(chan struct{}, 1), now: time.Now}
+	return &Notifier{
+		store:     store,
+		baseURL:   strings.TrimSuffix(baseURL, "/"),
+		providers: m,
+		log:       log,
+		wake:      make(chan struct{}, 1),
+		now:       time.Now,
+	}
 }
 
 // Providers returns the registered providers sorted by name.
@@ -191,6 +204,7 @@ func (n *Notifier) Enqueue(ctx context.Context, m Message) error {
 	if err != nil {
 		return fmt.Errorf("notify: load channels: %w", err)
 	}
+	// Give separate keyless messages distinct outbox keys so they are not deduplicated.
 	if m.Key == "" {
 		m.Key = rand.Text()
 	}

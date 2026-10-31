@@ -12,6 +12,7 @@ describe("package graph", () => {
       "mcp",
       "metrics",
       "observability",
+      "notify",
       "variables",
     ]);
     expect(importedBy("audit")).toEqual(["api", "auth", "control", "mcp", "observability"]);
