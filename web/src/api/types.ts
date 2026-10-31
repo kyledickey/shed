@@ -266,6 +266,60 @@ export type BackupSettingsInput = {
 export const isBackupActive = (b: Pick<Backup, "status">): boolean =>
   b.status === "queued" || b.status === "running" || b.status === "uploading";
 
+export type NotificationChannel = {
+  id: string;
+  name: string;
+  /** From GET /api/notifications/providers. */
+  provider: string;
+  enabled: boolean;
+  createdAt: string;
+};
+
+export type NotificationChannelInput = {
+  name: string;
+  provider: string;
+  target: string;
+  enabled: boolean;
+};
+
+/** The provider is fixed. An omitted or empty target keeps the stored one. */
+export type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+
+export type NotificationRule = {
+  id: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  /** Effective value; null if the rule has none. */
+  threshold: number | null;
+  /** Label of the threshold: "crashes", "%", or "s"; empty if none. */
+  unit: string;
+  /** Effective duration; null if the rule has none. */
+  forSeconds: number | null;
+  /** Reads metrics, so it works only while telemetry is on. */
+  needsTelemetry: boolean;
+  /** False if the rule cannot fire now. */
+  available: boolean;
+};
+
+/** An omitted field stays as it is. */
+export type NotificationRulePatch = { enabled?: boolean; threshold?: number; forSeconds?: number };
+
+export type NotificationDelivery = {
+  id: string;
+  channelId: string;
+  channelName: string;
+  title: string;
+  body: string;
+  status: "pending" | "sent" | "failed";
+  /** Failed sends so far. */
+  attempts: number;
+  /** Empty if none; never the target. */
+  lastError: string;
+  createdAt: string;
+  sentAt: string | null;
+};
+
 export type Release = {
   /** The tag, e.g. "v1.4.0". */
   version: string;

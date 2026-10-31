@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -47,6 +48,13 @@ type fakeStore struct {
 	cursorsDeleted bool
 	// dashboardsDeleted is set by DeleteGrafanaDashboards.
 	dashboardsDeleted bool
+	rules             []store.NotificationRule
+}
+
+func (s *fakeStore) NotificationRules(context.Context) ([]store.NotificationRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rules, nil
 }
 
 func (s *fakeStore) DeleteGrafanaDashboards(context.Context) error {
@@ -263,8 +271,10 @@ func (g fakeGrafana) EnsureFolder(_ context.Context, f grafana.Folder) error {
 }
 
 func (g fakeGrafana) ReloadAlertRules(context.Context) error {
-	if _, err := os.Stat(filepath.Join(g.dir, provisioning, "alerting", "shed.yaml")); err != nil {
-		return fmt.Errorf("reload before the rules file exists: %w", err)
+	for _, f := range []string{"shed.yaml", "notify.yaml"} {
+		if _, err := os.Stat(filepath.Join(g.dir, provisioning, "alerting", f)); err != nil {
+			return fmt.Errorf("reload before the file exists: %w", err)
+		}
 	}
 	g.t.add("reload alerting")
 	return nil
@@ -298,11 +308,12 @@ func newHarness(t *testing.T, opts ...func(*Config)) *harness {
 			}
 			return fakeGrafana{tr, h.dir}
 		},
-		Addrs:        Addrs{Metrics: "127.0.0.1:8428", Logs: "127.0.0.1:9428", Traces: "127.0.0.1:10428", Grafana: "127.0.0.1:3001"},
-		Dir:          h.dir,
-		GrafanaURL:   "https://shed.example.com/grafana/",
-		OTLPEndpoint: "http://localhost:4318",
-		Log:          slog.New(slog.DiscardHandler),
+		Addrs:           Addrs{Metrics: "127.0.0.1:8428", Logs: "127.0.0.1:9428", Traces: "127.0.0.1:10428", Grafana: "127.0.0.1:3001"},
+		Dir:             h.dir,
+		GrafanaURL:      "https://shed.example.com/grafana/",
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + AlertWebhookPath,
+		Log:             slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {
 		opt(&cfg)
@@ -403,7 +414,7 @@ func TestEnableSequence(t *testing.T) {
 	if got := h.t.take(); !slices.Equal(got, want) {
 		t.Fatalf("enable did\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	for _, f := range []string{"scrape/scrape.yaml", provisioning + "/datasources/shed.yaml", provisioning + "/alerting/shed.yaml"} {
+	for _, f := range []string{"scrape/scrape.yaml", provisioning + "/datasources/shed.yaml", provisioning + "/alerting/shed.yaml", provisioning + "/alerting/notify.yaml"} {
 		info, err := os.Stat(filepath.Join(h.dir, f))
 		if err != nil {
 			t.Fatal(err)
@@ -786,5 +797,78 @@ func TestSpec(t *testing.T) {
 	}
 	if l2, _ := spec(Logs, longer); l2.Labels[labelSpec] != logs.Labels[labelSpec] {
 		t.Error("changing metrics retention changed the logs spec")
+	}
+}
+
+func TestAlertWebhookTokenInNotifyFile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.set(t, enabled())
+	token, err := h.store.Setting(ctx, webhookTokenKey)
+	if err != nil || token == "" {
+		t.Fatalf("token = %q, %v", token, err)
+	}
+	if got, _ := h.m.AlertWebhookToken(ctx); got != token {
+		t.Errorf("token changed to %q", got)
+	}
+	path := filepath.Join(h.dir, provisioning, "alerting", "notify.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), token) || !strings.Contains(string(b), h.m.cfg.AlertWebhookURL) {
+		t.Errorf("notify.yaml lacks the token or URL:\n%s", b)
+	}
+	// A reconcile puts back a file that was changed.
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.m.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), token) {
+		t.Errorf("notify.yaml was not rewritten:\n%s", b)
+	}
+}
+
+func TestApplyAlertRules(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	path := filepath.Join(h.dir, provisioning, "alerting", "shed.yaml")
+	threshold := 42.0
+	h.store.rules = []store.NotificationRule{{ID: "shed-host-disk", Enabled: false, Threshold: &threshold}}
+
+	// Off: stored only. Grafana isn't touched and no file appears.
+	if err := h.m.ApplyAlertRules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.t.take(); len(got) != 0 {
+		t.Errorf("while off did %v", got)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("rules file while off: %v", err)
+	}
+
+	// Reconciling renders the overrides stored while off.
+	h.set(t, enabled())
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "more than 42% full") || !strings.Contains(string(b), "isPaused: true") {
+		t.Errorf("rules file lacks the overrides:\n%s", b)
+	}
+
+	// On: rewrites the file and reloads.
+	h.t.take()
+	threshold = 50
+	if err := h.m.ApplyAlertRules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := h.t.take(), []string{"folder shed", "reload alerting"}; !slices.Equal(got, want) {
+		t.Errorf("did %v, want %v", got, want)
+	}
+	if b, _ := os.ReadFile(path); !strings.Contains(string(b), "more than 50% full") {
+		t.Errorf("rules file was not rewritten:\n%s", b)
 	}
 }

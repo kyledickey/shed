@@ -38,6 +38,7 @@ import (
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/netns"
+	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/otlp"
@@ -219,6 +220,12 @@ func run() error {
 	})
 
 	gh := &api.GitHubHolder{}
+	notifier := notify.New(notifyStore{st}, cfg.Server.URL, log, notify.Hark(nil))
+	// Annotate drops events while telemetry is off; notifications don't depend on it.
+	events := func(e telemetry.Event) {
+		dashboards.Annotate(e)
+		notifier.Event(e)
+	}
 	deployer := deploy.New(deploy.Config{
 		Store:  st,
 		Docker: dc,
@@ -246,7 +253,7 @@ func run() error {
 			return s.Enabled, err
 		},
 		OTLPEndpoint: otlpEndpoint,
-		Events:       dashboards.Annotate,
+		Events:       events,
 		Attached:     stackExporters{&stack},
 		Log:          log,
 	})
@@ -270,8 +277,11 @@ func run() error {
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   grafanaURL,
 		OTLPEndpoint: otlpEndpoint,
-		Databases:    st,
-		Redeployer:   deployer,
+		// Grafana is on the host network, so it reaches the gateway's loopback
+		// listener.
+		AlertWebhookURL: fmt.Sprintf("http://127.0.0.1:%d%s", cfg.Telemetry.OTLPPort, observability.AlertWebhookPath),
+		Databases:       st,
+		Redeployer:      deployer,
 		Security: &observability.Security{
 			Docker:    dc,
 			Catalog:   st,
@@ -287,11 +297,12 @@ func run() error {
 				if d.OOM {
 					text = "killed for running out of memory"
 				}
-				dashboards.Annotate(telemetry.Event{
+				events(telemetry.Event{
 					Kind:    telemetry.EventCrash,
 					Service: telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind},
 					Start:   time.Now(),
 					Text:    text,
+					OOM:     d.OOM,
 				})
 			},
 		},
@@ -307,7 +318,7 @@ func run() error {
 			return s3.New(s3.Config(c))
 		},
 		Dir:    backupDir,
-		Events: dashboards.Annotate,
+		Events: events,
 		Log:    log,
 	})
 
@@ -373,6 +384,7 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
+		Notifier:   notifier,
 		ListenerError: func(serviceID string) string {
 			return gateway.ListenerError(serviceID)
 		},
@@ -388,8 +400,26 @@ func run() error {
 		Namespaces: namespaces{},
 		Masks:      plane,
 		Settings:   stack.Settings,
-		Port:       cfg.Telemetry.OTLPPort,
-		Log:        log,
+		AlertToken: stack.AlertWebhookToken,
+		Alerts: func(ctx context.Context, alerts []grafana.WebhookAlert) error {
+			for _, a := range alerts {
+				err := notifier.Alert(ctx, notify.AlertInfo{
+					Name:         a.Labels["alertname"],
+					Status:       a.Status,
+					Fingerprint:  a.Fingerprint,
+					StartsAt:     a.StartsAt,
+					Summary:      a.Summary(),
+					ServiceID:    a.Labels["shed_service_id"],
+					GeneratorURL: a.GeneratorURL,
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Port: cfg.Telemetry.OTLPPort,
+		Log:  log,
 	})
 	receiver, err := otlp.New(otlp.Config{
 		Attribute: gateway.Attribute,
@@ -447,6 +477,11 @@ func run() error {
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
+	background.Go(func() {
+		if err := notifier.Run(ctx); !errors.Is(err, context.Canceled) {
+			log.Error("notifications stopped", "err", err)
+		}
+	})
 	background.Go(func() { stack.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.
@@ -530,6 +565,75 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 		return nil, err
 	}
 	return h, nil
+}
+
+// notifyStore adapts the store to notify.Store.
+type notifyStore struct{ *store.Store }
+
+func (s notifyStore) Channels(ctx context.Context) ([]notify.Channel, error) {
+	cs, err := s.NotificationChannels(ctx)
+	out := make([]notify.Channel, len(cs))
+	for i, c := range cs {
+		out[i] = notify.Channel{ID: c.ID, Name: c.Name, Provider: c.Provider, Target: c.Target, Enabled: c.Enabled}
+	}
+	return out, err
+}
+
+func (s notifyStore) AddDelivery(ctx context.Context, d notify.Delivery) error {
+	return s.EnqueueNotification(ctx, store.NotificationDelivery{
+		ChannelID: d.ChannelID, Key: d.Key, Title: d.Title, Body: d.Body, URL: d.URL, Project: d.Project,
+		NextAttemptAt: d.NextAttemptAt,
+	})
+}
+
+func (s notifyStore) DueDeliveries(ctx context.Context, t time.Time, limit int) ([]notify.Delivery, error) {
+	ds, err := s.DueNotifications(ctx, t, limit)
+	out := make([]notify.Delivery, len(ds))
+	for i, d := range ds {
+		out[i] = notify.Delivery{
+			ID: d.ID, ChannelID: d.ChannelID, Attempts: d.Attempts, NextAttemptAt: d.NextAttemptAt,
+			Message: notify.Message{Key: d.Key, Title: d.Title, Body: d.Body, URL: d.URL, Project: d.Project},
+		}
+	}
+	return out, err
+}
+
+func (s notifyStore) DeliverySent(ctx context.Context, id string, at time.Time) error {
+	return s.NotificationSent(ctx, id, at)
+}
+
+func (s notifyStore) DeliveryRetry(ctx context.Context, id string, next time.Time, lastError string) error {
+	return s.NotificationRetry(ctx, id, next, lastError)
+}
+
+func (s notifyStore) DeliveryFailed(ctx context.Context, id, lastError string) error {
+	return s.NotificationFailed(ctx, id, lastError)
+}
+
+func (s notifyStore) Rules(ctx context.Context) ([]notify.RuleOverride, error) {
+	rs, err := s.NotificationRules(ctx)
+	out := make([]notify.RuleOverride, len(rs))
+	for i, r := range rs {
+		out[i] = notify.RuleOverride(r)
+	}
+	return out, err
+}
+
+func (s notifyStore) ProjectName(ctx context.Context, id string) (string, error) {
+	p, err := s.Project(ctx, id)
+	return p.Name, err
+}
+
+func (s notifyStore) ServiceProject(ctx context.Context, serviceID string) (string, error) {
+	svc, err := s.Service(ctx, serviceID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	return svc.ProjectID, err
+}
+
+func (s notifyStore) PruneDeliveries(ctx context.Context, t time.Time) error {
+	return s.PruneNotifications(ctx, t)
 }
 
 // stackExporters adapts the telemetry stack, built after the deployer, to

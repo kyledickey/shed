@@ -29,6 +29,7 @@ import (
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/store"
@@ -236,6 +237,7 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      auditLog,
 		Telemetry:  f.telemetry,
 		Dashboards: f.dashboards,
+		Notifier:   notify.New(nil, "", nil, fakeNotifyProvider()),
 		Stores:     control.TelemetryStores{Logs: f.logStore},
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {

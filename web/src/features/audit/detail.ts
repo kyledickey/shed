@@ -40,6 +40,7 @@ export const actionGroups = [
   "volume",
   "backup",
   "onepassword",
+  "notification",
   "update",
   "audit",
   "telemetry",

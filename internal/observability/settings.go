@@ -15,6 +15,10 @@ const settingsKey = "telemetry"
 // passwordKey is the settings row holding the Grafana admin password.
 const passwordKey = "grafana_admin_password"
 
+// webhookTokenKey is the settings row holding the bearer token Grafana calls
+// the alert webhook with.
+const webhookTokenKey = "grafana_webhook_token"
+
 // Caps limit what one service may send to the gateway.
 type Caps struct {
 	SpansPerSecond int `json:"spansPerSecond"`
@@ -120,15 +124,26 @@ func (m *Manager) SetSettings(ctx context.Context, s Settings) (Settings, error)
 // AdminPassword returns the Grafana admin password, generating and storing
 // it the first time.
 func (m *Manager) AdminPassword(ctx context.Context) (string, error) {
-	pw, err := m.cfg.Store.Setting(ctx, passwordKey)
+	return m.secret(ctx, passwordKey)
+}
+
+// AlertWebhookToken returns the alert webhook's bearer token, generating and
+// storing it the first time.
+func (m *Manager) AlertWebhookToken(ctx context.Context) (string, error) {
+	return m.secret(ctx, webhookTokenKey)
+}
+
+// secret returns the settings row key, storing a random value the first time.
+func (m *Manager) secret(ctx context.Context, key string) (string, error) {
+	v, err := m.cfg.Store.Setting(ctx, key)
 	if err == nil {
-		return pw, nil
+		return v, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
-	if _, err := m.cfg.Store.AddSetting(ctx, passwordKey, randomPassword()); err != nil {
+	if _, err := m.cfg.Store.AddSetting(ctx, key, randomPassword()); err != nil {
 		return "", err
 	}
-	return m.cfg.Store.Setting(ctx, passwordKey)
+	return m.cfg.Store.Setting(ctx, key)
 }

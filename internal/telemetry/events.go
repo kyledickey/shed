@@ -6,6 +6,8 @@ import "time"
 // dashboards mark: a deployment, restart, stop, crash, backup, or restore.
 type Event struct {
 	Kind EventKind
+	// ID is the deployment, backup, or restore ID; empty if none.
+	ID string
 	// Service is the service the event is about; a zero ID means shed
 	// itself, as for backups of shed.db.
 	Service Service
@@ -13,6 +15,9 @@ type Event struct {
 	// End is zero for a moment.
 	End  time.Time
 	Text string
+	// OOM is set on a crash when the kernel killed the service for running
+	// out of memory.
+	OOM bool
 }
 
 // EventKind names what happened.

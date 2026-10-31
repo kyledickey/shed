@@ -280,6 +280,69 @@ export const endpointGroups: EndpointGroup[] = [
     ],
   },
   {
+    title: "Notifications",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/notifications/providers",
+        response: "string[]",
+        notes: "Provider names.",
+      },
+      {
+        method: "GET",
+        path: "/api/notifications/channels",
+        response: "NotificationChannel[]",
+        notes: "Never includes the target.",
+      },
+      {
+        method: "POST",
+        path: "/api/notifications/channels",
+        body: "NotificationChannelInput",
+        response: "201, NotificationChannel",
+        notes: "400 if the name is empty, the provider unknown, or the target rejected.",
+      },
+      {
+        method: "PATCH",
+        path: "/api/notifications/channels/{id}",
+        body: "NotificationChannelPatch",
+        response: "NotificationChannel",
+        notes: "An empty or absent target keeps the stored one.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/notifications/channels/{id}",
+        response: "204",
+        notes: "Also deletes its deliveries.",
+      },
+      {
+        method: "POST",
+        path: "/api/notifications/channels/{id}/test",
+        response: "204",
+        notes: "Sends now, even if disabled. 400 with the failure.",
+      },
+      {
+        method: "GET",
+        path: "/api/notifications/rules",
+        response: "NotificationRule[]",
+        notes: "The rule catalog with overrides applied.",
+      },
+      {
+        method: "PATCH",
+        path: "/api/notifications/rules/{id}",
+        body: "NotificationRulePatch",
+        response: "NotificationRule",
+        notes:
+          "404 if unknown. 400 for a threshold or duration the rule does not allow. 502 if Grafana can't apply a metric rule; the value is still saved.",
+      },
+      {
+        method: "GET",
+        path: "/api/notifications/deliveries?limit=",
+        response: "NotificationDelivery[]",
+        notes: "Newest first. Default 50, max 200.",
+      },
+    ],
+  },
+  {
     title: "GitHub",
     endpoints: [
       { method: "GET", path: "/api/github/repos", response: "Repo[]" },
