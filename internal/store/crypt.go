@@ -86,6 +86,12 @@ func destinationAD(id string) string {
 	return "backup_destinations\x00" + id
 }
 
+// channelAD returns the additional data binding a target to a
+// notification_channels row.
+func channelAD(id string) string {
+	return "notification_channels\x00" + id
+}
+
 // deploymentAD returns the additional data binding a runtime to a
 // deployments row.
 func deploymentAD(id string) string {
@@ -153,6 +159,11 @@ func encryptAll(ctx context.Context, tx *sql.Tx, c *crypter) error {
 			`SELECT id, secret_access_key FROM backup_destinations`,
 			`UPDATE backup_destinations SET secret_access_key = ? WHERE id = ?`,
 			func(k []string) string { return destinationAD(k[0]) },
+		},
+		{
+			`SELECT id, target FROM notification_channels`,
+			`UPDATE notification_channels SET target = ? WHERE id = ?`,
+			func(k []string) string { return channelAD(k[0]) },
 		},
 		{
 			`SELECT id, runtime FROM deployments WHERE runtime <> ''`,

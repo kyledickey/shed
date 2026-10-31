@@ -27,7 +27,7 @@ Flip **Collect telemetry**. The switch saves at once and shed brings the stack u
 1. Pull each image the first time.
 2. Start the three stores and wait for each one's `/health`.
 3. Write Grafana's data sources, start Grafana, and wait for it. The first start installs the VictoriaMetrics and VictoriaLogs data source plugins, which needs network access to grafana.com.
-4. Create the `shed` folder in Grafana and load the default alert rules into it.
+4. Create the `shed` folder in Grafana and load the alert rules and the webhook that sends alerts to shed.
 5. Create the folders and default dashboards (see [Folders and dashboards](#folders-and-dashboards)).
 
 Components show **Starting** until they answer their health check, then **Running**. A step that fails shows **Failed** with the error, and shed tries again a minute later. **Restart** on a component restarts its container.
@@ -43,7 +43,7 @@ Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Ope
 - Requests that change something must come from the dashboard's own origin, like the API's. Grafana Live's WebSocket must too.
 - shed's session cookie never reaches Grafana.
 
-Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
+Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited in Grafana either; change them under [Server, Notifications](/docs/notifications#metric-rules). shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
 
 ## Folders and dashboards
 
@@ -74,7 +74,7 @@ Deploys starting (or a redeploy), going active, and failing, restarts, stops, cr
 
 ### Alerts
 
-The default alert rules live in the shed folder: a service restarted more than 3 times in 10 minutes, an OOM kill, host disk above 85%, host memory above 90% for 10 minutes, a 5xx ratio above 5% for 5 minutes at more than 1 request a second, p95 latency above 2 seconds for 10 minutes, database connections above 80% of the maximum, a failed deploy or backup, and telemetry dropping records. No contact point is configured; add one in Grafana to get notified. Firing alerts show on the Telemetry page, and alerts about a service (by its `shed_service_id` label) also on that service's Metrics tab.
+shed's alert rules live in the shed folder: host disk and memory use, a service's 5xx ratio and p95 latency, database connections, and telemetry being dropped. Set their thresholds and durations, or turn them off, under **Server, Notifications**; see [Metric rules](/docs/notifications#metric-rules). Grafana evaluates them and sends every alert, including those of rules you add yourself, to shed, which passes them to your [notification channels](/docs/notifications). Firing alerts show on the Telemetry page, and alerts about a service (by its `shed_service_id` label) also on that service's Metrics tab. Failed deploys and backups and service crashes are notifications rather than Grafana alerts, so they don't show there.
 
 ## Requests at the edge
 

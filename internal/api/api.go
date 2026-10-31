@@ -96,6 +96,16 @@ type Control interface {
 	TestBackupS3(ctx context.Context, in backup.S3Input) error
 	BackupIdentity(ctx context.Context) (string, error)
 
+	NotificationProviders() []string
+	NotificationChannels(ctx context.Context) ([]store.NotificationChannel, error)
+	CreateNotificationChannel(ctx context.Context, in control.NotificationChannelInput) (store.NotificationChannel, error)
+	UpdateNotificationChannel(ctx context.Context, id string, patch control.NotificationChannelPatch) (store.NotificationChannel, error)
+	DeleteNotificationChannel(ctx context.Context, id string) error
+	TestNotificationChannel(ctx context.Context, id string) error
+	NotificationDeliveries(ctx context.Context, limit int) ([]store.NotificationDelivery, error)
+	NotificationRules(ctx context.Context) ([]control.NotificationRule, error)
+	UpdateNotificationRule(ctx context.Context, id string, patch control.NotificationRulePatch) (control.NotificationRule, error)
+
 	UpdateStatus(ctx context.Context) (update.Status, error)
 	CheckUpdate(ctx context.Context) (update.Status, error)
 	DownloadUpdate(ctx context.Context) (update.Status, error)
@@ -306,6 +316,16 @@ func (s *Server) Handler() http.Handler {
 	authed("GET /api/backups/{id}/download", s.downloadBackup)
 	authed("POST /api/backups/{id}/restore", s.restoreBackup)
 	authed("DELETE /api/backups/{id}", s.deleteBackup)
+
+	authed("GET /api/notifications/providers", s.listNotificationProviders)
+	authed("GET /api/notifications/channels", s.listNotificationChannels)
+	authed("POST /api/notifications/channels", s.createNotificationChannel)
+	authed("PATCH /api/notifications/channels/{id}", s.patchNotificationChannel)
+	authed("DELETE /api/notifications/channels/{id}", s.deleteNotificationChannel)
+	authed("POST /api/notifications/channels/{id}/test", s.testNotificationChannel)
+	authed("GET /api/notifications/rules", s.listNotificationRules)
+	authed("PATCH /api/notifications/rules/{id}", s.patchNotificationRule)
+	authed("GET /api/notifications/deliveries", s.listNotificationDeliveries)
 
 	authed("GET /api/update", s.getUpdate)
 	authed("POST /api/update/check", s.checkUpdate)

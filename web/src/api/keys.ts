@@ -19,6 +19,10 @@ export const keys = {
   oauthGrants: ["oauth", "grants"] as const,
   audit: (filters: object) => ["audit", "events", filters] as const,
   auditSettings: ["audit", "settings"] as const,
+  notificationProviders: ["notifications", "providers"] as const,
+  notificationChannels: ["notifications", "channels"] as const,
+  notificationRules: ["notifications", "rules"] as const,
+  notificationDeliveries: ["notifications", "deliveries"] as const,
   telemetry: ["telemetry"] as const,
   serviceTelemetry: (serviceId: string) => ["services", serviceId, "telemetry"] as const,
   logHistory: (serviceId: string, filters: object) =>

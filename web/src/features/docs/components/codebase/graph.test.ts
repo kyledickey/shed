@@ -12,12 +12,13 @@ describe("package graph", () => {
       "mcp",
       "metrics",
       "observability",
+      "notify",
       "variables",
     ]);
     expect(importedBy("audit")).toEqual(["api", "auth", "control", "mcp", "observability"]);
     expect(importedBy("control")).toEqual(["api", "mcp"]);
     expect(importedBy("observability")).toEqual(["api", "control", "mcp"]);
-    expect(importedBy("telemetry")).toEqual(["backup", "deploy", "observability"]);
+    expect(importedBy("telemetry")).toEqual(["backup", "deploy", "observability", "notify"]);
     expect(importedBy("victoria")).toEqual(["control", "mcp", "metrics", "observability"]);
     expect(importedBy("mcp")).toEqual([]);
     expect(importedBy("api")).toEqual([]);

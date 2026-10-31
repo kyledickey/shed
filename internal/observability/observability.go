@@ -32,6 +32,7 @@ type Store interface {
 	DeleteSetting(ctx context.Context, key string) error
 	DeleteLogCursors(ctx context.Context) error
 	DeleteGrafanaDashboards(ctx context.Context) error
+	NotificationRules(ctx context.Context) ([]store.NotificationRule, error)
 }
 
 var _ Store = (*store.Store)(nil)
@@ -106,6 +107,9 @@ type Config struct {
 	// OTLPEndpoint is the address apps send OTLP to, on loopback inside
 	// their containers.
 	OTLPEndpoint string
+	// AlertWebhookURL is the gateway's alert webhook on the host's loopback,
+	// where Grafana sends alerts.
+	AlertWebhookURL string
 	// Databases lists the database services to run exporters for. Nil runs
 	// none.
 	Databases ServiceStore
@@ -143,6 +147,10 @@ type Manager struct {
 	// settingsMu serializes saving the settings with DeleteData, which
 	// holds it after mu.
 	settingsMu sync.Mutex
+	// alertingMu serializes writing Grafana's alerting files and reloading
+	// them. It is separate from mu so that saving a rule doesn't wait for a
+	// reconcile that is pulling images.
+	alertingMu sync.Mutex
 
 	// scrapeMu serializes writing scrape.yaml, and guards targets, the
 	// exporters it names.

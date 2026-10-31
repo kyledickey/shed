@@ -1,0 +1,80 @@
+---
+title: Notifications
+group: Operating
+order: 146
+description: "shed can push a message to your phone when a deploy, backup, or restore fails, when a service runs out of memory or crashes in a loop, or, with telemetry on, when a metric crosses a threshold."
+---
+
+## Channels
+
+A channel is where notifications go. shed supports [Hark](https://hark.ryan.ceo), a push service for your phone. Add channels under **Server, Notifications**.
+
+To get a Hark webhook, install the Hark app, create a webhook there, and copy its URL. It looks like `https://hark.ryan.ceo/hooks/<token>`. The token is the only credential, so shed treats the URL as a secret: it is encrypted in `shed.db`, shown only in the field you paste it into, and never returned by the API, written to the log, or recorded in the [audit log](/docs/audit). To change it, paste a new URL; leave the field blank to keep the saved one.
+
+**Send test** sends a message straight to the channel, even if it is disabled, and shows the error if it fails. Test messages are not listed under recent deliveries.
+
+Every enabled channel gets every notification. There is no routing and no severity. Disable a channel to pause it.
+
+## Rules
+
+Rules decide what sends a notification. All are on by default. There are two kinds: event rules, which always work, and [metric rules](#metric-rules), which need telemetry.
+
+| Rule                  | Sends when                                                         | Setting                      |
+| --------------------- | ------------------------------------------------------------------ | ---------------------------- |
+| Deploy failed         | A deployment fails. Canceled and skipped deployments do not count. |                              |
+| Backup failed         | A backup fails, including a backup of shed's own database.         |                              |
+| Restore failed        | A restore fails.                                                   |                              |
+| Service out of memory | The kernel kills a service for running out of memory.              |                              |
+| Service crash loop    | A service crashes several times within 10 minutes.                 | Crashes to count, default 3. |
+
+Every crash counts toward a crash loop, whether or not it ran out of memory. When a service reaches the number, shed sends one message and then stays quiet about that service for 30 minutes. The counts are kept in memory, so they start over when shed restarts.
+
+Event rules work with [telemetry](/docs/telemetry) off. They do not need Grafana or any metrics.
+
+A message has a short title such as "Deploy failed: web", the project name, and a link to the service in the dashboard. For a failed deploy its text is the failure reason with secret variable values masked, cut to 500 bytes. A failed backup or restore only says what failed: its error isn't masked and channels are third parties, so the details stay in shed.
+
+If no channel is enabled when an event happens, the event is not saved for later.
+
+## Metric rules
+
+Metric rules are evaluated by Grafana from your metrics, so they need telemetry on. With telemetry off the dashboard shows them as **Needs telemetry** and they can't fire. What you saved through the API while it was off applies when telemetry comes on.
+
+| Rule                       | Sends when                                                                   | Threshold    | For           |
+| -------------------------- | ---------------------------------------------------------------------------- | ------------ | ------------- |
+| Host disk almost full      | The host disk is fuller than the threshold.                                  | 85%          | fires at once |
+| Host memory high           | Host memory use stays above the threshold.                                   | 90%          | 10 minutes    |
+| HTTP 5xx ratio high        | A service's share of 5xx responses stays above it, at more than 1 request/s. | 5%           | 5 minutes     |
+| HTTP p95 latency high      | A service's p95 latency stays above the threshold.                           | 2 s          | 10 minutes    |
+| Database connections high  | A database stays above this share of its maximum connections.                | 80%          | 5 minutes     |
+| Telemetry dropping records | shed keeps dropping a service's telemetry.                                   | not editable | 5 minutes     |
+
+Edit them here, not in Grafana: shed writes them to Grafana on every change. Percentages run from just above 0 to 100, latency is above 0, and a duration is 0 to 24 hours. If Grafana can't apply a change, saving shows the error and keeps the value, and shed applies it the next time it brings up telemetry. Turning a rule off pauses it in Grafana.
+
+Each alert sends one message when it starts firing and one, titled "Resolved: ...", when it ends. Grafana repeats a firing alert every 4 hours, but shed drops the repeats. Its text says what crossed the threshold, and it links to the service, or to the rule in Grafana when it isn't about a service. The resolved message repeats the firing text under its "Resolved" title.
+
+A first message takes about a minute and a half at most. Grafana batches later changes to the same alert, so one can take up to 5 minutes. Turning off a firing rule sends the resolved message. Saving a firing rule restarts its evaluation: if it is still above the new threshold, you may get a resolved message followed by a new firing, or nothing until it ends.
+
+If Grafana can't evaluate a rule, for example because VictoriaMetrics is down, you get a `DatasourceError` message naming the rule.
+
+### Rules you add in Grafana
+
+Alert rules you create in Grafana reach the same channels. Every alert goes to the `shed` contact point, which sends it to shed with no rule check, so turning off shed's rules doesn't affect yours. Label a rule with `shed_service_id` to link its messages to the service, and set a `summary` annotation for the text.
+
+shed provisions the `shed` contact point and the root notification policy on every reload, which happens whenever it brings up telemetry and each time you save a metric rule:
+
+- **Notification policy routes you add by hand in Grafana are overwritten on every reload.** Don't keep any there.
+- The `shed` contact point can't usefully be repointed: Grafana won't edit a provisioned contact point, and any change to the file is put back. A contact point you add yourself survives, but no alert reaches it without a policy route, and those don't last.
+
+## Delivery and retries
+
+Each message is stored in `shed.db` for every enabled channel before anything is sent, so a restart does not lose it. Sending is retried when it fails for a reason that might pass: after 1 minute, 5 minutes, 30 minutes, 2 hours, and 6 hours, after which the delivery is marked failed. Hark rejecting the webhook (an unknown token or another client error), or accepting the message with no device to receive it, fails the delivery at once without retries. A repeated event, such as the same deployment failing again, is sent once per channel.
+
+**Recent deliveries** lists the newest 50 with their status, attempts, and last error. Finished deliveries are deleted after 30 days. Deleting a channel deletes its deliveries.
+
+## Limits
+
+- Hark is the only provider.
+- Rules send to every enabled channel; you can't send a rule to one channel.
+- Crash-loop counts reset when shed restarts.
+- An alert Grafana sends while shed is down is sent again up to 5 minutes later, once shed is back.
+- Metric rules need telemetry.

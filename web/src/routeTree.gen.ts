@@ -25,6 +25,7 @@ import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
 import { Route as AppServerAuditRouteImport } from './routes/_app/server/audit'
 import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
 import { Route as AppServerLogsRouteImport } from './routes/_app/server/logs'
+import { Route as AppServerNotificationsRouteImport } from './routes/_app/server/notifications'
 import { Route as AppServerTelemetryRouteImport } from './routes/_app/server/telemetry'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
@@ -115,6 +116,11 @@ const AppServerLogsRoute = AppServerLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => AppServerRoute,
 } as any)
+const AppServerNotificationsRoute = AppServerNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppServerRoute,
+} as any)
 const AppServerTelemetryRoute = AppServerTelemetryRouteImport.update({
   id: '/telemetry',
   path: '/telemetry',
@@ -189,6 +195,7 @@ export interface FileRoutesByFullPath {
   '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/server/notifications': typeof AppServerNotificationsRoute
   '/server/telemetry': typeof AppServerTelemetryRoute
   '/docs/': typeof AppDocsIndexRoute
   '/server/': typeof AppServerIndexRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/server/notifications': typeof AppServerNotificationsRoute
   '/server/telemetry': typeof AppServerTelemetryRoute
   '/docs': typeof AppDocsIndexRoute
   '/server': typeof AppServerIndexRoute
@@ -241,6 +249,7 @@ export interface FileRoutesById {
   '/_app/server/audit': typeof AppServerAuditRoute
   '/_app/server/backups': typeof AppServerBackupsRoute
   '/_app/server/logs': typeof AppServerLogsRoute
+  '/_app/server/notifications': typeof AppServerNotificationsRoute
   '/_app/server/telemetry': typeof AppServerTelemetryRoute
   '/_app/docs/': typeof AppDocsIndexRoute
   '/_app/server/': typeof AppServerIndexRoute
@@ -270,6 +279,7 @@ export interface FileRouteTypes {
     | '/server/audit'
     | '/server/backups'
     | '/server/logs'
+    | '/server/notifications'
     | '/server/telemetry'
     | '/docs/'
     | '/server/'
@@ -294,6 +304,7 @@ export interface FileRouteTypes {
     | '/server/audit'
     | '/server/backups'
     | '/server/logs'
+    | '/server/notifications'
     | '/server/telemetry'
     | '/docs'
     | '/server'
@@ -321,6 +332,7 @@ export interface FileRouteTypes {
     | '/_app/server/audit'
     | '/_app/server/backups'
     | '/_app/server/logs'
+    | '/_app/server/notifications'
     | '/_app/server/telemetry'
     | '/_app/docs/'
     | '/_app/server/'
@@ -457,6 +469,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppServerLogsRouteImport
       parentRoute: typeof AppServerRoute
     }
+    '/_app/server/notifications': {
+      id: '/_app/server/notifications'
+      path: '/notifications'
+      fullPath: '/server/notifications'
+      preLoaderRoute: typeof AppServerNotificationsRouteImport
+      parentRoute: typeof AppServerRoute
+    }
     '/_app/server/telemetry': {
       id: '/_app/server/telemetry'
       path: '/telemetry'
@@ -547,6 +566,7 @@ interface AppServerRouteChildren {
   AppServerAuditRoute: typeof AppServerAuditRoute
   AppServerBackupsRoute: typeof AppServerBackupsRoute
   AppServerLogsRoute: typeof AppServerLogsRoute
+  AppServerNotificationsRoute: typeof AppServerNotificationsRoute
   AppServerTelemetryRoute: typeof AppServerTelemetryRoute
   AppServerIndexRoute: typeof AppServerIndexRoute
 }
@@ -555,6 +575,7 @@ const AppServerRouteChildren: AppServerRouteChildren = {
   AppServerAuditRoute: AppServerAuditRoute,
   AppServerBackupsRoute: AppServerBackupsRoute,
   AppServerLogsRoute: AppServerLogsRoute,
+  AppServerNotificationsRoute: AppServerNotificationsRoute,
   AppServerTelemetryRoute: AppServerTelemetryRoute,
   AppServerIndexRoute: AppServerIndexRoute,
 }

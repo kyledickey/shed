@@ -21,6 +21,8 @@ type fakeTelemetry struct {
 	s  observability.Settings
 }
 
+func (f *fakeTelemetry) ApplyAlertRules(context.Context) error { return nil }
+
 func (f *fakeTelemetry) Status(context.Context) (observability.Status, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

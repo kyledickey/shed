@@ -265,6 +265,39 @@ type BackupSettingsInput = {
 };
 ```
 
+### Notifications
+
+```title="TypeScript"
+type NotificationChannel = {
+  id: string; name: string;
+  provider: string;                    // from GET /api/notifications/providers
+  enabled: boolean;
+  createdAt: string;
+};
+type NotificationChannelInput = { name: string; provider: string; target: string; enabled: boolean };
+// provider is fixed. An omitted or empty target keeps the stored one.
+type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+type NotificationRule = {
+  id: string; title: string; description: string;
+  enabled: boolean;
+  threshold: number | null;            // effective value; null if the rule has none
+  unit: string;                        // label of the threshold: "crashes", "%", "s"; "" if none
+  forSeconds: number | null;           // effective duration; null if the rule has none
+  needsTelemetry: boolean;             // reads metrics, so it works only while telemetry is on
+  available: boolean;                  // false if it cannot fire now (needs telemetry, which is off)
+};
+// An omitted field stays as it is. threshold and forSeconds only for rules that have them.
+type NotificationRulePatch = { enabled?: boolean; threshold?: number; forSeconds?: number };
+type NotificationDelivery = {
+  id: string; channelId: string; channelName: string;
+  title: string; body: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;                    // failed sends so far
+  lastError: string;                   // "" if none; never the target
+  createdAt: string; sentAt: string | null;
+};
+```
+
 ### Updates
 
 ```title="TypeScript"

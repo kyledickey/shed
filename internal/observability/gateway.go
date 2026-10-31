@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -69,6 +70,11 @@ type GatewayConfig struct {
 	Masks      Masks
 	// Settings returns the telemetry settings, for the default caps.
 	Settings func(ctx context.Context) (Settings, error)
+	// AlertToken returns the alert webhook's bearer token.
+	AlertToken func(ctx context.Context) (string, error)
+	// Alerts handles the alerts of one webhook call. It may see an alert
+	// again, since a failure makes Grafana retry the whole call.
+	Alerts func(ctx context.Context, alerts []grafana.WebhookAlert) error
 	// Port is telemetry.otlp_port, the port of every listener.
 	Port int
 	Log  *slog.Logger
@@ -223,8 +229,9 @@ func (g *Gateway) Run(ctx context.Context, h http.Handler) {
 	}
 }
 
-// listenLoopback starts serving h on the host's loopback, or returns nil if
-// it cannot listen, to be retried on the next pass.
+// listenLoopback starts serving h and the alert webhook on the host's
+// loopback, or returns nil if it cannot listen, to be retried on the next pass.
+// App containers don't get the webhook: their listeners serve h alone.
 func (g *Gateway) listenLoopback(h http.Handler) *http.Server {
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(g.cfg.Port))
 	ln, err := g.listen(addr)
@@ -232,7 +239,10 @@ func (g *Gateway) listenLoopback(h http.Handler) *http.Server {
 		g.cfg.Log.Warn("telemetry gateway: listen", "addr", addr, "err", err)
 		return nil
 	}
-	srv := newServer(h, hostLoopback{})
+	mux := http.NewServeMux()
+	mux.Handle(AlertWebhookPath, alertWebhook(g.cfg.AlertToken, g.cfg.Alerts, g.cfg.Log))
+	mux.Handle("/", h)
+	srv := newServer(mux, hostLoopback{})
 	go g.serve(srv, ln)
 	g.cfg.Log.Info("telemetry gateway: listening", "addr", addr)
 	return srv

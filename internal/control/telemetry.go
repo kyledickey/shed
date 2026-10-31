@@ -17,6 +17,7 @@ type Telemetry interface {
 	Restart(ctx context.Context, c observability.Component) error
 	DeleteData(ctx context.Context) error
 	Dropping(ctx context.Context, serviceID string) (bool, error)
+	ApplyAlertRules(ctx context.Context) error
 }
 
 var _ Telemetry = (*observability.Manager)(nil)

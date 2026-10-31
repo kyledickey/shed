@@ -35,6 +35,7 @@ internal/otlp      OTLP/HTTP receiver: decode, attribution, masking, caps
 internal/victoria  VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients
 internal/grafana   Grafana config, provisioning, HTTP API, dashboard templates
 internal/s3        S3-compatible object storage client
+internal/notify    notifications: channels, outbox delivery, provider adapters (hark push)
 internal/deploy    deployment pipeline, per-service workers, reconcile on boot
 internal/netns     TCP listeners inside other processes' network namespaces
 internal/host      host resource usage from procfs, sysfs, and statfs, conntrack flows

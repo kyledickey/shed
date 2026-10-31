@@ -38,6 +38,7 @@ import (
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/netns"
+	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/otlp"
@@ -219,6 +220,12 @@ func run() error {
 	})
 
 	gh := &api.GitHubHolder{}
+	notifier := notify.New(notify.NewStore(st), cfg.Server.URL, log, notify.Hark(nil))
+	// Annotate drops events while telemetry is off; notifications don't depend on it.
+	events := func(e telemetry.Event) {
+		dashboards.Annotate(e)
+		notifier.Event(e)
+	}
 	deployer := deploy.New(deploy.Config{
 		Store:  st,
 		Docker: dc,
@@ -246,7 +253,7 @@ func run() error {
 			return s.Enabled, err
 		},
 		OTLPEndpoint: otlpEndpoint,
-		Events:       dashboards.Annotate,
+		Events:       events,
 		Attached:     stackExporters{&stack},
 		Log:          log,
 	})
@@ -270,8 +277,11 @@ func run() error {
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   grafanaURL,
 		OTLPEndpoint: otlpEndpoint,
-		Databases:    st,
-		Redeployer:   deployer,
+		// Grafana is on the host network, so it reaches the gateway's loopback
+		// listener.
+		AlertWebhookURL: fmt.Sprintf("http://127.0.0.1:%d%s", cfg.Telemetry.OTLPPort, observability.AlertWebhookPath),
+		Databases:       st,
+		Redeployer:      deployer,
 		Security: &observability.Security{
 			Docker:    dc,
 			Catalog:   st,
@@ -287,11 +297,12 @@ func run() error {
 				if d.OOM {
 					text = "killed for running out of memory"
 				}
-				dashboards.Annotate(telemetry.Event{
+				events(telemetry.Event{
 					Kind:    telemetry.EventCrash,
 					Service: telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind},
 					Start:   time.Now(),
 					Text:    text,
+					OOM:     d.OOM,
 				})
 			},
 		},
@@ -307,7 +318,7 @@ func run() error {
 			return s3.New(s3.Config(c))
 		},
 		Dir:    backupDir,
-		Events: dashboards.Annotate,
+		Events: events,
 		Log:    log,
 	})
 
@@ -373,6 +384,7 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
+		Notifier:   notifier,
 		ListenerError: func(serviceID string) string {
 			return gateway.ListenerError(serviceID)
 		},
@@ -388,8 +400,26 @@ func run() error {
 		Namespaces: namespaces{},
 		Masks:      plane,
 		Settings:   stack.Settings,
-		Port:       cfg.Telemetry.OTLPPort,
-		Log:        log,
+		AlertToken: stack.AlertWebhookToken,
+		Alerts: func(ctx context.Context, alerts []grafana.WebhookAlert) error {
+			for _, a := range alerts {
+				err := notifier.Alert(ctx, notify.AlertInfo{
+					Name:         a.Labels["alertname"],
+					Status:       a.Status,
+					Fingerprint:  a.Fingerprint,
+					StartsAt:     a.StartsAt,
+					Summary:      a.Summary(),
+					ServiceID:    a.Labels["shed_service_id"],
+					GeneratorURL: a.GeneratorURL,
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Port: cfg.Telemetry.OTLPPort,
+		Log:  log,
 	})
 	receiver, err := otlp.New(otlp.Config{
 		Attribute: gateway.Attribute,
@@ -447,6 +477,11 @@ func run() error {
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
+	background.Go(func() {
+		if err := notifier.Run(ctx); !errors.Is(err, context.Canceled) {
+			log.Error("notifications stopped", "err", err)
+		}
+	})
 	background.Go(func() { stack.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.

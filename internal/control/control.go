@@ -1,6 +1,6 @@
 // Package control holds shed's operations on projects, services,
-// deployments, variables, domains, volumes, backups, metrics, updates, and
-// telemetry:
+// deployments, variables, domains, volumes, backups, metrics, updates,
+// telemetry, and notification channels:
 // the rules every interface to shed shares. Every operation that changes
 // state, and every read of secrets, is recorded in the audit log. The HTTP API and the MCP server
 // call a [Plane] instead of the store and the deployer directly, so that both
@@ -76,6 +76,15 @@ type Store interface {
 	TelemetryCaps(ctx context.Context, serviceID string) (store.TelemetryCaps, error)
 	SetTelemetryCaps(ctx context.Context, serviceID string, c store.TelemetryCaps) error
 	DeleteTelemetryCaps(ctx context.Context, serviceID string) error
+
+	NotificationChannels(ctx context.Context) ([]store.NotificationChannel, error)
+	NotificationChannel(ctx context.Context, id string) (store.NotificationChannel, error)
+	CreateNotificationChannel(ctx context.Context, c store.NotificationChannel) (store.NotificationChannel, error)
+	UpdateNotificationChannel(ctx context.Context, c store.NotificationChannel) error
+	DeleteNotificationChannel(ctx context.Context, id string) error
+	NotificationDeliveries(ctx context.Context, limit int) ([]store.NotificationDelivery, error)
+	NotificationRules(ctx context.Context) ([]store.NotificationRule, error)
+	SetNotificationRule(ctx context.Context, r store.NotificationRule) error
 }
 
 var _ Store = (*store.Store)(nil)
@@ -195,6 +204,7 @@ type Config struct {
 	Audit      Audit
 	Telemetry  Telemetry
 	Dashboards Dashboards
+	Notifier   Notifier
 	// ListenerError returns why the telemetry gateway cannot listen inside
 	// a service's container, or "". Nil reports none.
 	ListenerError func(serviceID string) string
@@ -224,6 +234,7 @@ type Plane struct {
 	audit         Audit
 	telemetry     Telemetry
 	dashboards    Dashboards
+	notifier      Notifier
 	listenerError func(serviceID string) string
 	stores        TelemetryStores
 	dashboardHost string
@@ -251,6 +262,7 @@ func New(cfg Config) *Plane {
 		audit:         cfg.Audit,
 		telemetry:     cfg.Telemetry,
 		dashboards:    cfg.Dashboards,
+		notifier:      cfg.Notifier,
 		stores:        cfg.Stores,
 		listenerError: cfg.ListenerError,
 		baseDomain:    strings.ToLower(cfg.BaseDomain),
