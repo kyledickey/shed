@@ -16,6 +16,7 @@ import (
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
@@ -306,6 +307,7 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      f.audit,
 		Telemetry:  f.tel,
 		Dashboards: f.dash,
+		Notifier:   notify.New(nil, nil, fakeNotifyProvider()),
 		ListenerError: func(serviceID string) string {
 			return f.listenerErrs[serviceID]
 		},

@@ -265,6 +265,28 @@ type BackupSettingsInput = {
 };
 ```
 
+### Notifications
+
+```title="TypeScript"
+type NotificationChannel = {
+  id: string; name: string;
+  provider: string;                    // from GET /api/notifications/providers
+  enabled: boolean;
+  createdAt: string;
+};
+type NotificationChannelInput = { name: string; provider: string; target: string; enabled: boolean };
+// provider is fixed. An omitted or empty target keeps the stored one.
+type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+type NotificationDelivery = {
+  id: string; channelId: string; channelName: string;
+  title: string; body: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;                    // failed sends so far
+  lastError: string;                   // "" if none; never the target
+  createdAt: string; sentAt: string | null;
+};
+```
+
 ### Updates
 
 ```title="TypeScript"

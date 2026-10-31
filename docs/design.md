@@ -124,7 +124,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
-| `internal/notify` | notification types, provider registry, fan-out to endpoints, Hark push adapter | store via interface |
+| `internal/notify` | notification channels, outbox delivery with retries, provider registry, Hark push adapter | store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
 | `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
@@ -138,7 +138,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
 | `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/firewall/proxy/telemetry types |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability/grafana/victoria types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, notification channels, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/notify/variables/onepassword/audit/observability/grafana/victoria types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/github/metrics/update/store/audit/observability/victoria |
 | `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/onepassword/audit/observability |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
@@ -336,6 +336,33 @@ CREATE TABLE restore_fences (            -- a restore is changing the service's 
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE notification_channels (     -- where notifications go; see "Notifications"
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL,                -- registered provider, e.g. hark
+  target TEXT NOT NULL,                  -- provider address, a secret; encrypted (see Encryption at rest)
+  enabled INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE notification_deliveries (   -- the outbox: one row per message per channel
+  id TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,                     -- idempotency key; generated when the message has none
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  project TEXT NOT NULL,
+  status TEXT NOT NULL,                  -- pending | sent | failed
+  attempts INTEGER NOT NULL DEFAULT 0,   -- failed sends so far
+  next_attempt_at TEXT NOT NULL,
+  last_error TEXT NOT NULL DEFAULT '',   -- never contains the target
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  UNIQUE (channel_id, key)
+);
+CREATE INDEX notification_deliveries_due ON notification_deliveries(status, next_attempt_at);
+
 CREATE TABLE pending_pushes (             -- newest undeployed push per app service
   service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
   id TEXT NOT NULL,                       -- changes with every newer push
@@ -443,12 +470,13 @@ redeployed once to pick up query statistics arguments.
 Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
 key: every `settings.value` (including the GitHub App credentials and the backup
 age identity and the 1Password token), `variables.value`,
-`backup_destinations.secret_access_key`, and
+`backup_destinations.secret_access_key`,
+`notification_channels.target`, and
 `deployments.runtime` (the active deployment's resolved variables).
 
 - **Format.** `v1:` + base64 (raw std, no padding) of `nonce‖ciphertext`. The
   additional data binds each value to its row: the table plus `key`
-  (settings), `service_id`+`key` (variables), or the destination or
+  (settings), `service_id`+`key` (variables), or the destination, channel, or
   deployment id. A value
   copied to another row fails to decrypt.
 - **Key file.** `shed.key` next to the config file (default
@@ -1047,6 +1075,39 @@ auto-deploy, and production traffic disabled until data recovery is verified.
 A full fresh-host rebuild/restore sequence has not been integration-tested.
 Archive files or S3 access, TOML configuration, and encryption keys must also be
 recovered; restoring database rows does not restore local archive files.
+
+### Notifications
+
+`internal/notify` sends notifications to the **channels** in
+`notification_channels`: a name, a provider (`hark`), a provider-specific
+target (for Hark, the webhook URL `https://hark.ryan.ceo/hooks/<token>`, whose
+token is the only credential), and an enabled flag. Every enabled channel gets
+every message: there is no routing and no severity.
+
+`Enqueue` rejects an empty body and writes one `pending` row of
+`notification_deliveries` per enabled channel. A repeated (channel, key) is
+ignored, so repeats are idempotent; a message without a key gets a random one.
+Nothing is held only in memory. A worker started in `cmd/shed`, with or
+without telemetry, delivers due rows one at a time. It runs right after an
+enqueue and otherwise every 30 seconds, and picks up pending rows after a
+restart.
+
+A failed send is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, and
+6 hours; one more failure marks the row `failed`. An error that wraps
+`notify.ErrPermanent` fails the row at once. Hark treats an unknown token
+(404), any other 4xx except 429, and a message that reached no device as
+permanent; 429, 5xx, and transport errors are retried. Rows of a channel that
+was disabled after they were queued fail with "channel is disabled", and
+deleting a channel deletes its rows. `last_error` comes from the adapter,
+which never includes the target. Sent and failed rows are deleted after 30
+days.
+
+Testing a channel (`POST /api/notifications/channels/{id}/test`) sends
+straight to the provider, bypassing the outbox, and works on disabled
+channels. Creating or editing a channel validates the target without
+contacting the provider. Every mutation is audited as
+`notification.channel.create`, `.update`, `.delete`, or `.test`, with the
+channel's name and provider and never its target.
 
 ### Proxy
 
@@ -2399,6 +2460,14 @@ PUT    /api/backups/settings  BackupSettingsInput → BackupSettings
 POST   /api/backups/settings/test  BackupSettingsInput → 204  (400 {error} with the S3 failure; blank secret = stored)
 GET    /api/backups/settings/key                → { identity: string }  (age secret key; 404 if none)
 
+GET    /api/notifications/providers             → string[]  (provider names)
+GET    /api/notifications/channels              → NotificationChannel[]  (never the target)
+POST   /api/notifications/channels  NotificationChannelInput → 201 NotificationChannel  (400 if the name is empty, the provider unknown, or the target rejected)
+PATCH  /api/notifications/channels/{id}  NotificationChannelPatch → NotificationChannel  (empty or absent target keeps the stored one; 404 if unknown)
+DELETE /api/notifications/channels/{id}         204  (and its deliveries; 404 if unknown)
+POST   /api/notifications/channels/{id}/test    204  (sends now, even if disabled; 400 {error} with the failure)
+GET    /api/notifications/deliveries?limit=     → NotificationDelivery[]  (newest first; default 50, max 200)
+
 GET    /api/update                              → UpdateStatus
 POST   /api/update/check                        → UpdateStatus  (checks GitHub now; a failed check is reported in error; 409 if unsupported or busy)
 POST   /api/update/download                     202 → UpdateStatus  (409 if unsupported, no newer release, or busy)
@@ -2672,6 +2741,23 @@ type BackupSettings = {
 type BackupSettingsInput = {
   s3: (Omit<S3Settings, "hasSecret"> & { secretAccessKey?: string }) | null;
   encryption: { enabled: boolean };
+};
+type NotificationChannel = {
+  id: string; name: string;
+  provider: string;                    // from GET /api/notifications/providers
+  enabled: boolean;
+  createdAt: string;
+};
+type NotificationChannelInput = { name: string; provider: string; target: string; enabled: boolean };
+// provider is fixed. An omitted or empty target keeps the stored one.
+type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+type NotificationDelivery = {
+  id: string; channelId: string; channelName: string;
+  title: string; body: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;                    // failed sends so far
+  lastError: string;                   // "" if none; never the target
+  createdAt: string; sentAt: string | null;
 };
 type Release = {
   version: string;                     // tag, e.g. "v1.4.0"

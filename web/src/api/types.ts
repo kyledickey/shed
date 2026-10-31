@@ -266,6 +266,40 @@ export type BackupSettingsInput = {
 export const isBackupActive = (b: Pick<Backup, "status">): boolean =>
   b.status === "queued" || b.status === "running" || b.status === "uploading";
 
+export type NotificationChannel = {
+  id: string;
+  name: string;
+  /** From GET /api/notifications/providers. */
+  provider: string;
+  enabled: boolean;
+  createdAt: string;
+};
+
+export type NotificationChannelInput = {
+  name: string;
+  provider: string;
+  target: string;
+  enabled: boolean;
+};
+
+/** The provider is fixed. An omitted or empty target keeps the stored one. */
+export type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+
+export type NotificationDelivery = {
+  id: string;
+  channelId: string;
+  channelName: string;
+  title: string;
+  body: string;
+  status: "pending" | "sent" | "failed";
+  /** Failed sends so far. */
+  attempts: number;
+  /** Empty if none; never the target. */
+  lastError: string;
+  createdAt: string;
+  sentAt: string | null;
+};
+
 export type Release = {
   /** The tag, e.g. "v1.4.0". */
   version: string;

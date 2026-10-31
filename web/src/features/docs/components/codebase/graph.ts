@@ -38,6 +38,7 @@ export const packages: Package[] = [
       "grafana",
       "logtail",
       "metrics",
+      "notify",
       "observability",
       "onepassword",
       "store",

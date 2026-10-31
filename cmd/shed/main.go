@@ -38,6 +38,7 @@ import (
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/netns"
+	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/onepassword"
 	"github.com/kyledickey/shed/internal/otlp"
@@ -354,6 +355,8 @@ func run() error {
 	}
 	stack.OnEnabled(collector.SetRemote)
 
+	notifier := notify.New(notifyStore{st}, log, notify.Hark(nil))
+
 	// The gateway masks with the plane, which reports its listener errors.
 	var gateway *observability.Gateway
 	plane = control.New(control.Config{
@@ -373,6 +376,7 @@ func run() error {
 		Audit:      auditLog,
 		Telemetry:  stack,
 		Dashboards: dashboards,
+		Notifier:   notifier,
 		ListenerError: func(serviceID string) string {
 			return gateway.ListenerError(serviceID)
 		},
@@ -447,6 +451,11 @@ func run() error {
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
+	background.Go(func() {
+		if err := notifier.Run(ctx); !errors.Is(err, context.Canceled) {
+			log.Error("notifications stopped", "err", err)
+		}
+	})
 	background.Go(func() { stack.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.
@@ -530,6 +539,53 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 		return nil, err
 	}
 	return h, nil
+}
+
+// notifyStore adapts the store to notify.Store.
+type notifyStore struct{ *store.Store }
+
+func (s notifyStore) Channels(ctx context.Context) ([]notify.Channel, error) {
+	cs, err := s.NotificationChannels(ctx)
+	out := make([]notify.Channel, len(cs))
+	for i, c := range cs {
+		out[i] = notify.Channel{ID: c.ID, Name: c.Name, Provider: c.Provider, Target: c.Target, Enabled: c.Enabled}
+	}
+	return out, err
+}
+
+func (s notifyStore) AddDelivery(ctx context.Context, d notify.Delivery) error {
+	return s.EnqueueNotification(ctx, store.NotificationDelivery{
+		ChannelID: d.ChannelID, Key: d.Key, Title: d.Title, Body: d.Body, URL: d.URL, Project: d.Project,
+		NextAttemptAt: d.NextAttemptAt,
+	})
+}
+
+func (s notifyStore) DueDeliveries(ctx context.Context, t time.Time, limit int) ([]notify.Delivery, error) {
+	ds, err := s.DueNotifications(ctx, t, limit)
+	out := make([]notify.Delivery, len(ds))
+	for i, d := range ds {
+		out[i] = notify.Delivery{
+			ID: d.ID, ChannelID: d.ChannelID, Attempts: d.Attempts, NextAttemptAt: d.NextAttemptAt,
+			Message: notify.Message{Key: d.Key, Title: d.Title, Body: d.Body, URL: d.URL, Project: d.Project},
+		}
+	}
+	return out, err
+}
+
+func (s notifyStore) DeliverySent(ctx context.Context, id string, at time.Time) error {
+	return s.NotificationSent(ctx, id, at)
+}
+
+func (s notifyStore) DeliveryRetry(ctx context.Context, id string, next time.Time, lastError string) error {
+	return s.NotificationRetry(ctx, id, next, lastError)
+}
+
+func (s notifyStore) DeliveryFailed(ctx context.Context, id, lastError string) error {
+	return s.NotificationFailed(ctx, id, lastError)
+}
+
+func (s notifyStore) PruneDeliveries(ctx context.Context, t time.Time) error {
+	return s.PruneNotifications(ctx, t)
 }
 
 // stackExporters adapts the telemetry stack, built after the deployer, to
