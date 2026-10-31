@@ -281,7 +281,7 @@ type NotificationRule = {
   id: string; title: string; description: string;
   enabled: boolean;
   threshold: number | null;            // effective value; null if the rule has none
-  unit: string;                        // label of the threshold, e.g. "crashes"; "" if none
+  unit: string;                        // label of the threshold: "crashes", "%", "s"; "" if none
   forSeconds: number | null;           // effective duration; null if the rule has none
   needsTelemetry: boolean;             // reads metrics, so it works only while telemetry is on
   available: boolean;                  // false if it cannot fire now (needs telemetry, which is off)

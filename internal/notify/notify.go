@@ -108,6 +108,9 @@ type Store interface {
 	Rules(ctx context.Context) ([]RuleOverride, error)
 	// ProjectName returns the name of a project, or "" if there is none.
 	ProjectName(ctx context.Context, id string) (string, error)
+	// ServiceProject returns the project of a service, or "" if there is no
+	// such service.
+	ServiceProject(ctx context.Context, serviceID string) (string, error)
 }
 
 const (

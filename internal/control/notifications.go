@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/kyledickey/shed/internal/audit"
+	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/notify"
 	"github.com/kyledickey/shed/internal/store"
 )
@@ -161,20 +162,26 @@ type NotificationRulePatch struct {
 	ForSeconds *int
 }
 
+// notificationCatalog returns every rule: the event rules, then the metric
+// rules that Grafana evaluates.
+func notificationCatalog() []notify.RuleDef {
+	defs := notify.EventRules()
+	for _, r := range grafana.AlertRules() {
+		defs = append(defs, notify.RuleDef{
+			ID: r.UID, Title: r.Title, Description: r.Description,
+			Threshold: r.Threshold, Unit: r.Unit, Max: r.Max,
+			ForSeconds: r.ForSeconds, NeedsTelemetry: true,
+		})
+	}
+	return defs
+}
+
 // NotificationRules returns every notification rule with its settings.
 func (p *Plane) NotificationRules(ctx context.Context) ([]NotificationRule, error) {
-	rs, err := p.notificationRules(ctx)
+	s, err := p.telemetry.Settings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]NotificationRule, len(rs))
-	for i, r := range rs {
-		out[i] = NotificationRule{Rule: r, Available: !r.NeedsTelemetry}
-	}
-	return out, nil
-}
-
-func (p *Plane) notificationRules(ctx context.Context) ([]notify.Rule, error) {
 	os, err := p.store.NotificationRules(ctx)
 	if err != nil {
 		return nil, err
@@ -183,7 +190,12 @@ func (p *Plane) notificationRules(ctx context.Context) ([]notify.Rule, error) {
 	for i, o := range os {
 		overrides[i] = notify.RuleOverride(o)
 	}
-	return notify.MergeRules(overrides), nil
+	rs := notify.MergeRules(notificationCatalog(), overrides)
+	out := make([]NotificationRule, len(rs))
+	for i, r := range rs {
+		out[i] = NotificationRule{Rule: r, Available: !r.NeedsTelemetry || s.Enabled}
+	}
+	return out, nil
 }
 
 // UpdateNotificationRule applies patch to a rule and returns it.
@@ -200,7 +212,8 @@ func (p *Plane) UpdateNotificationRule(ctx context.Context, id string, patch Not
 }
 
 func (p *Plane) updateNotificationRule(ctx context.Context, id string, patch NotificationRulePatch) (NotificationRule, error) {
-	if err := notify.ValidateRule(id, patch.Threshold, patch.ForSeconds); err != nil {
+	defs := notificationCatalog()
+	if err := notify.ValidateRule(defs, id, patch.Threshold, patch.ForSeconds); err != nil {
 		if errors.Is(err, notify.ErrUnknownRule) {
 			return NotificationRule{}, errorf(ErrNotFound, "%v", err)
 		}
@@ -226,6 +239,12 @@ func (p *Plane) updateNotificationRule(ctx context.Context, id string, patch Not
 	}
 	if err := p.store.SetNotificationRule(ctx, o); err != nil {
 		return NotificationRule{}, err
+	}
+	if defs[slices.IndexFunc(defs, func(d notify.RuleDef) bool { return d.ID == id })].NeedsTelemetry {
+		// The override stays on failure: the next reconcile applies it.
+		if err := p.telemetry.ApplyAlertRules(ctx); err != nil {
+			return NotificationRule{}, errorf(ErrUpstream, "the rule is saved, but Grafana did not apply it yet: %v", err)
+		}
 	}
 	rs, err := p.NotificationRules(ctx)
 	if err != nil {

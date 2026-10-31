@@ -135,7 +135,7 @@ func TestIntegration(t *testing.T) {
 	if err := c.EnsureFolder(ctx, Folder{UID: ShedFolder, Title: "shed"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteAlertRules(dir); err != nil {
+	if err := WriteAlertRules(dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.ReloadAlertRules(ctx); err != nil {
@@ -148,8 +148,8 @@ func TestIntegration(t *testing.T) {
 	if err := c.do(ctx, http.MethodGet, "/api/v1/provisioning/alert-rules", nil, &rules); err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != len(defaultAlertRules()) {
-		t.Errorf("%d alert rules provisioned, want %d", len(rules), len(defaultAlertRules()))
+	if len(rules) != len(AlertRules()) {
+		t.Errorf("%d alert rules provisioned, want %d", len(rules), len(AlertRules()))
 	}
 	for _, r := range rules {
 		if r.FolderUID != ShedFolder {

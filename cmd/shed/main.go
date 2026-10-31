@@ -277,8 +277,11 @@ func run() error {
 		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
 		GrafanaURL:   grafanaURL,
 		OTLPEndpoint: otlpEndpoint,
-		Databases:    st,
-		Redeployer:   deployer,
+		// Grafana is on the host network, so it reaches the gateway's loopback
+		// listener.
+		AlertWebhookURL: fmt.Sprintf("http://127.0.0.1:%d%s", cfg.Telemetry.OTLPPort, observability.AlertWebhookPath),
+		Databases:       st,
+		Redeployer:      deployer,
 		Security: &observability.Security{
 			Docker:    dc,
 			Catalog:   st,
@@ -397,8 +400,26 @@ func run() error {
 		Namespaces: namespaces{},
 		Masks:      plane,
 		Settings:   stack.Settings,
-		Port:       cfg.Telemetry.OTLPPort,
-		Log:        log,
+		AlertToken: stack.AlertWebhookToken,
+		Alerts: func(ctx context.Context, alerts []grafana.WebhookAlert) error {
+			for _, a := range alerts {
+				err := notifier.Alert(ctx, notify.AlertInfo{
+					Name:         a.Labels["alertname"],
+					Status:       a.Status,
+					Fingerprint:  a.Fingerprint,
+					StartsAt:     a.StartsAt,
+					Summary:      a.Summary(),
+					ServiceID:    a.Labels["shed_service_id"],
+					GeneratorURL: a.GeneratorURL,
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+		Port: cfg.Telemetry.OTLPPort,
+		Log:  log,
 	})
 	receiver, err := otlp.New(otlp.Config{
 		Attribute: gateway.Attribute,
@@ -601,6 +622,14 @@ func (s notifyStore) Rules(ctx context.Context) ([]notify.RuleOverride, error) {
 func (s notifyStore) ProjectName(ctx context.Context, id string) (string, error) {
 	p, err := s.Project(ctx, id)
 	return p.Name, err
+}
+
+func (s notifyStore) ServiceProject(ctx context.Context, serviceID string) (string, error) {
+	svc, err := s.Service(ctx, serviceID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	return svc.ProjectID, err
 }
 
 func (s notifyStore) PruneDeliveries(ctx context.Context, t time.Time) error {

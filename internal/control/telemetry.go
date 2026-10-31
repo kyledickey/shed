@@ -17,6 +17,9 @@ type Telemetry interface {
 	Restart(ctx context.Context, c observability.Component) error
 	DeleteData(ctx context.Context) error
 	Dropping(ctx context.Context, serviceID string) (bool, error)
+	// ApplyAlertRules makes Grafana evaluate the stored rule overrides. While
+	// telemetry is off it does nothing.
+	ApplyAlertRules(ctx context.Context) error
 }
 
 var _ Telemetry = (*observability.Manager)(nil)

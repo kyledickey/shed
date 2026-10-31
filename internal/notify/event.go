@@ -57,7 +57,7 @@ func (n *Notifier) rule(ctx context.Context, id string) (Rule, error) {
 	if err != nil {
 		return Rule{}, fmt.Errorf("notify: load rules: %w", err)
 	}
-	for _, r := range MergeRules(os) {
+	for _, r := range MergeRules(catalog, os) {
 		if r.ID == id {
 			return r, nil
 		}
@@ -82,13 +82,7 @@ func (n *Notifier) send(e telemetry.Event, id, key, title, body string) {
 }
 
 func (n *Notifier) enqueueEvent(ctx context.Context, e telemetry.Event, key, title, body string) {
-	if strings.TrimSpace(body) == "" {
-		body = title
-	}
-	if len(body) > bodyLimit {
-		body = strings.ToValidUTF8(body[:bodyLimit], "") + "…"
-	}
-	m := Message{Key: key, Title: title, Body: body}
+	m := Message{Key: key, Title: title, Body: messageBody(body, title)}
 	if id := e.Service.ID; id != "" && n.baseURL != "" {
 		m.URL = fmt.Sprintf("%s/projects/%s/services/%s", n.baseURL, e.Service.ProjectID, id)
 	}
@@ -102,6 +96,17 @@ func (n *Notifier) enqueueEvent(ctx context.Context, e telemetry.Event, key, tit
 	if err := n.Enqueue(ctx, m); err != nil {
 		n.log.Error("notify: enqueue event", "key", key, "err", err)
 	}
+}
+
+// messageBody returns body cut to bodyLimit, or fallback if it is blank.
+func messageBody(body, fallback string) string {
+	if strings.TrimSpace(body) == "" {
+		body = fallback
+	}
+	if len(body) > bodyLimit {
+		body = strings.ToValidUTF8(body[:bodyLimit], "") + "…"
+	}
+	return body
 }
 
 // crashed counts a crash of e's service and notifies when the service

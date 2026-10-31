@@ -27,7 +27,7 @@ var (
 	// ErrConflict reports a request that the current state does not allow,
 	// such as a name already in use or a service that is busy.
 	ErrConflict = errors.New("control: conflict")
-	// ErrUpstream reports that GitHub or 1Password failed a request.
+	// ErrUpstream reports that GitHub, 1Password, or Grafana failed a request.
 	ErrUpstream = errors.New("control: upstream")
 	// ErrUnavailable reports that shed is shutting down.
 	ErrUnavailable = errors.New("control: unavailable")

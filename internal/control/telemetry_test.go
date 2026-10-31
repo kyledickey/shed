@@ -14,7 +14,14 @@ import (
 // fakeTelemetry keeps settings and enforces the manager's rules about when
 // data can be deleted and components restarted.
 type fakeTelemetry struct {
-	s observability.Settings
+	applied  int
+	applyErr error
+	s        observability.Settings
+}
+
+func (f *fakeTelemetry) ApplyAlertRules(context.Context) error {
+	f.applied++
+	return f.applyErr
 }
 
 func (f *fakeTelemetry) Status(context.Context) (observability.Status, error) {

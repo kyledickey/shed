@@ -331,7 +331,8 @@ export const endpointGroups: EndpointGroup[] = [
         path: "/api/notifications/rules/{id}",
         body: "NotificationRulePatch",
         response: "NotificationRule",
-        notes: "404 if unknown. 400 for a threshold or duration the rule does not allow.",
+        notes:
+          "404 if unknown. 400 for a threshold or duration the rule does not allow. 502 if Grafana can't apply a metric rule; the value is still saved.",
       },
       {
         method: "GET",

@@ -40,8 +40,8 @@ const (
 // Reconcile makes the stack match the stored settings. While enabled, it
 // creates or recreates each container whose spec changed, starts stopped
 // ones, waits for the stores, provisions Grafana's data sources, starts
-// Grafana, creates its shed folder, provisions the alert rules, and starts
-// the workers. While disabled, it stops the workers and the containers and
+// Grafana, creates its shed folder, provisions the alert rules and webhook, and
+// starts the workers. While disabled, it stops the workers and the containers and
 // keeps their data. Running it again changes nothing.
 func (m *Manager) Reconcile(ctx context.Context) error {
 	m.mu.Lock()
@@ -100,19 +100,67 @@ func (m *Manager) enable(ctx context.Context, s Settings) error {
 	if err := m.step(Grafana, m.waitReady(ctx, grafanaReady, ready)); err != nil {
 		return err
 	}
-	// Grafana files the alert rules under the folder titled shed and
-	// creates it with a random UID if it is missing, so the folder comes
-	// first.
-	if err := m.step(Grafana, gf.EnsureFolder(ctx, grafana.Folder{UID: grafana.ShedFolder, Title: "shed"})); err != nil {
-		return err
-	}
-	if err := m.step(Grafana, m.provision(grafana.WriteAlertRules)); err != nil {
-		return err
-	}
-	if err := m.step(Grafana, gf.ReloadAlertRules(ctx)); err != nil {
+	if err := m.step(Grafana, m.provisionAlerting(ctx, gf)); err != nil {
 		return err
 	}
 	m.activate()
+	return nil
+}
+
+// provisionAlerting makes Grafana's alert rules and webhook match the stored
+// rule overrides and the webhook token.
+func (m *Manager) provisionAlerting(ctx context.Context, gf GrafanaAPI) error {
+	m.alertingMu.Lock()
+	defer m.alertingMu.Unlock()
+	// Grafana files the alert rules under the folder titled shed and creates
+	// it with a random UID if it is missing, so the folder comes first.
+	if err := gf.EnsureFolder(ctx, grafana.Folder{UID: grafana.ShedFolder, Title: "shed"}); err != nil {
+		return err
+	}
+	rows, err := m.cfg.Store.NotificationRules(ctx)
+	if err != nil {
+		return err
+	}
+	overrides := make(map[string]grafana.AlertOverride, len(rows))
+	for _, r := range rows {
+		overrides[r.ID] = grafana.AlertOverride{Paused: !r.Enabled, Threshold: r.Threshold, ForSeconds: r.ForSeconds}
+	}
+	token, err := m.AlertWebhookToken(ctx)
+	if err != nil {
+		return err
+	}
+	// shortcut: Grafana reads the token as plaintext from notify.yaml, guarded by
+	// the data directory's 0750; use a file secret if the host gets other users.
+	err = m.provision(func(dir string) error {
+		if err := grafana.WriteAlertRules(dir, overrides); err != nil {
+			return err
+		}
+		return grafana.WriteWebhook(dir, m.cfg.AlertWebhookURL, token)
+	})
+	if err != nil {
+		return err
+	}
+	return gf.ReloadAlertRules(ctx)
+}
+
+// ApplyAlertRules makes Grafana evaluate the stored rule overrides. While
+// telemetry is off it does nothing: the next Reconcile that enables telemetry
+// renders them.
+func (m *Manager) ApplyAlertRules(ctx context.Context) error {
+	s, err := m.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	if !s.Enabled {
+		return nil
+	}
+	pw, err := m.AdminPassword(ctx)
+	if err != nil {
+		return err
+	}
+	if err := m.provisionAlerting(ctx, m.cfg.Grafana(pw)); err != nil {
+		return fmt.Errorf("observability: apply alert rules: %w", err)
+	}
 	return nil
 }
 

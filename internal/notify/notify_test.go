@@ -19,13 +19,20 @@ type fakeStore struct {
 	deliveries []*fakeDelivery
 	rules      []RuleOverride
 	projects   map[string]string
+	services   map[string]string // project ID by service ID
 	err        error
+
+	servicesErr error
 }
 
 func (s *fakeStore) Rules(context.Context) ([]RuleOverride, error) { return s.rules, nil }
 
 func (s *fakeStore) ProjectName(_ context.Context, id string) (string, error) {
 	return s.projects[id], nil
+}
+
+func (s *fakeStore) ServiceProject(_ context.Context, id string) (string, error) {
+	return s.services[id], s.servicesErr
 }
 
 type fakeDelivery struct {

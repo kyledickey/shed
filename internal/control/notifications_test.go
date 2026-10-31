@@ -167,3 +167,82 @@ func TestNotificationRules(t *testing.T) {
 		}
 	}
 }
+
+func TestMetricNotificationRules(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	find := func(id string) NotificationRule {
+		t.Helper()
+		rs, err := f.plane.NotificationRules(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rs {
+			if r.ID == id {
+				return r
+			}
+		}
+		t.Fatalf("no rule %s", id)
+		return NotificationRule{}
+	}
+
+	// Telemetry is off: metric rules are unavailable, event rules are not.
+	f.tel.s.Enabled = false
+	disk := find("shed-host-disk")
+	if disk.Available || !disk.NeedsTelemetry || !disk.Enabled || *disk.Threshold != 85 || disk.Unit != "%" || disk.ForSeconds != nil {
+		t.Errorf("disk = %+v", disk)
+	}
+	if r := find("shed-telemetry-drops"); r.Threshold != nil || *r.ForSeconds != 300 {
+		t.Errorf("drops = %+v", r)
+	}
+	if r := find("deploy-failed"); !r.Available || r.NeedsTelemetry {
+		t.Errorf("deploy-failed = %+v", r)
+	}
+
+	ten, over, secs, tooLong := 10.0, 100.5, 120, 86401
+	// An event rule doesn't touch Grafana.
+	if _, err := f.plane.UpdateNotificationRule(ctx, "service-crash-loop", NotificationRulePatch{Threshold: &ten}); err != nil {
+		t.Fatal(err)
+	}
+	if f.tel.applied != 0 {
+		t.Errorf("event rule applied %d times", f.tel.applied)
+	}
+
+	f.tel.s.Enabled = true
+	r, err := f.plane.UpdateNotificationRule(ctx, "shed-host-memory", NotificationRulePatch{Threshold: &ten, ForSeconds: &secs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Available || *r.Threshold != 10 || *r.ForSeconds != 120 || f.tel.applied != 1 {
+		t.Errorf("memory = %+v, applied %d", r, f.tel.applied)
+	}
+
+	// A failed apply reports the error and keeps the override.
+	f.tel.applyErr = errors.New("reload: 503")
+	_, err = f.plane.UpdateNotificationRule(ctx, "shed-http-latency", NotificationRulePatch{Threshold: &ten})
+	if !errors.Is(err, ErrUpstream) || !strings.Contains(err.Error(), "reload: 503") {
+		t.Errorf("failed apply = %v, want ErrUpstream with the reason", err)
+	}
+	if r := find("shed-http-latency"); *r.Threshold != 10 {
+		t.Errorf("latency = %+v, want the override kept", r)
+	}
+	f.tel.applyErr = nil
+
+	applied := f.tel.applied
+	for _, tt := range []struct {
+		id    string
+		patch NotificationRulePatch
+	}{
+		{"shed-host-disk", NotificationRulePatch{Threshold: &over}},
+		{"shed-host-disk", NotificationRulePatch{ForSeconds: &secs}},
+		{"shed-telemetry-drops", NotificationRulePatch{Threshold: &ten}},
+		{"shed-host-memory", NotificationRulePatch{ForSeconds: &tooLong}},
+	} {
+		if _, err := f.plane.UpdateNotificationRule(ctx, tt.id, tt.patch); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Update(%s, %+v) = %v, want ErrInvalid", tt.id, tt.patch, err)
+		}
+	}
+	if f.tel.applied != applied {
+		t.Errorf("rejected patches applied %d times", f.tel.applied-applied)
+	}
+}

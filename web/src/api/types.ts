@@ -292,7 +292,7 @@ export type NotificationRule = {
   enabled: boolean;
   /** Effective value; null if the rule has none. */
   threshold: number | null;
-  /** Label of the threshold, such as "crashes"; empty if none. */
+  /** Label of the threshold: "crashes", "%", or "s"; empty if none. */
   unit: string;
   /** Effective duration; null if the rule has none. */
   forSeconds: number | null;

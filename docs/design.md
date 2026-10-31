@@ -124,12 +124,12 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
-| `internal/notify` | notification channels and rules, event-to-message mapping, crash-loop detection, outbox delivery with retries, provider registry, Hark push adapter | `telemetry`; store via interface |
+| `internal/notify` | notification channels and event rules, event- and alert-to-message mapping, crash-loop detection, outbox delivery with retries, provider registry, Hark push adapter | `telemetry`; store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
 | `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
 | `internal/victoria` | VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients: writes, MetricsQL, LogsQL, Jaeger queries, store stats | — |
-| `internal/grafana` | Grafana container config, provisioning files, HTTP API (folders, dashboards, annotations, alerts), dashboard templates | — |
+| `internal/grafana` | Grafana container config, provisioning files, metric alert rule list, alert webhook parsing, HTTP API (folders, dashboards, annotations, alerts), dashboard templates | — |
 | `internal/onepassword` | 1Password vault and item operations with a service account token (official Go SDK) | — |
 | `internal/variables` | where services' variables live: shed.db, or one 1Password item per service while connected; connecting and disconnecting | interfaces only + store/onepassword types |
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker/telemetry types |
@@ -475,8 +475,9 @@ redeployed once to pick up query statistics arguments.
 ### Encryption at rest
 
 Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
-key: every `settings.value` (including the GitHub App credentials and the backup
-age identity and the 1Password token), `variables.value`,
+key: every `settings.value` (including the GitHub App credentials, the backup
+age identity, the 1Password token, the Grafana admin password, and the alert
+webhook token), `variables.value`,
 `backup_destinations.secret_access_key`,
 `notification_channels.target`, and
 `deployments.runtime` (the active deployment's resolved variables).
@@ -1116,11 +1117,13 @@ contacting the provider. Every mutation is audited as
 `notification.channel.create`, `.update`, `.delete`, or `.test`, with the
 channel's name and provider and never its target.
 
-**Rules** decide which events notify. The catalog is a table in
-`internal/notify`; `notification_rules` stores only overrides, and a rule
-without a row (or with a NULL threshold or `for_seconds`) has its catalog
-defaults. All rules default to enabled, and every enabled rule goes to every
-enabled channel. The event rules:
+**Rules** decide what notifies. The catalog has two halves: event rules in
+`internal/notify` and metric rules in `internal/grafana` (a leaf, so it knows
+nothing of `notify`); `control` maps the second into `notify.RuleDef` and
+appends it to the first for the API. `notification_rules` stores only
+overrides, and a rule without a row (or with a NULL threshold or `for_seconds`)
+has its catalog defaults. All rules default to enabled, and every enabled rule
+goes to every enabled channel. The event rules:
 
 | Rule | Fires on | Threshold | Key |
 |---|---|---|---|
@@ -1130,9 +1133,20 @@ enabled channel. The event rules:
 | `service-oom` | a `crash` event with `OOM` set | none | `oom:<service>:<start unix>` |
 | `service-crash-loop` | 3 crashes (any `crash` event) of one service within 10 minutes | whole number of crashes, default 3 | `crash-loop:<service>:<fire unix>` |
 
-A rule may declare a default threshold with a unit label and a default
-duration (`forSeconds`), and `needsTelemetry` for rules that read metrics;
-none of the event rules has a duration or needs telemetry.
+The metric rules work only while telemetry is on (`needsTelemetry`; `available`
+is false while it is off). Their IDs are their Grafana UIDs, and thresholds are
+stored in the unit shown:
+
+| Rule | Fires when | Threshold | For |
+|---|---|---|---|
+| `shed-host-disk` | host disk use is above the threshold | %, default 85 | at once, not editable |
+| `shed-host-memory` | host memory use is above the threshold | %, default 90 | default 10 min |
+| `shed-http-errors` | a service's 5xx ratio is above the threshold, at more than 1 request/s | %, default 5 | default 5 min |
+| `shed-http-latency` | a service's p95 latency is above the threshold | s, default 2 | default 10 min |
+| `shed-db-connections` | a database's connections are above the threshold share of its maximum | %, default 80 | default 5 min |
+| `shed-telemetry-drops` | shed is dropping a service's telemetry | none | default 5 min |
+
+The event rules have no duration and don't need telemetry.
 
 `Notifier.Event` has the signature of the `Events` callbacks of the deployer
 and the backup manager, and `cmd/shed` calls it next to `Dashboards.Annotate`
@@ -1150,6 +1164,23 @@ for annotations. The project is the project's name, and the link is
 `<server.url>/projects/<project>/services/<service>` when the event has a
 service.
 
+Alerts reach the same outbox through `Notifier.Alert` (see "Alert rules"), called
+for every alert of a webhook call with no rule check: a paused rule does not
+fire, and custom Grafana rules are not in the catalog, so they pass through. The
+title is the `alertname` label, or "Resolved: <alertname>". The body is the
+`summary` annotation, cut to 500 bytes, or the alert name. A `DatasourceError` or
+`DatasourceNoData` alert carries the summary of a rule that could not be
+evaluated, which would claim its condition holds, so its body names the rule
+instead. When the
+`shed_service_id` label names a known service, the project is set and the link
+goes to the service page; otherwise the link is the alert's `generatorURL`. The
+key is `alert:<fingerprint>:<startsAt>:<status>`, so Grafana's repeats (every 4
+hours while firing) and retries are ignored: one firing sends once, and its
+end sends once. A firing that outlasts the 30-day retention of finished
+deliveries can send again on the next repeat, and so can one whose rule was
+edited while it stayed above the threshold, since that gives it a new
+`startsAt`.
+
 Crash-loop counting is in memory: a list of crash times per service within the
 last 10 minutes, dropped when empty. Reaching the threshold sends once, clears
 the list, and mutes the service for 30 minutes. Counts reset when shed
@@ -1157,9 +1188,14 @@ restarts. Only enabled rules count.
 
 `PATCH /api/notifications/rules/{id}` validates at the boundary: an unknown
 rule is 404; a threshold or `forSeconds` for a rule without one, a threshold
-that is not greater than 0 (or, for `service-crash-loop`, not a whole number of
-at least 1), or a negative `forSeconds` is 400. It is audited as
-`notification.rule.update` with the fields changed.
+that is not greater than 0 (for `service-crash-loop`, not a whole number of at
+least 1; for a percentage, above 100), or a `forSeconds` outside 0 to 86400 is
+400. It is audited as `notification.rule.update` with the fields changed.
+Saving a metric rule stores the override and then, while telemetry is on,
+rewrites Grafana's files and reloads them. If that fails the response is 502 with
+the reason and the override stays, since the next reconcile renders it. While
+telemetry is off it only stores; the reconcile that turns telemetry on renders
+it.
 
 ### Proxy
 
@@ -1275,7 +1311,7 @@ addresses its data sources name) and created, recreated on the same volume,
 started, or left alone; a pinned image missing locally is pulled before an
 existing container is removed. Enabling then waits for each store's `/health`, writes
 Grafana's data sources file, starts Grafana, reconciles folders, writes the
-alert rules file and reloads it (see [Folders and
+alert rules and webhook files and reloads them (see [Folders and
 dashboards](#folders-and-dashboards)), reconciles dashboards, opens the ingest
 listeners, and starts the shippers (container
 logs, edge, audit mirror, egress). Changing retention recreates the affected
@@ -1808,19 +1844,56 @@ Writing an annotation is best effort: `Annotate` never blocks, queues up to
 256 events for one writer, drops events while telemetry is off or the queue
 is full, and a failed write is logged and dropped.
 
-Alert rules are provisioned from a file into folder shed, group
-`shed-defaults`, with no contact point configured: service restarted more
-than 3 times in 10 min, container OOM killed, host disk above 85%, host memory
-above 90% for 10 min, 5xx ratio above 5% for 5 min at more than 1 request/s,
-p95 latency above 2 s for 10 min, database connections above 80% of the
-maximum, deploy failed, backup failed, telemetry dropping records. Grafana does
-not allow editing provisioned rules; copy one to change it. Grafana files the
+#### Alert rules
+
+shed owns the metric alert rules (see "Notifications" for the list). Thresholds
+and durations live in `notification_rules`; Grafana only evaluates them and calls
+back. `grafana.WriteAlertRules` writes
+`<data>/telemetry/grafana/provisioning/alerting/shed.yaml` into folder shed, group
+`shed-defaults`, from the rule list and the overrides: the threshold in the
+stored unit is divided per rule (85 becomes `0.85`), the summary annotation states
+the effective values, and a disabled rule gets `isPaused: true`. Grafana files the
 rules under a folder by title and creates a missing one with a random UID, so
-shed writes the rules file only after creating folder `shed`, then calls
-`POST /api/admin/provisioning/alerting/reload`. Firing alerts
-(from Grafana's alert API) appear on the Telemetry page and on the affected
-service: an alert instance belongs to the service in its `shed_service_id`
-label (the default rules group by it), and has none without one.
+shed creates folder `shed` first, then writes the files and calls `POST
+/api/admin/provisioning/alerting/reload`. Grafana does not allow editing
+provisioned rules; edit them in shed, or copy one in Grafana to write your own.
+
+The rules `shed-restarts`, `shed-oom`, `shed-deploy-failed`, and
+`shed-backup-failed` of earlier versions are gone, replaced by the event rules.
+Grafana keeps a provisioned rule that a file no longer names, so the file lists
+them under `deleteRules`. Their alerts no longer appear on the Telemetry page.
+
+`grafana.WriteWebhook` writes `alerting/notify.yaml`: a webhook contact point
+named `shed` and the root notification policy pointing at it, with `group_by`
+`alertname` and `shed_service_id`, `group_wait` 30s, `group_interval` 5m, and
+`repeat_interval` 4h. The reload replaces the whole policy tree, so routes added
+by hand in Grafana are lost on every reload (each reconcile and each saved metric
+rule). Contact points added by hand survive but get nothing unless a policy
+routes to them. Both files are rewritten by every reconcile, so they converge.
+
+Timing, measured on Grafana 13.2.4: a group's first message waits `group_wait`,
+and later changes wait for its next `group_interval`, so a firing soon after an
+earlier message of the same group can take up to 5 minutes. Pausing a firing rule
+sends the resolved message. Saving a rule resets its state: if it still fires
+under the new values, it either sends nothing new, or sends the resolved message
+and a new firing, depending on when the group next flushes.
+
+Grafana is on the host network, so the contact point calls
+`http://127.0.0.1:<otlp_port>/shed/grafana-alerts`, a route served only by the
+gateway's host loopback listener, never by the listeners inside app containers or
+the public server. It runs while telemetry is on. A call that fails, such as
+during a shed restart, is sent again at the group's next `group_interval`. The
+route accepts only `POST` (else 405), compares `Authorization: Bearer <token>` in
+constant time (else 401), limits the body to 1 MiB, and parses it with
+`grafana.ParseWebhook` (else 400); a failure to enqueue is 500. The token is random, kept in
+`settings` (`grafana_webhook_token`, encrypted like other settings), and written
+to `notify.yaml` because Grafana reads it from there; the file sits under the
+data directory, which is not world-readable. `cmd/shed` turns each parsed alert
+into a `Notifier.Alert` call.
+
+Firing alerts (from Grafana's alert API) appear on the Telemetry page and on the
+affected service: an alert instance belongs to the service in its
+`shed_service_id` label (the service rules group by it), and has none without one.
 
 ### shed's own telemetry
 
@@ -2521,7 +2594,7 @@ PATCH  /api/notifications/channels/{id}  NotificationChannelPatch → Notificati
 DELETE /api/notifications/channels/{id}         204  (and its deliveries; 404 if unknown)
 POST   /api/notifications/channels/{id}/test    204  (sends now, even if disabled; 400 {error} with the failure)
 GET    /api/notifications/rules                 → NotificationRule[]  (the catalog with overrides applied)
-PATCH  /api/notifications/rules/{id}  NotificationRulePatch → NotificationRule  (404 if unknown; 400 for a value the rule does not allow)
+PATCH  /api/notifications/rules/{id}  NotificationRulePatch → NotificationRule  (404 if unknown; 400 for a value the rule does not allow; 502 if Grafana cannot apply a metric rule, which stays saved)
 GET    /api/notifications/deliveries?limit=     → NotificationDelivery[]  (newest first; default 50, max 200)
 
 GET    /api/update                              → UpdateStatus
@@ -2811,7 +2884,7 @@ type NotificationRule = {
   id: string; title: string; description: string;
   enabled: boolean;
   threshold: number | null;            // effective value; null if the rule has none
-  unit: string;                        // label of the threshold, e.g. "crashes"; "" if none
+  unit: string;                        // label of the threshold: "crashes", "%", "s"; "" if none
   forSeconds: number | null;           // effective duration; null if the rule has none
   needsTelemetry: boolean;             // reads metrics, so it works only while telemetry is on
   available: boolean;                  // false if it cannot fire now (needs telemetry, which is off)

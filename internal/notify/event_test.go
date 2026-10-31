@@ -182,6 +182,11 @@ func TestCrashLoopDisabled(t *testing.T) {
 }
 
 func TestValidateRule(t *testing.T) {
+	defs := append(EventRules(),
+		RuleDef{ID: "pct", Threshold: ptr(85.0), Max: 100, ForSeconds: ptr(600)},
+		RuleDef{ID: "latency", Threshold: ptr(2.0)},
+		RuleDef{ID: "drops", ForSeconds: ptr(300)},
+	)
 	tests := []struct {
 		name      string
 		id        string
@@ -197,16 +202,28 @@ func TestValidateRule(t *testing.T) {
 		{"crash loop 0", RuleCrashLoop, ptr(0.0), nil, true},
 		{"crash loop 2.5", RuleCrashLoop, ptr(2.5), nil, true},
 		{"crash loop negative", RuleCrashLoop, ptr(-1.0), nil, true},
+		{"percent in range", "pct", ptr(0.5), nil, false},
+		{"percent at the limit", "pct", ptr(100.0), nil, false},
+		{"percent over", "pct", ptr(100.1), nil, true},
+		{"percent zero", "pct", ptr(0.0), nil, true},
+		{"latency above 100", "latency", ptr(250.0), nil, false},
+		{"latency zero", "latency", ptr(0.0), nil, true},
+		{"no duration", "pct", nil, ptr(0), false},
+		{"a day", "pct", nil, ptr(86400), false},
+		{"over a day", "pct", nil, ptr(86401), true},
+		{"negative duration", "pct", nil, ptr(-1), true},
+		{"threshold on duration-only rule", "drops", ptr(1.0), nil, true},
+		{"duration on threshold-only rule", "latency", nil, ptr(60), true},
 	}
 	for _, tt := range tests {
-		if err := ValidateRule(tt.id, tt.threshold, tt.forSecs); (err != nil) != tt.wantErr {
+		if err := ValidateRule(defs, tt.id, tt.threshold, tt.forSecs); (err != nil) != tt.wantErr {
 			t.Errorf("%s: err = %v, want error %v", tt.name, err, tt.wantErr)
 		}
 	}
 }
 
 func TestMergeRules(t *testing.T) {
-	rs := MergeRules([]RuleOverride{
+	rs := MergeRules(catalog, []RuleOverride{
 		{ID: RuleCrashLoop, Enabled: false, Threshold: ptr(7.0)},
 		{ID: RuleOOM, Enabled: true, Threshold: ptr(9.0)}, // no threshold to override
 		{ID: "gone", Enabled: false},
