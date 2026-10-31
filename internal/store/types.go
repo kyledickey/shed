@@ -367,3 +367,44 @@ type RestoreFence struct {
 	WasStopped bool
 	CreatedAt  time.Time
 }
+
+// NotificationChannel is a destination for notifications. Target is secret
+// and is stored encrypted.
+type NotificationChannel struct {
+	ID        string
+	Name      string
+	Provider  string
+	Target    string
+	Enabled   bool
+	CreatedAt time.Time
+}
+
+// DeliveryStatus is the state of a notification delivery.
+type DeliveryStatus string
+
+// Delivery statuses.
+const (
+	DeliveryPending DeliveryStatus = "pending"
+	DeliverySent    DeliveryStatus = "sent"
+	DeliveryFailed  DeliveryStatus = "failed"
+)
+
+// NotificationDelivery is one notification waiting for, or sent to, one
+// channel.
+type NotificationDelivery struct {
+	ID        string
+	ChannelID string
+	// ChannelName is filled in when reading.
+	ChannelName   string
+	Key           string
+	Title         string
+	Body          string
+	URL           string
+	Project       string
+	Status        DeliveryStatus
+	Attempts      int
+	NextAttemptAt time.Time
+	LastError     string
+	CreatedAt     time.Time
+	SentAt        *time.Time
+}

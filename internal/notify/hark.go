@@ -38,7 +38,6 @@ func Hark(hc *http.Client) Provider {
 	}
 	return Provider{
 		Name: "hark",
-		Kind: KindPush,
 		Open: func(target string) (Sender, error) { return openHark(target, hc) },
 	}
 }
@@ -149,14 +148,14 @@ func (s harkSender) Send(ctx context.Context, m Message) error {
 			return fmt.Errorf("hark: decode response: %w", decodeErr)
 		}
 		if r.Delivered == 0 {
-			return ErrNotDelivered
+			return permanent(ErrNotDelivered)
 		}
 		return nil
 	case http.StatusAccepted:
 		// An identical request is still being processed.
 		return nil
 	case http.StatusNotFound:
-		return errHarkUnknownToken
+		return permanent(errHarkUnknownToken)
 	case http.StatusTooManyRequests:
 		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
 			r.RetryAfterSeconds = secs
@@ -175,10 +174,14 @@ func (s harkSender) Send(ctx context.Context, m Message) error {
 		msg = truncate(strings.TrimSpace(string(raw)), 200, 200)
 	}
 	msg = strings.ReplaceAll(msg, s.token, "<token>")
-	if msg == "" {
-		return fmt.Errorf("hark: %s", resp.Status)
+	err = fmt.Errorf("hark: %s", resp.Status)
+	if msg != "" {
+		err = fmt.Errorf("hark: %s: %s", resp.Status, msg)
 	}
-	return fmt.Errorf("hark: %s: %s", resp.Status, msg)
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return permanent(err)
+	}
+	return err
 }
 
 // truncate shortens s to at most maxRunes runes and maxBytes bytes, ending

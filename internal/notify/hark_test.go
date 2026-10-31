@@ -77,9 +77,9 @@ func TestOpenHark(t *testing.T) {
 }
 
 func TestValidateHarkTargetNotLeaked(t *testing.T) {
-	n := New(fakeStore{}, Hark(nil))
+	n := New(&fakeStore{}, nil, Hark(nil))
 	target := "http://hark.example/hooks/tok_s3cret"
-	err := n.Validate(Endpoint{Name: "phone", Provider: "hark", Target: target})
+	err := n.Validate(Channel{Name: "phone", Provider: "hark", Target: target})
 	if err == nil {
 		t.Fatal("Validate accepted plain http to a remote host")
 	}
@@ -154,14 +154,15 @@ func TestHarkSendStatus(t *testing.T) {
 		body    string
 		wantIs  error
 		wantErr string
+		perm    bool // errors.Is(err, ErrPermanent)
 	}{
 		{name: "delivered", status: http.StatusOK, body: `{"ok":true,"eventId":"evt_1","delivered":2}`},
-		{name: "no devices", status: http.StatusOK, body: `{"ok":true,"eventId":"evt_1","delivered":0}`, wantIs: ErrNotDelivered},
+		{name: "no devices", status: http.StatusOK, body: `{"ok":true,"eventId":"evt_1","delivered":0}`, wantIs: ErrNotDelivered, perm: true},
 		{name: "processing", status: http.StatusAccepted, body: `{"ok":true}`},
-		{name: "invalid payload", status: http.StatusBadRequest, body: `{"error":"body too long"}`, wantErr: "body too long"},
-		{name: "pro feature", status: http.StatusPaymentRequired, body: `{"message":"Pro required"}`, wantErr: "Pro required"},
-		{name: "unknown token", status: http.StatusNotFound, body: `{"error":"not found"}`, wantIs: errHarkUnknownToken},
-		{name: "key reused", status: http.StatusConflict, body: `{"error":"idempotency key reused"}`, wantErr: "idempotency key reused"},
+		{name: "invalid payload", status: http.StatusBadRequest, body: `{"error":"body too long"}`, wantErr: "body too long", perm: true},
+		{name: "pro feature", status: http.StatusPaymentRequired, body: `{"message":"Pro required"}`, wantErr: "Pro required", perm: true},
+		{name: "unknown token", status: http.StatusNotFound, body: `{"error":"not found"}`, wantIs: errHarkUnknownToken, perm: true},
+		{name: "key reused", status: http.StatusConflict, body: `{"error":"idempotency key reused"}`, wantErr: "idempotency key reused", perm: true},
 		{
 			name: "rate limit header", status: http.StatusTooManyRequests,
 			header: http.Header{"Retry-After": {"60"}}, body: `{"retryAfterSeconds":30}`,
@@ -178,7 +179,7 @@ func TestHarkSendStatus(t *testing.T) {
 		{name: "upstream failure", status: http.StatusBadGateway, body: "upstream failure", wantErr: "upstream failure"},
 		{
 			name: "error echoes token", status: http.StatusBadRequest,
-			body: `{"error":"bad token ` + harkToken + `"}`, wantErr: "bad token <token>",
+			body: `{"error":"bad token ` + harkToken + `"}`, wantErr: "bad token <token>", perm: true,
 		},
 		{name: "malformed success", status: http.StatusOK, body: "not json", wantErr: "decode response"},
 	}
@@ -188,6 +189,9 @@ func TestHarkSendStatus(t *testing.T) {
 			err := s.Send(context.Background(), Message{Body: "hi"})
 			if err != nil && strings.Contains(err.Error(), harkToken) {
 				t.Errorf("error %q contains the token", err)
+			}
+			if got := errors.Is(err, ErrPermanent); got != tt.perm {
+				t.Errorf("permanent = %v, want %v (err %v)", got, tt.perm, err)
 			}
 			switch {
 			case tt.wantIs != nil:
@@ -323,13 +327,11 @@ func TestHarkRateLimitReachable(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer ts.Close()
-	n := New(fakeStore{endpoints: []Endpoint{
-		{ID: "1", Name: "phone", Provider: "hark", Target: ts.URL + "/hooks/tok_1", Enabled: true},
-	}}, Hark(ts.Client()))
+	n := New(&fakeStore{}, nil, Hark(ts.Client()))
 
-	err := n.Send(context.Background(), Message{Body: "hi"})
+	err := n.Test(context.Background(), Channel{Name: "phone", Provider: "hark", Target: ts.URL + "/hooks/tok_1"})
 	if err == nil || !strings.Contains(err.Error(), "rate limited") {
-		t.Fatalf("Send error = %v, want it to contain %q", err, "rate limited")
+		t.Fatalf("Test error = %v, want it to contain %q", err, "rate limited")
 	}
 	if strings.Contains(err.Error(), "tok_1") {
 		t.Errorf("error %q leaks the token", err)
