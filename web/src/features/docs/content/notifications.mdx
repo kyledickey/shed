@@ -31,7 +31,7 @@ Every crash counts toward a crash loop, whether or not it ran out of memory. Whe
 
 Rules work with [telemetry](/docs/telemetry) off. They do not need Grafana or any metrics.
 
-A message has a short title such as "Deploy failed: web", the project name, and a link to the service in the dashboard. Its text is the failure reason, cut to 500 bytes. Deployment errors have secret variable values masked. Backup and restore errors are shown as the tool reported them.
+A message has a short title such as "Deploy failed: web", the project name, and a link to the service in the dashboard. For a failed deploy its text is the failure reason with secret variable values masked, cut to 500 bytes. A failed backup or restore only says what failed: its error isn't masked and channels are third parties, so the details stay in shed.
 
 If no channel is enabled when an event happens, the event is not saved for later.
 

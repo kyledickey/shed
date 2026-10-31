@@ -1141,11 +1141,14 @@ with telemetry off. Other event kinds are ignored. It looks up the rule,
 builds the message, and enqueues with a 5 second limit; a failure is logged and
 never reaches the caller. The title is "Deploy failed: <service>", "Backup
 failed: <service or shed.db>", "Restore failed: <...>", "Out of memory:
-<service>", or "Crash loop: <service>". The body is the event text (the
-deployment error is already redacted; backup and restore errors are not),
-cut to 500 bytes, or the title when the text is empty. The project is the
-project's name, and the link is `<server.url>/projects/<project>/services/<service>`
-when the event has a service.
+<service>", or "Crash loop: <service>". For deploy and out-of-memory events the
+body is the event text (the deployment error is already redacted), cut to 500
+bytes, or the title when the text is empty. Backup and restore errors are not
+redacted and channels are third parties, so those bodies only say "The backup
+of <name> failed. The details are in shed."; the error stays in the event text
+for annotations. The project is the project's name, and the link is
+`<server.url>/projects/<project>/services/<service>` when the event has a
+service.
 
 Crash-loop counting is in memory: a list of crash times per service within the
 last 10 minutes, dropped when empty. Reaching the threshold sends once, clears

@@ -29,14 +29,16 @@ type loop struct {
 func (n *Notifier) Event(e telemetry.Event) {
 	switch e.Kind {
 	case telemetry.EventDeployFailed:
-		n.send(e, RuleDeployFailed, "deploy:"+e.ID+":failed", "Deploy failed: "+e.Service.Name)
+		n.send(e, RuleDeployFailed, "deploy:"+e.ID+":failed", "Deploy failed: "+e.Service.Name, e.Text)
 	case telemetry.EventBackupFailed:
-		n.send(e, RuleBackupFailed, "backup:"+e.ID+":failed", "Backup failed: "+serviceOrShed(e))
+		n.send(e, RuleBackupFailed, "backup:"+e.ID+":failed", "Backup failed: "+serviceOrShed(e),
+			"The backup of "+serviceOrShed(e)+" failed. The details are in shed.")
 	case telemetry.EventRestoreFailed:
-		n.send(e, RuleRestoreFailed, "restore:"+e.ID+":failed", "Restore failed: "+serviceOrShed(e))
+		n.send(e, RuleRestoreFailed, "restore:"+e.ID+":failed", "Restore failed: "+serviceOrShed(e),
+			"The restore of "+serviceOrShed(e)+" failed. The details are in shed.")
 	case telemetry.EventCrash:
 		if e.OOM {
-			n.send(e, RuleOOM, fmt.Sprintf("oom:%s:%d", e.Service.ID, e.Start.Unix()), "Out of memory: "+e.Service.Name)
+			n.send(e, RuleOOM, fmt.Sprintf("oom:%s:%d", e.Service.ID, e.Start.Unix()), "Out of memory: "+e.Service.Name, e.Text)
 		}
 		n.crashed(e)
 	}
@@ -63,8 +65,10 @@ func (n *Notifier) rule(ctx context.Context, id string) (Rule, error) {
 	return Rule{}, fmt.Errorf("%w %q", ErrUnknownRule, id)
 }
 
-// send enqueues a message about e if the rule id is enabled.
-func (n *Notifier) send(e telemetry.Event, id, key, title string) {
+// send enqueues a message about e if the rule id is enabled. Backup and restore
+// errors aren't masked and channels are third parties, so body must never hold
+// their text.
+func (n *Notifier) send(e telemetry.Event, id, key, title, body string) {
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	r, err := n.rule(ctx, id)
@@ -74,7 +78,7 @@ func (n *Notifier) send(e telemetry.Event, id, key, title string) {
 		}
 		return
 	}
-	n.enqueueEvent(ctx, e, key, title, e.Text)
+	n.enqueueEvent(ctx, e, key, title, body)
 }
 
 func (n *Notifier) enqueueEvent(ctx context.Context, e telemetry.Event, key, title, body string) {
