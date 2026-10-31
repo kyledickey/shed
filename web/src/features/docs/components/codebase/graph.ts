@@ -86,7 +86,7 @@ export const packages: Package[] = [
       "victoria",
     ],
   },
-  { name: "notify", imports: [] },
+  { name: "notify", imports: ["telemetry"] },
   { name: "onepassword", imports: [] },
   { name: "otlp", imports: [] },
   { name: "proxy", imports: [] },

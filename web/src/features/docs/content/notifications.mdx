@@ -1,0 +1,48 @@
+---
+title: Notifications
+group: Operating
+order: 146
+description: "shed can push a message to your phone when a deploy, backup, or restore fails, or when a service runs out of memory or crashes in a loop. It works with telemetry off."
+---
+
+## Channels
+
+A channel is where notifications go. shed supports [Hark](https://hark.ryan.ceo), a push service for your phone. Add channels under **Server, Notifications**.
+
+To get a Hark webhook, install the Hark app, create a webhook there, and copy its URL. It looks like `https://hark.ryan.ceo/hooks/<token>`. The token is the only credential, so shed treats the URL as a secret: it is encrypted in `shed.db`, shown only in the field you paste it into, and never returned by the API, written to the log, or recorded in the [audit log](/docs/audit). To change it, paste a new URL; leave the field blank to keep the saved one.
+
+**Send test** sends a message straight to the channel, even if it is disabled, and shows the error if it fails. Test messages are not listed under recent deliveries.
+
+Every enabled channel gets every notification. There is no routing and no severity. Disable a channel to pause it.
+
+## Rules
+
+Rules decide what sends a notification. All are on by default.
+
+| Rule                  | Sends when                                                         | Setting                      |
+| --------------------- | ------------------------------------------------------------------ | ---------------------------- |
+| Deploy failed         | A deployment fails. Canceled and skipped deployments do not count. |                              |
+| Backup failed         | A backup fails, including a backup of shed's own database.         |                              |
+| Restore failed        | A restore fails.                                                   |                              |
+| Service out of memory | The kernel kills a service for running out of memory.              |                              |
+| Service crash loop    | A service crashes several times within 10 minutes.                 | Crashes to count, default 3. |
+
+Every crash counts toward a crash loop, whether or not it ran out of memory. When a service reaches the number, shed sends one message and then stays quiet about that service for 30 minutes. The counts are kept in memory, so they start over when shed restarts.
+
+Rules work with [telemetry](/docs/telemetry) off. They do not need Grafana or any metrics.
+
+A message has a short title such as "Deploy failed: web", the project name, and a link to the service in the dashboard. Its text is the failure reason, cut to 500 bytes. Deployment errors have secret variable values masked. Backup and restore errors are shown as the tool reported them.
+
+If no channel is enabled when an event happens, the event is not saved for later.
+
+## Delivery and retries
+
+Each message is stored in `shed.db` for every enabled channel before anything is sent, so a restart does not lose it. Sending is retried when it fails for a reason that might pass: after 1 minute, 5 minutes, 30 minutes, 2 hours, and 6 hours, after which the delivery is marked failed. Hark rejecting the webhook (an unknown token or another client error), or accepting the message with no device to receive it, fails the delivery at once without retries. A repeated event, such as the same deployment failing again, is sent once per channel.
+
+**Recent deliveries** lists the newest 50 with their status, attempts, and last error. Finished deliveries are deleted after 30 days. Deleting a channel deletes its deliveries.
+
+## Limits
+
+- Hark is the only provider.
+- Rules send to every enabled channel; you can't send a rule to one channel.
+- Crash-loop counts reset when shed restarts.

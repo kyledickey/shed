@@ -285,6 +285,26 @@ export type NotificationChannelInput = {
 /** The provider is fixed. An omitted or empty target keeps the stored one. */
 export type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
 
+export type NotificationRule = {
+  id: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  /** Effective value; null if the rule has none. */
+  threshold: number | null;
+  /** Label of the threshold, such as "crashes"; empty if none. */
+  unit: string;
+  /** Effective duration; null if the rule has none. */
+  forSeconds: number | null;
+  /** Reads metrics, so it works only while telemetry is on. */
+  needsTelemetry: boolean;
+  /** False if the rule cannot fire now. */
+  available: boolean;
+};
+
+/** An omitted field stays as it is. */
+export type NotificationRulePatch = { enabled?: boolean; threshold?: number; forSeconds?: number };
+
 export type NotificationDelivery = {
   id: string;
   channelId: string;

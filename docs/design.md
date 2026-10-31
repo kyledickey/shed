@@ -124,7 +124,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
-| `internal/notify` | notification channels, outbox delivery with retries, provider registry, Hark push adapter | store via interface |
+| `internal/notify` | notification channels and rules, event-to-message mapping, crash-loop detection, outbox delivery with retries, provider registry, Hark push adapter | `telemetry`; store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
 | `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
@@ -138,7 +138,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
 | `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/firewall/proxy/telemetry types |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, notification channels, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/notify/variables/onepassword/audit/observability/grafana/victoria types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, notification channels and rules, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/notify/variables/onepassword/audit/observability/grafana/victoria types |
 | `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/github/metrics/update/store/audit/observability/victoria |
 | `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/onepassword/audit/observability |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
@@ -362,6 +362,13 @@ CREATE TABLE notification_deliveries (   -- the outbox: one row per message per 
   UNIQUE (channel_id, key)
 );
 CREATE INDEX notification_deliveries_due ON notification_deliveries(status, next_attempt_at);
+
+CREATE TABLE notification_rules (        -- overrides of the rule catalog; no row = defaults
+  id TEXT PRIMARY KEY,                   -- catalog ID, e.g. deploy-failed
+  enabled INTEGER NOT NULL,
+  threshold REAL,                        -- NULL = the default
+  for_seconds INTEGER                    -- NULL = the default
+);
 
 CREATE TABLE pending_pushes (             -- newest undeployed push per app service
   service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
@@ -1109,6 +1116,48 @@ contacting the provider. Every mutation is audited as
 `notification.channel.create`, `.update`, `.delete`, or `.test`, with the
 channel's name and provider and never its target.
 
+**Rules** decide which events notify. The catalog is a table in
+`internal/notify`; `notification_rules` stores only overrides, and a rule
+without a row (or with a NULL threshold or `for_seconds`) has its catalog
+defaults. All rules default to enabled, and every enabled rule goes to every
+enabled channel. The event rules:
+
+| Rule | Fires on | Threshold | Key |
+|---|---|---|---|
+| `deploy-failed` | `deploy.failed` | none | `deploy:<deployment>:failed` |
+| `backup-failed` | `backup.failed` | none | `backup:<backup>:failed` |
+| `restore-failed` | `restore.failed` | none | `restore:<restore>:failed` |
+| `service-oom` | a `crash` event with `OOM` set | none | `oom:<service>:<start unix>` |
+| `service-crash-loop` | 3 crashes (any `crash` event) of one service within 10 minutes | whole number of crashes, default 3 | `crash-loop:<service>:<fire unix>` |
+
+A rule may declare a default threshold with a unit label and a default
+duration (`forSeconds`), and `needsTelemetry` for rules that read metrics;
+none of the event rules has a duration or needs telemetry.
+
+`Notifier.Event` has the signature of the `Events` callbacks of the deployer
+and the backup manager, and `cmd/shed` calls it next to `Dashboards.Annotate`
+for the deployer, the backup manager, and `Security.Crashed`, so rules work
+with telemetry off. Other event kinds are ignored. It looks up the rule,
+builds the message, and enqueues with a 5 second limit; a failure is logged and
+never reaches the caller. The title is "Deploy failed: <service>", "Backup
+failed: <service or shed.db>", "Restore failed: <...>", "Out of memory:
+<service>", or "Crash loop: <service>". The body is the event text (the
+deployment error is already redacted; backup and restore errors are not),
+cut to 500 bytes, or the title when the text is empty. The project is the
+project's name, and the link is `<server.url>/projects/<project>/services/<service>`
+when the event has a service.
+
+Crash-loop counting is in memory: a list of crash times per service within the
+last 10 minutes, dropped when empty. Reaching the threshold sends once, clears
+the list, and mutes the service for 30 minutes. Counts reset when shed
+restarts. Only enabled rules count.
+
+`PATCH /api/notifications/rules/{id}` validates at the boundary: an unknown
+rule is 404; a threshold or `forSeconds` for a rule without one, a threshold
+that is not greater than 0 (or, for `service-crash-loop`, not a whole number of
+at least 1), or a negative `forSeconds` is 400. It is audited as
+`notification.rule.update` with the fields changed.
+
 ### Proxy
 
 Embedded Caddy (`caddy.Load` with a generated JSON config). Routes:
@@ -1732,8 +1781,10 @@ Annotations: deploy started, active, and failed, redeploys, restarts,
 crashes, stops, backups, and restores become Grafana annotations tagged
 `shed`, the event kind, `service:<serviceID>`, and `project:<projectID>`
 (neither for backups of shed.db). Packages report a `telemetry.Event` (kind,
-service, start, end for a span of time, text) through an `Events func`
-in their config, which `cmd/shed` points at `Dashboards.Annotate`:
+ID of the deployment, backup, or restore, service, start, end for a span of
+time, text, and whether a crash was an OOM kill) through an `Events func`
+in their config, which `cmd/shed` points at a function that calls both
+`Dashboards.Annotate` and `Notifier.Event` (see "Notifications"):
 
 | Kind | Reported by | Time |
 |---|---|---|
@@ -2466,6 +2517,8 @@ POST   /api/notifications/channels  NotificationChannelInput → 201 Notificatio
 PATCH  /api/notifications/channels/{id}  NotificationChannelPatch → NotificationChannel  (empty or absent target keeps the stored one; 404 if unknown)
 DELETE /api/notifications/channels/{id}         204  (and its deliveries; 404 if unknown)
 POST   /api/notifications/channels/{id}/test    204  (sends now, even if disabled; 400 {error} with the failure)
+GET    /api/notifications/rules                 → NotificationRule[]  (the catalog with overrides applied)
+PATCH  /api/notifications/rules/{id}  NotificationRulePatch → NotificationRule  (404 if unknown; 400 for a value the rule does not allow)
 GET    /api/notifications/deliveries?limit=     → NotificationDelivery[]  (newest first; default 50, max 200)
 
 GET    /api/update                              → UpdateStatus
@@ -2751,6 +2804,17 @@ type NotificationChannel = {
 type NotificationChannelInput = { name: string; provider: string; target: string; enabled: boolean };
 // provider is fixed. An omitted or empty target keeps the stored one.
 type NotificationChannelPatch = { name?: string; target?: string; enabled?: boolean };
+type NotificationRule = {
+  id: string; title: string; description: string;
+  enabled: boolean;
+  threshold: number | null;            // effective value; null if the rule has none
+  unit: string;                        // label of the threshold, e.g. "crashes"; "" if none
+  forSeconds: number | null;           // effective duration; null if the rule has none
+  needsTelemetry: boolean;             // reads metrics, so it works only while telemetry is on
+  available: boolean;                  // false if it cannot fire now (needs telemetry, which is off)
+};
+// An omitted field stays as it is. threshold and forSeconds only for rules that have them.
+type NotificationRulePatch = { enabled?: boolean; threshold?: number; forSeconds?: number };
 type NotificationDelivery = {
   id: string; channelId: string; channelName: string;
   title: string; body: string;

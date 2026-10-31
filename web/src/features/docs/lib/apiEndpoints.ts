@@ -322,6 +322,19 @@ export const endpointGroups: EndpointGroup[] = [
       },
       {
         method: "GET",
+        path: "/api/notifications/rules",
+        response: "NotificationRule[]",
+        notes: "The rule catalog with overrides applied.",
+      },
+      {
+        method: "PATCH",
+        path: "/api/notifications/rules/{id}",
+        body: "NotificationRulePatch",
+        response: "NotificationRule",
+        notes: "404 if unknown. 400 for a threshold or duration the rule does not allow.",
+      },
+      {
+        method: "GET",
         path: "/api/notifications/deliveries?limit=",
         response: "NotificationDelivery[]",
         notes: "Newest first. Default 50, max 200.",
