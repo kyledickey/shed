@@ -1,12 +1,87 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/kyledickey/shed/internal/store"
 )
+
+// guestDB returns a database with shed's real schema.
+func guestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "shed.db")
+	st, err := store.Open(file, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func execSQL(t *testing.T, db *sql.DB, query string) {
+	t.Helper()
+	if _, err := db.Exec(query); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+}
+
+func TestSessionSQLRestoresDeletedSession(t *testing.T) {
+	db := guestDB(t)
+	execSQL(t, db, `INSERT INTO users (github_id, login, created_at) VALUES (7, 'lab', '2026-01-01T00:00:00.000Z')`)
+	stmt := sessionSQL(lab{Session: "token", Login: "lab"}, time.Now())
+	count := func() (n int) {
+		t.Helper()
+		if err := db.QueryRow(`SELECT count(*) FROM sessions WHERE github_id = 7`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	execSQL(t, db, stmt)
+	execSQL(t, db, stmt)
+	if got := count(); got != 1 {
+		t.Errorf("after two runs, %d sessions", got)
+	}
+	execSQL(t, db, `DELETE FROM sessions`)
+	execSQL(t, db, stmt)
+	if got := count(); got != 1 {
+		t.Errorf("after signing out, %d sessions", got)
+	}
+}
+
+func TestMoveDomainsSQL(t *testing.T) {
+	db := guestDB(t)
+	execSQL(t, db, `INSERT INTO projects (id, name, created_at) VALUES ('p', 'p', '')`)
+	execSQL(t, db, `INSERT INTO services (id, project_id, name, kind, created_at) VALUES ('s', 'p', 's', 'app', '')`)
+	execSQL(t, db, `INSERT INTO domains (id, service_id, host, generated, created_at) VALUES
+		('a', 's', 'web-p.lab1.localhost', 1, ''),
+		('b', 's', 'custom.lab1.localhost', 0, ''),
+		('c', 's', 'web.example.com', 1, '')`)
+
+	execSQL(t, db, moveDomainsSQL(slot(3)))
+
+	for id, want := range map[string]string{"a": "web-p.lab3.localhost", "b": "custom.lab1.localhost", "c": "web.example.com"} {
+		var got string
+		if err := db.QueryRow(`SELECT host FROM domains WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("domain %s = %q, want %q", id, got, want)
+		}
+	}
+}
 
 func TestParseSlot(t *testing.T) {
 	tests := []struct {

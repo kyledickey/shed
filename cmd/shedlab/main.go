@@ -353,6 +353,9 @@ func openLab(ctx context.Context, l lab) error {
 		}
 		return nil
 	}
+	if err := execGuestSQL(ctx, l, sessionSQL(l, time.Now())); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err

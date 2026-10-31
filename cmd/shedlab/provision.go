@@ -152,12 +152,33 @@ const storeTime = "2006-01-02T15:04:05.000Z"
 // no way around GitHub sign-in, by design; this needs root on the machine,
 // which is exactly what makes it safe to do from here and nowhere else.
 func seedSession(ctx context.Context, l lab, githubID int64) error {
-	sum := sha256.Sum256([]byte(l.Session))
-	now := time.Now().UTC()
-	sql := fmt.Sprintf(`INSERT INTO users (github_id, login, created_at) VALUES (%d, '%s', '%s')
+	user := fmt.Sprintf(`INSERT INTO users (github_id, login, created_at) VALUES (%d, '%s', '%s')
 ON CONFLICT (github_id) DO UPDATE SET login = excluded.login;
-INSERT OR REPLACE INTO sessions (token_hash, github_id, expires_at) VALUES ('%s', %d, '%s');
-`, githubID, l.Login, now.Format(storeTime), hex.EncodeToString(sum[:]), githubID, now.AddDate(1, 0, 0).Format(storeTime))
+`, githubID, l.Login, time.Now().UTC().Format(storeTime))
+	return execGuestSQL(ctx, l, user+sessionSQL(l, time.Now()))
+}
+
+// sessionSQL makes the lab's saved session valid for a year, also if signing
+// out deleted it.
+func sessionSQL(l lab, now time.Time) string {
+	sum := sha256.Sum256([]byte(l.Session))
+	return fmt.Sprintf(`INSERT OR REPLACE INTO sessions (token_hash, github_id, expires_at)
+SELECT '%s', github_id, '%s' FROM users WHERE login = '%s';
+`, hex.EncodeToString(sum[:]), now.UTC().AddDate(1, 0, 0).Format(storeTime), l.Login)
+}
+
+// moveDomainsSQL renames generated domains to the slot a snapshot is restored
+// into. Slot names all have the same length.
+//
+// shortcut: containers keep the old SHED_PUBLIC_DOMAIN until their next deploy,
+// redeploy on restore if a test depends on it.
+func moveDomainsSQL(s slot) string {
+	return fmt.Sprintf(`UPDATE domains SET host = substr(host, 1, length(host) - length('%[1]s')) || '%[1]s'
+WHERE generated = 1 AND host GLOB '*.lab[0-9].localhost';
+`, s.localHost())
+}
+
+func execGuestSQL(ctx context.Context, l lab, sql string) error {
 	return l.vm().sshInput(ctx, sql, "sudo sqlite3 -cmd '.timeout 10000' "+guestShedDB)
 }
 
@@ -287,6 +308,11 @@ func planUp(ctx context.Context, opts provision) (lab, []step, error) {
 		step{"Start shed", func(ctx context.Context, p *progress) error {
 			if err := configure(ctx, l); err != nil {
 				return err
+			}
+			if opts.from != "" {
+				if err := execGuestSQL(ctx, l, moveDomainsSQL(l.Slot)); err != nil {
+					return err
+				}
 			}
 			if opts.release != "" {
 				return installRelease(ctx, l, root, opts.release)
