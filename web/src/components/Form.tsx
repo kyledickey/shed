@@ -66,11 +66,20 @@ type SwitchProps = {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label?: ReactNode;
+  /** ariaLabel names a switch shown without a label. */
+  ariaLabel?: string;
   description?: ReactNode;
   disabled?: boolean;
 };
 
-export function Switch({ checked, onChange, label, description, disabled }: SwitchProps) {
+export function Switch({
+  checked,
+  onChange,
+  label,
+  ariaLabel,
+  description,
+  disabled,
+}: SwitchProps) {
   const control = (
     <input
       type="checkbox"
@@ -79,7 +88,7 @@ export function Switch({ checked, onChange, label, description, disabled }: Swit
       checked={checked}
       disabled={disabled}
       onChange={(e) => onChange(e.target.checked)}
-      aria-label={typeof label === "string" ? label : undefined}
+      aria-label={ariaLabel ?? (typeof label === "string" ? label : undefined)}
     />
   );
   if (!label) return control;

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useSaveNotificationRules } from "../../api/notifications";
 import type { NotificationChannel, NotificationRule, NotificationRulePatch } from "../../api/types";
 import { Badge } from "../../components/Badge";
-import { Field, Input, Switch } from "../../components/Form";
+import { Input, Switch } from "../../components/Form";
 import { Callout } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
 import { SettingsCard } from "../settings/SectionForm";
@@ -92,71 +92,71 @@ export function RulesCard({
         </Callout>
       )}
       {groups.map((g) => (
-        <section key={g.title}>
-          <h3 className={styles.ruleGroup}>{g.title}</h3>
-          <div>
-            {g.rules.map((r) => (
-              <div key={r.id} className={styles.rule}>
-                <div className={styles.ruleSwitch}>
+        <section key={g.title} className={styles.ruleGroup}>
+          <div className={styles.ruleHead}>
+            <h3>
+              {g.title}
+              {g.rules.some((r) => !r.available) && (
+                <Badge size="sm" variant="outline">
+                  Needs telemetry
+                </Badge>
+              )}
+            </h3>
+            <span>{g.rules.some((r) => r.threshold !== null) && "Threshold"}</span>
+            <span>{g.rules.some((r) => r.forSeconds !== null) && "Sustained for"}</span>
+          </div>
+          {g.rules.map((r) => (
+            <div key={r.id} className={styles.rule} data-unavailable={!r.available || undefined}>
+              <div className={styles.ruleText}>
+                <span className={styles.name}>{r.title}</span>
+                <span className={styles.meta}>{r.description}</span>
+              </div>
+              <div className={styles.ruleValue}>
+                {r.threshold !== null &&
+                  (r.available ? (
+                    <Input
+                      aria-label={`${r.title} threshold`}
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="any"
+                      value={entry(r).threshold}
+                      onChange={(e) => set(r, { threshold: e.target.value })}
+                      suffix={r.unit}
+                    />
+                  ) : (
+                    `${r.threshold} ${r.unit}`
+                  ))}
+              </div>
+              <div className={styles.ruleValue}>
+                {r.forSeconds !== null &&
+                  (r.available ? (
+                    <Input
+                      aria-label={`${r.title} sustained for`}
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      max={1440}
+                      step="any"
+                      value={entry(r).minutes}
+                      onChange={(e) => set(r, { minutes: e.target.value })}
+                      suffix="min"
+                    />
+                  ) : (
+                    `${r.forSeconds / 60} min`
+                  ))}
+              </div>
+              <div className={styles.ruleToggle}>
+                {r.available && (
                   <Switch
-                    label={
-                      <>
-                        {r.title}{" "}
-                        {!r.available && r.needsTelemetry && (
-                          <Badge size="sm" variant="outline">
-                            Needs telemetry
-                          </Badge>
-                        )}
-                      </>
-                    }
-                    description={r.description}
+                    ariaLabel={r.title}
                     checked={entry(r).enabled}
-                    disabled={!r.available}
                     onChange={(enabled) => set(r, { enabled })}
                   />
-                </div>
-                {r.threshold !== null && (
-                  <div className={styles.threshold}>
-                    <Field label="Threshold">
-                      {(id) => (
-                        <Input
-                          id={id}
-                          type="number"
-                          inputMode="decimal"
-                          min={0}
-                          step="any"
-                          value={entry(r).threshold}
-                          onChange={(e) => set(r, { threshold: e.target.value })}
-                          suffix={r.unit}
-                          disabled={!r.available}
-                        />
-                      )}
-                    </Field>
-                  </div>
-                )}
-                {r.forSeconds !== null && (
-                  <div className={styles.threshold}>
-                    <Field label="For">
-                      {(id) => (
-                        <Input
-                          id={id}
-                          type="number"
-                          inputMode="decimal"
-                          min={0}
-                          max={1440}
-                          step="any"
-                          value={entry(r).minutes}
-                          onChange={(e) => set(r, { minutes: e.target.value })}
-                          suffix="min"
-                          disabled={!r.available}
-                        />
-                      )}
-                    </Field>
-                  </div>
                 )}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </section>
       ))}
     </SettingsCard>

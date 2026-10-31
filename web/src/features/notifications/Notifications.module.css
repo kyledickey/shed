@@ -50,49 +50,91 @@
 }
 
 .ruleGroup {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--ink-2);
+  --rule-columns: minmax(0, 1fr) 124px 124px 36px;
 
-  section:first-of-type > & {
-    margin-top: 0;
+  & + & {
+    margin-top: var(--space-5);
+  }
+}
+
+.ruleHead,
+.rule {
+  display: grid;
+  grid-template-columns: var(--rule-columns);
+  align-items: center;
+  column-gap: var(--space-3);
+}
+
+.ruleHead {
+  padding-bottom: var(--space-2);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+
+  & h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--ink-2);
+    font-size: var(--text-sm);
+    font-weight: 600;
   }
 }
 
 .rule {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
+  min-height: 56px;
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--line-soft);
-
-  &:first-child {
-    border-top: 0;
-    padding-top: 0;
-  }
-
-  @media (max-width: 600px) {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
 }
 
-.ruleSwitch {
-  flex: 1;
+.ruleText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
-.threshold {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 150px;
-  flex: none;
+.ruleValue {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
 
-  @media (max-width: 600px) {
-    width: auto;
+  & > span {
+    width: 100%;
+  }
+}
+
+.ruleToggle {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.rule[data-unavailable] .name {
+  color: var(--ink-2);
+}
+
+@media (max-width: 640px) {
+  .ruleHead > span {
+    display: none;
+  }
+
+  .rule {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 36px;
+    row-gap: var(--space-2);
+  }
+
+  .ruleText {
+    grid-column: 1 / 3;
+    grid-row: 1;
+  }
+
+  .ruleToggle {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .ruleValue:empty {
+    display: none;
   }
 }
 
@@ -134,6 +176,7 @@
 }
 
 .clip {
+  min-width: 160px;
   max-width: 280px;
   overflow-wrap: anywhere;
 }
