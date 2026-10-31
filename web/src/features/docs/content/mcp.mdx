@@ -95,6 +95,27 @@ Every tool is read-only and marked with the MCP `readOnlyHint`. IDs are the same
 | `update_status`                        | The running version and whether a newer release exists.                                                                     |
 | `list_repos`                           | The repositories the shed GitHub App can see.                                                                               |
 | `list_branches(owner, repo)`           | The branches of one of them.                                                                                                |
+| `audit_events(actor?, action?, …)`     | The [audit log](/docs/audit), newest first. Filters: `service_id`, `outcome`, and `since` (`24h` or an RFC 3339 time).      |
+
+### Telemetry tools
+
+These read what [telemetry](/docs/telemetry) collects. They are read-only like the rest and recorded in the audit log with their arguments, except queries, span names, and tags, which can hold the secret being looked for. Except `telemetry_status`, which works either way, they fail with `telemetry is off` while telemetry is off. Times (`time`, `start`, `end`, `since`) are RFC 3339 times or durations before now, such as `15m` or `24h`.
+
+| Tool                                                       | Returns                                                                                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry_status`                                         | Whether telemetry is on, each component's state and version, what the gateway ingests per second, and the records dropped in the last hour.                                                       |
+| `query_metrics(query, time? \| start?, end?, step?)`       | A MetricsQL query, instant or over a range: at most 500 series of 500 points (the newest), with `truncated` set when more existed. `NaN` and infinite values are `null`.                          |
+| `query_logs(query, start?, end?, limit?)`                  | A LogsQL query as text, one JSON record per line, newest first. Default 200 records, at most 2000. Variable values are masked as `***`.                                                           |
+| `search_traces(service_id?, operation?, min_duration?, …)` | Traces, newest first: ID, root service and span name, start, duration, span and error counts. Also `max_duration`, `tags`, `start`, `end`, and `limit` (default 20, at most 100).                 |
+| `get_trace(trace_id)`                                      | The spans of one trace by start time, with parent, service, kind, duration, status, and attributes. At most 1000 spans.                                                                           |
+| `error_logs(service_id, since?, limit?)`                   | A service's error-level records since `since` (default `1h`), as `query_logs` returns them.                                                                                                       |
+| `slow_requests(service_id, since?, limit?)`                | The p50, p95, and p99 request duration of an app and its slowest requests, from the edge access records.                                                                                          |
+| `top_queries(service_id)`                                  | A Postgres or MySQL service's statements by total time, with calls, mean time, and rows, from its exporter.                                                                                       |
+| `list_dashboards(folder_uid?)`                             | Grafana's dashboards with their URLs, optionally of one folder (`s-<serviceID>`, `p-<projectID>`, `shed`); `customized` marks a default a user saved, `outdated` one whose default changed since. |
+
+Every record carries the same labels: `shed_service_id`, `shed_service_name`, `shed_project_id`, `shed_source`, and so on in metrics, `shed.service.id` and the like in logs. The server's instructions list them with sample queries, such as `sum(shed_container_memory_bytes{shed_service_id="…"})` and `_stream:{"shed.service.id"="…"} error`.
+
+`query_metrics` can't put `NaN` or infinity in JSON, so those values come back as `null` (VictoriaMetrics leaves NaN points out of its results, so in practice this is infinity). A range query's `step` is raised to keep it within 500 points, and the result says which step it used (`stepSeconds`).
 
 Results are compact JSON. Metrics come as a summary per metric (latest, average, and maximum over the range) rather than every data point. Log results are capped at 2000 lines, each line at 2000 characters, and 256 KiB in total, keeping the newest lines.
 
@@ -103,8 +124,9 @@ The server also sends the agent a short description of how shed works (projects,
 ## Security
 
 - **Read-only.** There are no write tools in this version. Nothing an agent does can deploy, stop, delete, or change a setting.
+- **Audited.** Every tool call is recorded in the [audit log](/docs/audit) as `mcp.call`, with the user, the client, the tool, and its IDs, times, and limits (never a query, span name, or tags).
 - **Variable values are never exposed.** `list_variables` returns names. The resolved variables, which include database passwords and connection strings, are not available to agents at all.
-- **Never exposed.** Variable values, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
+- **Never exposed.** Variable values, 1Password tokens, the age backup key, S3 credentials, backup downloads and restores, and installing updates.
 - **Logs are masked.** Build and runtime logs have the literal values of the service's variables replaced with `***`, the same [secret redaction](/docs/logs#secret-redaction) the dashboard applies. shed's own log has the saved values of every service's variables replaced. The limits of masking still apply: values under 8 characters are not masked, and an app that prints an encoded copy of a secret defeats it. Treat what an agent reads as visible to the model provider.
 - **shed's own tokens.** GitHub is only used to prove who you are. shed issues its own opaque tokens and never hands a GitHub token to a client. Tokens are random, stored only as hashes, and bound to one client, one user, the `read` scope, and the MCP resource, so a token for one shed cannot be used on another.
 - **Lifetimes.** An access token lasts 1 hour. A refresh token lasts 30 days and rotates on every use. Using an old refresh token again revokes the whole grant, which cuts off a client whose token was stolen as well as the thief.

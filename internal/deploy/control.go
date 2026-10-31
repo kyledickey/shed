@@ -8,6 +8,7 @@ import (
 
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 )
 
 // StopService stops a service: deployments in progress are canceled, the
@@ -18,7 +19,8 @@ import (
 func (d *Deployer) StopService(ctx context.Context, serviceID string) error {
 	d.controlMu.Lock()
 	defer d.controlMu.Unlock()
-	if _, err := d.store.Service(ctx, serviceID); err != nil {
+	svc, err := d.store.Service(ctx, serviceID)
+	if err != nil {
 		return err
 	}
 	if err := d.checkHeld(serviceID); err != nil {
@@ -43,6 +45,7 @@ func (d *Deployer) StopService(ctx context.Context, serviceID string) error {
 	}
 	d.applyRoutesLogged(ctx)
 	d.log.Info("service stopped", "service", serviceID)
+	d.serviceEvent(ctx, svc, telemetry.EventStop, "Service "+svc.Name+" stopped")
 	return nil
 }
 
@@ -123,6 +126,7 @@ func (d *Deployer) RestartService(ctx context.Context, serviceID string) error {
 	// The container may come back with a different address.
 	d.applyRoutesLogged(ctx)
 	d.log.Info("service restarted", "service", serviceID)
+	d.serviceEvent(ctx, svc, telemetry.EventRestart, "Service "+svc.Name+" restarted")
 	return nil
 }
 

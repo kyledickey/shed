@@ -74,6 +74,28 @@ export const docTopics = {
     section: "health-checks",
     summary: "A TCP connect, or a 2xx/3xx on the healthcheck path, within 120 seconds.",
   },
+  telemetry: {
+    page: "telemetry",
+    section: "turning-it-on",
+    summary:
+      "Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana; off keeps their data.",
+  },
+  telemetryCaps: {
+    page: "telemetry",
+    section: "caps",
+    summary:
+      "Per-service limits on spans, log records, and series; records over a cap are dropped.",
+  },
+  dashboards: {
+    page: "telemetry",
+    section: "folders-and-dashboards",
+    summary: "Default dashboards shed keeps per service; once you save one, shed leaves it alone.",
+  },
+  telemetryDisk: {
+    page: "telemetry",
+    section: "retention-and-disk",
+    summary: "Logs get 60% and traces 40%; the oldest data goes first when a share is full.",
+  },
   variables: {
     page: "variables",
     section: "references",
@@ -83,6 +105,11 @@ export const docTopics = {
     page: "variables",
     section: "injected-variables",
     summary: "PORT and SHED_* variables are injected into every deployment.",
+  },
+  onePassword: {
+    page: "onepassword",
+    section: "how-it-works",
+    summary: "Keep every service's variables in a 1Password vault instead of on this server.",
   },
   volumes: {
     page: "resources",
@@ -110,10 +137,22 @@ export const docTopics = {
     section: "runtime-logs",
     summary: "The active container's stdout and stderr, streamed over SSE with secrets masked.",
   },
+  logHistory: {
+    page: "logs",
+    section: "log-history",
+    summary:
+      "Stored logs across deployments, searched by words, quoted phrases, and field:value, while telemetry is on.",
+  },
   shedLog: {
     page: "logs",
     section: "sheds-own-log",
     summary: "shed's own log: the last 1000 lines are kept in memory and streamed live.",
+  },
+  audit: {
+    page: "audit",
+    section: "what-is-recorded",
+    summary:
+      "Every change, sign-in, denial, secret read, and agent call: who, from where, and the outcome.",
   },
   backupMethods: {
     page: "backups",
@@ -152,6 +191,12 @@ export const docTopics = {
     section: "updates",
     summary:
       "shed checks GitHub for releases, verifies downloads, and installs on request with a short restart.",
+  },
+  updateChannel: {
+    page: "installation",
+    section: "update-channels",
+    summary:
+      "Nightly also offers untested daily builds of main. shed never downgrades, so switching back to stable waits for the next stable release.",
   },
   mcp: {
     page: "mcp",

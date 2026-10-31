@@ -11,12 +11,15 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // fakeDeployer records deployments and service controls without running
@@ -32,7 +35,7 @@ type fakeDeployer struct {
 	onDelete   func(id string) // called by them with "delete <id>"
 	available  map[string]bool // returned by AvailableImages
 	imagesErr  error           // returned by AvailableImages
-	resolved   map[string]string
+	resolved   deploy.Resolved
 	resolveErr error
 	runtimeLog string // written by RuntimeLogs
 	follow     []bool // the follow argument of each RuntimeLogs call
@@ -143,8 +146,18 @@ func (f *fakeDeployer) RuntimeLogs(_ context.Context, _ string, _ int, follow bo
 	return err
 }
 
-func (f *fakeDeployer) ResolveVariables(context.Context, string) (map[string]string, error) {
+func (f *fakeDeployer) ResolveVariables(context.Context, string) (deploy.Resolved, error) {
 	return f.resolved, f.resolveErr
+}
+func (f *fakeDeployer) RuntimeSecrets(_ context.Context, dep store.Deployment) ([]string, error) {
+	if dep.Runtime == nil {
+		return nil, nil
+	}
+	var values []string
+	for _, k := range dep.Runtime.SecretKeys {
+		values = append(values, dep.Runtime.Env[k])
+	}
+	return values, nil
 }
 
 // fakeBackups records pauses and the deletions they cover.
@@ -224,6 +237,9 @@ func (fakeUpdates) Download(context.Context) (update.Status, error) { return upd
 func (fakeUpdates) SetAutoDownload(context.Context, bool) (update.Status, error) {
 	return update.Status{}, nil
 }
+func (fakeUpdates) SetChannel(context.Context, update.Channel) (update.Status, error) {
+	return update.Status{}, nil
+}
 func (fakeUpdates) Install(context.Context) (update.Status, error) { return update.Status{}, nil }
 
 // fakeGitHub has one repository, octo/app, whose branches all point at
@@ -255,7 +271,13 @@ type fixture struct {
 	backups  *fakeBackups
 	logs     fakeLogs // set by tests after the fixture is built
 	github   bool     // whether GitHub is configured
-	plane    *Plane
+	op       *fakeOnePassword
+	audit    *fakeAudit
+	tel      *fakeTelemetry
+	// listenerErrs are the gateway's listener errors by service ID.
+	listenerErrs map[string]string
+	dash         *fakeDashboards
+	plane        *Plane
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -265,7 +287,8 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}}
+	f := &fixture{t: t, st: st, deployer: &fakeDeployer{}, backups: &fakeBackups{}, op: newFakeOnePassword(),
+		audit: &fakeAudit{Log: audit.New(st, slog.New(slog.DiscardHandler))}, tel: &fakeTelemetry{s: observability.DefaultSettings()}, dash: &fakeDashboards{}}
 	f.plane = New(Config{
 		Store:    st,
 		Deployer: f.deployer,
@@ -278,6 +301,13 @@ func newFixture(t *testing.T) *fixture {
 				return fakeGitHub{}, true
 			}
 			return nil, false
+		},
+		Variables:  variables.New(st, f.op),
+		Audit:      f.audit,
+		Telemetry:  f.tel,
+		Dashboards: f.dash,
+		ListenerError: func(serviceID string) string {
+			return f.listenerErrs[serviceID]
 		},
 		BaseURL:    "https://shed.example.com",
 		BaseDomain: "Apps.Example.com",

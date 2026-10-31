@@ -120,7 +120,8 @@ The full procedure, including how to read each stage and common causes, is in
   disk. A full disk makes builds fail with `not enough free disk space`.
 - **A variable seems missing.** `list_variables`, and compare against the names
   the app reads. Injected names (`PORT`, `SHED_PRIVATE_DOMAIN`, ...) appear
-  there too.
+  there too. When 1Password is connected, a variable added or changed in the
+  1Password app reaches the container only after a redeploy.
 - **Backups.** `list_backups` shows recent backups with status and the policy.
   Failed backups carry an error.
 - **Something wrong in shed itself** (webhooks, routes, sign-in): `shed_log`.
@@ -132,4 +133,4 @@ The full procedure, including how to read each stage and common causes, is in
 - [concepts.md](references/concepts.md): projects, services, kinds, status rules, when settings apply.
 - [diagnosing-deploys.md](references/diagnosing-deploys.md): the deployment pipeline, statuses, reading logs, common failures.
 - [builds.md](references/builds.md): Dockerfile versus Railpack, build secrets, ports, builder limits.
-- [variables.md](references/variables.md): reference syntax, injected variables, database variables.
+- [variables.md](references/variables.md): reference syntax, injected variables, 1Password, database variables.

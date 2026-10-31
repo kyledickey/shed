@@ -110,19 +110,27 @@ export const endpointGroups: EndpointGroup[] = [
         response: "Service",
         notes: "Keeps the current data. 409 while held.",
       },
-      { method: "GET", path: "/api/services/{id}/variables", response: "Record<string,string>" },
+      {
+        method: "GET",
+        path: "/api/services/{id}/variables",
+        response: "Record<string,string>",
+        notes:
+          "From the 1Password item when connected. 409 if it is missing; 502 if 1Password fails.",
+      },
       {
         method: "PUT",
         path: "/api/services/{id}/variables",
         body: "Record<string,string>",
         response: "Record<string,string>",
-        notes: "Replaces all variables.",
+        notes:
+          "Replaces all variables. Writes the 1Password item when connected, creating it if missing.",
       },
       {
         method: "GET",
         path: "/api/services/{id}/variables/resolved",
         response: "Record<string,string>",
-        notes: "References expanded, injected variables included.",
+        notes:
+          "References expanded, injected variables included. 409 if a needed 1Password item is missing.",
       },
       {
         method: "POST",
@@ -285,6 +293,34 @@ export const endpointGroups: EndpointGroup[] = [
     ],
   },
   {
+    title: "1Password",
+    endpoints: [
+      { method: "GET", path: "/api/onepassword", response: "OnePassword" },
+      {
+        method: "POST",
+        path: "/api/onepassword/vaults",
+        body: "{token}",
+        response: "OnePasswordVault[]",
+        notes: "Vaults the token can access, by name. 400 if 1Password rejects the token.",
+      },
+      {
+        method: "PUT",
+        path: "/api/onepassword",
+        body: "{token, vault?}",
+        response: "OnePassword",
+        notes:
+          "Connects to vault (an ID), or the token's only vault: creates the items and moves variables out of shed.db. 400 if 1Password rejects the token or there is no such vault; 502 if it fails.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/onepassword",
+        response: "OnePassword",
+        notes:
+          "Disconnects: copies variables back into shed.db. 502 if 1Password fails, and nothing changes.",
+      },
+    ],
+  },
+  {
     title: "Updates",
     endpoints: [
       { method: "GET", path: "/api/update", response: "UpdateStatus" },
@@ -303,14 +339,69 @@ export const endpointGroups: EndpointGroup[] = [
       {
         method: "PUT",
         path: "/api/update/settings",
-        body: "{autoDownload}",
+        body: "{autoDownload?, channel?}",
         response: "UpdateStatus",
+        notes: 'At least one. channel is "stable" or "nightly".',
       },
       {
         method: "POST",
         path: "/api/update/install",
         response: "202 UpdateStatus",
         notes: "Then shed restarts. 409 if nothing is downloaded or busy.",
+      },
+    ],
+  },
+  {
+    title: "Audit log",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/api/audit?before=&limit=&actor=&action=&service=&outcome=",
+        response: "AuditPage",
+        notes:
+          "Newest first. limit default 100, at most 500. actor is a login or kind; action an action or its dotted prefix.",
+      },
+      { method: "GET", path: "/api/audit/settings", response: "AuditSettings" },
+      {
+        method: "PUT",
+        path: "/api/audit/settings",
+        body: "AuditSettings",
+        response: "AuditSettings",
+        notes: "400 unless 1 to 3650 days.",
+      },
+    ],
+  },
+  {
+    title: "Telemetry",
+    endpoints: [
+      { method: "GET", path: "/api/telemetry", response: "Telemetry" },
+      {
+        method: "PUT",
+        path: "/api/telemetry",
+        body: "TelemetrySettings",
+        response: "Telemetry",
+        notes:
+          "Turns telemetry on or off and sets retention and caps. 400 out of bounds. The stack follows in the background.",
+      },
+      {
+        method: "POST",
+        path: "/api/telemetry/components/{name}/restart",
+        response: "Telemetry",
+        notes:
+          "name is metrics, logs, traces, or grafana. 409 while telemetry is off, 404 for another name.",
+      },
+      {
+        method: "DELETE",
+        path: "/api/telemetry/data",
+        response: "204",
+        notes: "Removes the containers, volumes, and stored data. 409 while telemetry is on.",
+      },
+      {
+        method: "GET",
+        path: "/grafana/*, other methods",
+        response: "Grafana",
+        notes:
+          "Reverse-proxied as the signed-in user. Signed-out page loads go to sign-in; other requests get 401. Redirects to /server/telemetry while telemetry is off.",
       },
     ],
   },

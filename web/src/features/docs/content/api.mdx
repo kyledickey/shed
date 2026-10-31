@@ -22,16 +22,16 @@ The dashboard is just a client of this API, so anything you can click has an end
 - **Authentication** is the `shed_session` cookie. Auth, setup, the webhook, and the OAuth endpoints under `/oauth` and `/.well-known` are public; everything else answers 401 without a session. `/mcp` takes only a bearer token, never the cookie; see [MCP](/docs/mcp). Unknown `/api/*` paths are a JSON 404, not the dashboard.
 - **Mutations** from a browser must come from the origin of `server.url`, and POST, PUT, and PATCH need `Content-Type: application/json` even with an empty body. See [request protections](/docs/security#request-protections).
 
-| Status        | Meaning                                                                                              |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `400`         | Invalid input, or a request the target can't satisfy, such as a backup of a service with no volumes. |
-| `401`         | No session, or the user is no longer on allowed_users.                                               |
-| `403`         | untrusted request origin.                                                                            |
-| `404`         | Unknown route or id.                                                                                 |
-| `409`         | Conflict: a name in use, a service busy with a backup or restore, fenced, stopped, or being deleted. |
-| `413` / `415` | Webhook body too large, or a mutation without a JSON content type.                                   |
-| `429`         | The webhook guard is full, or too many client registrations from one address.                        |
-| `502` / `503` | GitHub failed on repos and branches, or shed is shutting down.                                       |
+| Status        | Meaning                                                                                                                           |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `400`         | Invalid input, or a request the target can't satisfy, such as a backup of a service with no volumes.                              |
+| `401`         | No session, or the user is no longer on allowed_users.                                                                            |
+| `403`         | untrusted request origin.                                                                                                         |
+| `404`         | Unknown route or id.                                                                                                              |
+| `409`         | Conflict: a name in use, a service busy with a backup or restore, fenced, stopped, or being deleted, or a missing 1Password item. |
+| `413` / `415` | Webhook body too large, or a mutation without a JSON content type.                                                                |
+| `429`         | The webhook guard is full, or too many client registrations from one address.                                                     |
+| `502` / `503` | GitHub failed on repos and branches, 1Password failed, or shed is shutting down.                                                  |
 
 ### Streams
 
@@ -270,7 +270,7 @@ type BackupSettingsInput = {
 ```title="TypeScript"
 type Release = { version: string; url: string; notes: string; publishedAt: string };
 type UpdateStatus = {
-  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  current: string;                     // running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234"
   latest: Release | null;              // null until a check succeeds
   available: boolean;                  // latest is newer than current
   checkedAt: string | null;
@@ -278,7 +278,55 @@ type UpdateStatus = {
   staged: string;                      // verified version ready to install, "" if none
   error: string;                       // last check or download failure, "" if none
   autoDownload: boolean;
+  channel: "stable" | "nightly";
   unsupported: string;                 // why this build can't update itself, "" if it can
+};
+```
+
+### 1Password
+
+```title="TypeScript"
+// The token is write-only: PUT /api/onepassword takes it.
+type OnePassword = {
+  connected: boolean;
+  vault: string;                       // the vault's name, "" when not connected
+  items: number;                       // services with an item in the vault
+};
+
+// POST /api/onepassword/vaults {token} lists them; PUT takes one's id.
+type OnePasswordVault = { id: string; name: string };
+```
+
+### Telemetry
+
+```title="TypeScript"
+type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
+type TelemetrySettings = {
+  enabled: boolean;
+  metricsRetentionDays: number;        // 1 to 3650, default 30
+  logsRetentionDays: number;           // 1 to 3650, default 14
+  tracesRetentionDays: number;         // 1 to 3650, default 14
+  diskLimitGB: number;                 // logs + traces, default 20
+  defaultCaps: TelemetryCaps;          // 5000 spans/s, 2000 log records/s, 50000 series
+};
+type TelemetryComponent = {
+  name: "metrics" | "logs" | "traces" | "grafana";
+  state: "running" | "starting" | "stopped" | "failed";
+  version: string;
+  error: string;                       // last failure starting it, "" if none
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimit: number;
+  diskBytes: number | null;            // null for grafana
+};
+type Telemetry = {
+  settings: TelemetrySettings;
+  components: TelemetryComponent[];    // empty while never enabled
+  ingest: { spans: number; logs: number; points: number };   // per second, last minute
+  droppedLastHour: { reason: string; signal: string; count: number }[];
+  firingAlerts: { name: string; serviceId: string; since: string }[];
+  grafanaUrl: string;                  // "<server.url>/grafana/"
+  otlpEndpoint: string;                // "http://localhost:4318"
 };
 ```
 

@@ -123,7 +123,7 @@ func TestArgs(t *testing.T) {
 
 	t.Run("dockerfile", func(t *testing.T) {
 		got := dockerfileArgs(req, "", "/ctx/Dockerfile", "/ctx", "/secrets")
-		want := []string{"buildx", "build", "--load", "-t", "shed/a:b", "-f", "/ctx/Dockerfile",
+		want := []string{"buildx", "build", "--load", "--progress", "plain", "-t", "shed/a:b", "-f", "/ctx/Dockerfile",
 			"--secret", "id=A,src=/secrets/A", "--secret", "id=B,src=/secrets/B", "/ctx"}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
@@ -131,7 +131,7 @@ func TestArgs(t *testing.T) {
 	})
 	t.Run("dockerfile on builder instance", func(t *testing.T) {
 		got := dockerfileArgs(Request{Image: "i"}, "shed", "/ctx/Dockerfile", "/ctx", "/secrets")
-		want := []string{"buildx", "build", "--builder", "shed", "--load", "-t", "i", "-f", "/ctx/Dockerfile", "/ctx"}
+		want := []string{"buildx", "build", "--builder", "shed", "--load", "--progress", "plain", "-t", "i", "-f", "/ctx/Dockerfile", "/ctx"}
 		if !slices.Equal(got, want) {
 			t.Errorf("got %q, want %q", got, want)
 		}

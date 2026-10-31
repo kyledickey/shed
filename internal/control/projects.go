@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -53,43 +54,102 @@ func (p *Plane) ProjectRecord(ctx context.Context, id string) (store.Project, er
 
 // CreateProject creates an empty project.
 func (p *Plane) CreateProject(ctx context.Context, name string) (ProjectView, error) {
-	name, err := projectName(name)
-	if err != nil {
-		return ProjectView{}, err
-	}
-	pr, err := p.store.CreateProject(ctx, name)
-	if errors.Is(err, store.ErrConflict) {
-		return ProjectView{}, errorf(ErrConflict, "a project named %q already exists", name)
-	}
+	pr, err := p.createProject(ctx, name)
+	p.record(ctx, err, audit.Event{
+		Action: "project.create", ProjectID: pr.ID, Target: pr.ID, Detail: map[string]any{"name": strings.TrimSpace(name)},
+	})
+	p.dashboards.Refresh()
 	if err != nil {
 		return ProjectView{}, err
 	}
 	return p.projectView(ctx, pr)
 }
 
-// RenameProject renames a project.
-func (p *Plane) RenameProject(ctx context.Context, id, name string) (ProjectView, error) {
+func (p *Plane) createProject(ctx context.Context, name string) (store.Project, error) {
 	name, err := projectName(name)
 	if err != nil {
-		return ProjectView{}, err
+		return store.Project{}, err
 	}
-	err = p.store.RenameProject(ctx, id, name)
+	pr, err := p.store.CreateProject(ctx, name)
 	if errors.Is(err, store.ErrConflict) {
-		return ProjectView{}, errorf(ErrConflict, "a project named %q already exists", name)
+		return store.Project{}, errorf(ErrConflict, "a project named %q already exists", name)
 	}
+	return pr, err
+}
+
+// RenameProject renames a project and retitles its services' 1Password
+// items. If 1Password fails, the old name is kept.
+func (p *Plane) RenameProject(ctx context.Context, id, name string) (ProjectView, error) {
+	old, err := p.renameProject(ctx, id, name)
+	p.record(ctx, err, audit.Event{
+		Action: "project.rename", ProjectID: id, Target: id,
+		Detail: map[string]any{"name": strings.TrimSpace(name), "from": old.Name},
+	})
+	p.dashboards.Refresh()
 	if err != nil {
 		return ProjectView{}, err
 	}
 	return p.Project(ctx, id)
 }
 
+// renameProject renames a project and returns it as it was.
+func (p *Plane) renameProject(ctx context.Context, id, name string) (old store.Project, err error) {
+	name, err = projectName(name)
+	if err != nil {
+		return store.Project{}, err
+	}
+	old, err = p.store.Project(ctx, id)
+	if err != nil {
+		return store.Project{}, err
+	}
+	services, err := p.store.Services(ctx, id)
+	if err != nil {
+		return old, err
+	}
+	err = p.store.RenameProject(ctx, id, name)
+	if errors.Is(err, store.ErrConflict) {
+		return old, errorf(ErrConflict, "a project named %q already exists", name)
+	}
+	if err != nil {
+		return old, err
+	}
+	renamed := old
+	renamed.Name = name
+	if err := p.variables.Retitle(ctx, renamed, services); err != nil {
+		if rerr := p.store.RenameProject(ctx, id, old.Name); rerr != nil {
+			p.log.Error("restore project name", "project", id, "err", rerr)
+		}
+		if rerr := p.variables.Retitle(ctx, old, services); rerr != nil {
+			p.log.Warn("restore 1Password item titles", "project", old.Name, "err", rerr)
+		}
+		return old, err
+	}
+	return old, nil
+}
+
 // DeleteProject deletes a project with its services, their containers,
 // volumes, and backups.
 func (p *Plane) DeleteProject(ctx context.Context, id string) error {
-	services, err := p.store.Services(ctx, id)
+	pr, err := p.store.Project(ctx, id)
 	if err != nil {
-		return err
+		pr = store.Project{ID: id}
 	}
+	services, err := p.store.Services(ctx, id)
+	if err == nil {
+		err = p.deleteProject(ctx, id, services)
+	}
+	names := make([]string, 0, len(services))
+	for _, svc := range services {
+		names = append(names, svc.Name)
+	}
+	p.record(ctx, err, audit.Event{
+		Action: "project.delete", ProjectID: id, Target: id, Detail: map[string]any{"name": pr.Name, "services": names},
+	})
+	p.dashboards.Refresh()
+	return err
+}
+
+func (p *Plane) deleteProject(ctx context.Context, id string, services []store.Service) error {
 	ids := make([]string, 0, len(services))
 	for _, svc := range services {
 		ids = append(ids, svc.ID)
@@ -99,10 +159,12 @@ func (p *Plane) DeleteProject(ctx context.Context, id string) error {
 		return err
 	}
 	defer resume()
+	items := p.items(ctx, services...)
 	if err := p.deployer.DeleteProject(ctx, id); err != nil {
 		return err
 	}
 	p.forgetBackups(ctx, ids...)
+	p.archive(ctx, items)
 	return nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // manifest is the GitHub App manifest document.
@@ -54,7 +55,11 @@ func Manifest(baseURL, name string) ([]byte, error) {
 // for the credentials of the newly created App. A nil httpClient means a
 // client with a 30-second timeout.
 func ConvertManifest(ctx context.Context, httpClient *http.Client, code string) (App, error) {
-	return convertManifest(ctx, orDefault(httpClient), defaultAPIURL, code)
+	if httpClient == nil {
+		// Not traced: the code is in the URL path.
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	return convertManifest(ctx, httpClient, defaultAPIURL, code)
 }
 
 func convertManifest(ctx context.Context, hc *http.Client, apiURL, code string) (App, error) {

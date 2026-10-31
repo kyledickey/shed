@@ -3,11 +3,9 @@ package control
 import (
 	"context"
 	"errors"
-	"io"
 	"maps"
-	"slices"
 
-	"github.com/kyledickey/shed/internal/build"
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
 	"github.com/kyledickey/shed/internal/update"
@@ -50,22 +48,13 @@ func (p *Plane) HostMetrics(ctx context.Context, rng string) (metrics.HostSeries
 // MaxLogLines, with the saved values of every service's variables masked.
 func (p *Plane) ShedLog(ctx context.Context, n int) ([]string, error) {
 	lines := p.logs.Lines(logLines(n))
-	services, err := p.store.AllServices(ctx)
+	mask, err := p.ShedMask(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var values []string
-	for _, svc := range services {
-		vars, err := p.store.Variables(ctx, svc.ID)
-		if err != nil {
-			return nil, err
-		}
-		values = slices.AppendSeq(values, maps.Values(vars))
-	}
-	redactor := build.NewRedactor(io.Discard, values)
 	out := make([]string, len(lines))
 	for i, l := range lines {
-		out[i] = redactor.Redact(l)
+		out[i] = mask(l)
 	}
 	return out, nil
 }
@@ -97,18 +86,48 @@ func (p *Plane) CheckUpdate(ctx context.Context) (update.Status, error) {
 
 // DownloadUpdate starts downloading the newest release.
 func (p *Plane) DownloadUpdate(ctx context.Context) (update.Status, error) {
-	return p.updates.Download(ctx)
+	st, err := p.updates.Download(ctx)
+	p.record(ctx, err, updateEvent("update.download", st, nil))
+	return st, err
 }
 
 // SetAutoDownload sets whether new releases are downloaded when found.
 func (p *Plane) SetAutoDownload(ctx context.Context, on bool) (update.Status, error) {
-	return p.updates.SetAutoDownload(ctx, on)
+	st, err := p.updates.SetAutoDownload(ctx, on)
+	p.record(ctx, err, updateEvent("update.settings.update", st, map[string]any{"autoDownload": on}))
+	return st, err
+}
+
+// SetUpdateChannel sets the channel of releases shed updates to.
+func (p *Plane) SetUpdateChannel(ctx context.Context, ch update.Channel) (update.Status, error) {
+	if ch != update.Stable && ch != update.Nightly {
+		return update.Status{}, errorf(ErrInvalid, "channel must be stable or nightly")
+	}
+	st, err := p.updates.SetChannel(ctx, ch)
+	p.record(ctx, err, updateEvent("update.settings.update", st, map[string]any{"channel": ch}))
+	return st, err
 }
 
 // InstallUpdate swaps in the downloaded release. shed runs it once
 // restarted, which is up to the caller.
 func (p *Plane) InstallUpdate(ctx context.Context) (update.Status, error) {
-	return p.updates.Install(ctx)
+	st, err := p.updates.Install(ctx)
+	p.record(ctx, err, updateEvent("update.install", st, nil))
+	return st, err
+}
+
+// updateEvent returns an update event naming the running and latest
+// versions.
+func updateEvent(action string, st update.Status, detail map[string]any) audit.Event {
+	d := map[string]any{}
+	if st.Current != "" {
+		d["current"] = st.Current
+	}
+	if st.Latest != nil {
+		d["latest"] = st.Latest.Version
+	}
+	maps.Copy(d, detail)
+	return audit.Event{Action: action, Detail: d}
 }
 
 // Repos returns the repositories the GitHub App is installed on.

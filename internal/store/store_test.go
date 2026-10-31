@@ -105,6 +105,14 @@ func TestSettings(t *testing.T) {
 	if got, _ := s.Setting(ctx, "k"); got != "two" {
 		t.Errorf("Setting() = %q, want two", got)
 	}
+	for range 2 {
+		if err := s.DeleteSetting(ctx, "k"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Setting(ctx, "k"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Setting(k) after delete error = %v, want ErrNotFound", err)
+	}
 }
 
 func TestAddSetting(t *testing.T) {
@@ -228,7 +236,7 @@ func TestServices(t *testing.T) {
 	if err := s.UpdateService(ctx, app); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Service(ctx, app.ID); got.Port != 9090 || !got.WaitForCI || got.Name != "api2" {
+	if got, _ := s.Service(ctx, app.ID); !reflect.DeepEqual(got, app) {
 		t.Errorf("after update: %+v", got)
 	}
 	if err := s.UpdateService(ctx, Service{ID: "nope"}); !errors.Is(err, ErrNotFound) {

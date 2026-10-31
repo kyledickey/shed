@@ -22,22 +22,24 @@ const (
 // refPattern matches a reference and captures its body.
 var refPattern = regexp.MustCompile(`\$\{\{\s*([^\s{}]+)\s*\}\}`)
 
-// Resolve returns the variables of service self with all references expanded.
+// Lookup returns the raw value of key in service, and whether it exists.
+type Lookup func(service, key string) (value string, ok bool, err error)
+
+// Resolve returns the variables keys of service self with all references
+// expanded.
 //
-// all maps service name to the raw variables of that service. A reference to a
-// missing service or variable expands to the empty string. Resolve returns an
-// error if references form a cycle or exceed size or depth limits.
-func Resolve(self string, all map[string]map[string]string) (map[string]string, error) {
+// lookup provides raw values. Resolve calls it only for keys and the
+// variables they refer to, so it can load a service's variables on demand. A
+// reference to a missing service or variable expands to the empty string.
+// Resolve returns an error if lookup fails, or if references form a cycle or
+// exceed size or depth limits.
+func Resolve(self string, keys []string, lookup Lookup) (map[string]string, error) {
 	r := &resolver{
-		all:      all,
+		lookup:   lookup,
 		resolved: make(map[ref]string),
 		visiting: make(map[ref]bool),
 	}
-	keys := make([]string, 0, len(all[self]))
-	for k := range all[self] {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys) // Deterministic cycle errors.
+	keys = slices.Sorted(slices.Values(keys)) // Deterministic cycle errors.
 
 	out := make(map[string]string, len(keys))
 	for _, k := range keys {
@@ -56,7 +58,7 @@ type ref struct{ service, key string }
 func (r ref) String() string { return r.service + "." + r.key }
 
 type resolver struct {
-	all      map[string]map[string]string
+	lookup   Lookup
 	resolved map[ref]string
 	visiting map[ref]bool
 	stack    []ref // visiting refs in order, for cycle reporting
@@ -68,7 +70,10 @@ func (r *resolver) value(v ref) (string, error) {
 	if s, ok := r.resolved[v]; ok {
 		return s, nil
 	}
-	raw, ok := r.all[v.service][v.key]
+	raw, ok, err := r.lookup(v.service, v.key)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", nil
 	}

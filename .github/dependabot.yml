@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: bun
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # vite is an alias of vite-plus-core that must match vite-plus; update
+    # them together with `bunx vp migrate`.
+    ignore:
+      - dependency-name: vite
+      - dependency-name: vite-plus
+    groups:
+      web:
+        patterns: ["*"]

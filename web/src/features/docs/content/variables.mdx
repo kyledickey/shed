@@ -52,6 +52,8 @@ shed adds a few variables to every service. You can reference them like any othe
 
 Your own variables win. If you store a variable with the same name as an injected one, yours replaces it. The merged set is then resolved, and the container receives it sorted by key.
 
+Stored variables live in shed.db, encrypted, or in your 1Password account when [1Password](/docs/onepassword) is connected. Either way they are edited on the Variables tab and resolve the same way.
+
 <Figure caption="How one service's environment is assembled at deploy time.">
   <MergeDiagram />
 </Figure>

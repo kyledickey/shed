@@ -203,10 +203,8 @@ func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, 
 	if err != nil {
 		return err
 	}
-	var secrets []string
-	if dep.Runtime != nil {
-		secrets = secretValues(dep.Runtime.Env, dep.Runtime.SecretKeys)
-	} else if secrets, err = d.currentSecrets(ctx, serviceID, dep); err != nil {
+	secrets, err := d.RuntimeSecrets(ctx, dep)
+	if err != nil {
 		return err
 	}
 	redactor := build.NewRedactor(w, secrets)
@@ -214,11 +212,15 @@ func (d *Deployer) RuntimeLogs(ctx context.Context, serviceID string, tail int, 
 	return errors.Join(err, redactor.Flush())
 }
 
-// currentSecrets returns the values to mask in the logs of a deployment
-// activated before runtimes were recorded, resolved from the current
-// variables.
-func (d *Deployer) currentSecrets(ctx context.Context, serviceID string, dep store.Deployment) ([]string, error) {
-	svc, err := d.store.Service(ctx, serviceID)
+// RuntimeSecrets returns the values to mask in the output of a deployment's
+// container: those of the variables it was started with, not those saved
+// since. A deployment activated before runtimes were recorded has them
+// resolved from the current variables.
+func (d *Deployer) RuntimeSecrets(ctx context.Context, dep store.Deployment) ([]string, error) {
+	if dep.Runtime != nil {
+		return secretValues(dep.Runtime.Env, dep.Runtime.SecretKeys), nil
+	}
+	svc, err := d.store.Service(ctx, dep.ServiceID)
 	if err != nil {
 		return nil, err
 	}
@@ -227,13 +229,9 @@ func (d *Deployer) currentSecrets(ctx context.Context, serviceID string, dep sto
 		return nil, err
 	}
 	svc.Port = dep.Port
-	env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+	r, err := d.environment(ctx, svc, project, dep.CommitSHA, d.saved)
 	if err != nil {
 		return nil, err
 	}
-	keys, err := d.secretKeys(ctx, svc, env)
-	if err != nil {
-		return nil, err
-	}
-	return secretValues(env, keys), nil
+	return secretValues(r.Env, secretKeys(r)), nil
 }

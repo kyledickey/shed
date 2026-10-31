@@ -35,5 +35,14 @@ min_free_mb = 2048
 log_max_mb = 10
 keep = 50
 
+[telemetry]
+# Loopback addresses of the telemetry components (Server → Telemetry), and
+# the OTLP/HTTP port apps send to on localhost inside their containers.
+metrics_addr = "127.0.0.1:8428"
+logs_addr = "127.0.0.1:9428"
+traces_addr = "127.0.0.1:10428"
+grafana_addr = "127.0.0.1:3001"
+otlp_port = 4318
+
 [log]
 level = "info"

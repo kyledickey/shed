@@ -28,8 +28,9 @@ type ProjectView struct {
 	Services []ServiceView
 }
 
-// ServiceView is a service with its settings, live status, domains, volumes,
-// latest deployment, and restore fence. It holds no variable values.
+// ServiceView is a service with its settings, live status, domains,
+// volumes, latest deployment, and restore fence. It holds no variable
+// values.
 type ServiceView struct {
 	store.Service
 	// Status is derived from the service's deployments and container;
@@ -59,6 +60,8 @@ type DeploymentView struct {
 	CreatedAt     time.Time
 	StartedAt     *time.Time
 	FinishedAt    *time.Time
+	// TraceID is the deploy trace, empty if telemetry was off.
+	TraceID string
 	// ImageAvailable reports whether the deployment's image is still on the
 	// server, so that it can be redeployed. It is set only in deployment
 	// lists, for deployments with an image, when Docker could be asked.
@@ -76,6 +79,7 @@ func toDeployment(d store.Deployment) DeploymentView {
 		CommitAuthor:  d.CommitAuthor,
 		Image:         d.Image,
 		Error:         d.Error,
+		TraceID:       d.TraceID,
 		CreatedAt:     d.CreatedAt,
 		StartedAt:     d.StartedAt,
 		FinishedAt:    d.FinishedAt,

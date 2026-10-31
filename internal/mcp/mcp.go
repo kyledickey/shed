@@ -1,6 +1,7 @@
 // Package mcp serves shed's Model Context Protocol server, which lets coding
 // agents inspect projects, services, deployments, logs, metrics, variable
-// names, and backups. Every tool is read-only.
+// names, backups, and the audit log. Every tool is read-only, and every call
+// is recorded in the audit log.
 //
 // The server speaks the Streamable HTTP transport, statelessly. It does not
 // authenticate requests: the caller mounts [Server.Handler] behind bearer
@@ -15,10 +16,14 @@ import (
 	"net/http"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/github"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/update"
 )
 
@@ -40,6 +45,9 @@ type Backend interface {
 	UpdateStatus(ctx context.Context) (update.Status, error)
 	Repos(ctx context.Context) ([]github.Repo, error)
 	Branches(ctx context.Context, owner, repo string) ([]string, error)
+	AuditEvents(ctx context.Context, f store.AuditFilter) (audit.Page, error)
+	Record(ctx context.Context, e audit.Event)
+	telemetryBackend
 }
 
 var _ Backend = (*control.Plane)(nil)
@@ -54,16 +62,23 @@ type Config struct {
 
 // Server is the MCP server.
 type Server struct {
-	backend Backend
-	log     *slog.Logger
-	server  *sdk.Server
+	backend   Backend
+	log       *slog.Logger
+	server    *sdk.Server
+	toolCalls metric.Int64Counter
 }
+
+const scope = "github.com/kyledickey/shed/internal/mcp"
 
 // New returns a Server with every tool registered.
 func New(cfg Config) *Server {
 	s := &Server{backend: cfg.Backend, log: cfg.Log}
+	// Creating an instrument fails only for an invalid name, and the
+	// instrument returned works regardless.
+	s.toolCalls, _ = otel.Meter(scope).Int64Counter("shed_mcp_tool_calls_total",
+		metric.WithDescription("MCP tool calls, by tool and OAuth client."))
 	s.server = sdk.NewServer(&sdk.Implementation{Name: "shed", Title: "shed", Version: cfg.Version}, &sdk.ServerOptions{
-		Instructions: instructions,
+		Instructions: instructions + telemetryInstructions,
 		Logger:       cfg.Log,
 		Capabilities: &sdk.ServerCapabilities{Tools: &sdk.ToolCapabilities{}},
 	})
@@ -118,4 +133,4 @@ Model:
 - Variables: list_variables returns names only. Values are never available; logs mask them as ***.
 - Settings and variables changed in the dashboard apply from the next deployment.
 
-To diagnose a failed deploy: get_service (status, latestDeployment), list_deployments, get_deployment (its error), then build_log for that deployment. Lines starting with "==> " mark the stages; the one before "==> Deployment failed" is the stage that failed. If the container started and then failed or crashed, read runtime_logs and service_metrics (memory against its limit). host_metrics shows whether the server is short on CPU, memory, or disk. shed_log covers shed itself: webhooks, routing, certificates, backups.`
+To diagnose a failed deploy: get_service (status, latestDeployment), list_deployments, get_deployment (its error), then build_log for that deployment. Lines starting with "==> " mark the stages; the one before "==> Deployment failed" is the stage that failed. If the container started and then failed or crashed, read runtime_logs and service_metrics (memory against its limit). host_metrics shows whether the server is short on CPU, memory, or disk. shed_log covers shed itself: webhooks, routing, certificates, backups. audit_events shows who changed what and when, which helps when a service broke after a settings or variable change.`

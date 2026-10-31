@@ -48,14 +48,15 @@ curl -fsSL https://shed.land/install.sh | sudo \
   SHED_YES=1 bash
 ```
 
-| Variable             | Required | Meaning                                                    |
-| -------------------- | -------- | ---------------------------------------------------------- |
-| `SHED_DOMAIN`        | yes      | Dashboard domain                                           |
-| `SHED_ALLOWED_USERS` | yes      | Comma-separated GitHub logins                              |
-| `SHED_BASE_DOMAIN`   | no       | Apps base domain                                           |
-| `SHED_ACME_EMAIL`    | no       | Let's Encrypt contact                                      |
-| `SHED_VERSION`       | no       | Release tag to install, such as `v1.2.0`. Default: latest. |
-| `SHED_YES`           | no       | `1` skips every confirmation                               |
+| Variable             | Required | Meaning                                                       |
+| -------------------- | -------- | ------------------------------------------------------------- |
+| `SHED_DOMAIN`        | yes      | Dashboard domain                                              |
+| `SHED_ALLOWED_USERS` | yes      | Comma-separated GitHub logins                                 |
+| `SHED_BASE_DOMAIN`   | no       | Apps base domain                                              |
+| `SHED_ACME_EMAIL`    | no       | Let's Encrypt contact                                         |
+| `SHED_VERSION`       | no       | Release tag to install, such as `v1.2.0`. Default: latest.    |
+| `SHED_CHANNEL`       | no       | `stable` (default) or `nightly`. Ignored with `SHED_VERSION`. |
+| `SHED_YES`           | no       | `1` skips every confirmation                                  |
 
 ## Updates
 
@@ -70,7 +71,18 @@ While shed restarts, the dashboard stays open and shows a restarting screen. It 
 
 Development builds (anything not built from a release tag) don't check for updates. Neither does a shed that can't write to the directory its binary is in; the Updates card says why.
 
-To update from the command line instead, run the installer again.
+To update from the command line instead, run the installer again, with `SHED_CHANNEL=nightly` on the nightly channel.
+
+## Update channels
+
+**Settings → Updates** has two channels:
+
+- **Stable** offers stable releases, such as `v1.3.0`.
+- **Nightly** also offers nightly builds, tagged like `v1.3.0-nightly.4`: untested daily builds of `main`, numbered toward the next stable release. It offers whichever release is newest, so a stable release that comes out after a nightly is offered too.
+
+A shed installed from a nightly starts on the nightly channel; any other starts on stable. To install a nightly, run the installer with `SHED_CHANNEL=nightly`.
+
+shed never downgrades. Switching from nightly back to stable doesn't install an older stable release: it offers no update until a stable release newer than the nightly you run comes out. A nightly may migrate the database, and an older binary can't open a database migrated past what it knows, so you can't go back to an older stable binary either; wait for the next stable release. Changing the channel discards an update that was already downloaded and checks the new channel right away.
 
 ## Rolling back
 

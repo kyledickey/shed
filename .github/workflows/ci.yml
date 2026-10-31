@@ -14,11 +14,43 @@ permissions:
   contents: read
 
 jobs:
-  go:
-    runs-on: ubuntu-latest
+  changes:
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            printf 'go=true\nweb=true\n' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE"...HEAD)"
+          go=false web=false
+          if grep -qv '^web/' <<<"$files" || grep -qx 'web/embed.go' <<<"$files"; then go=true; fi
+          if grep -q '^web/' <<<"$files"; then web=true; fi
+          printf 'go=%s\nweb=%s\n' "$go" "$web" >>"$GITHUB_OUTPUT"
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: namespace-profile-shed-md
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: gofmt
@@ -31,15 +63,25 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test -race ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   web:
-    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: namespace-profile-shed-md
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('web/bun.lock') }}
       - run: bun ci
       - run: bunx vp check
       - run: bunx vp test run
@@ -47,8 +89,103 @@ jobs:
       - name: routeTree.gen.ts is up to date
         run: git diff --exit-code -- src/routeTree.gen.ts
 
-  shellcheck:
-    runs-on: ubuntu-latest
+  # Builds the release binaries with the real dashboard, so a break in
+  # either architecture or in the embed shows up before a release.
+  build:
+    needs: changes
+    runs-on: namespace-profile-shed-md
+    timeout-minutes: 20
+    outputs:
+      sizes: ${{ steps.sizes.outputs.table }}
     steps:
-      - uses: actions/checkout@v7
-      - run: shellcheck deploy/install.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('web/bun.lock') }}
+      - name: Build
+        run: |
+          set -euo pipefail
+          (cd web && bun ci && bun run build)
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=dev-${GITHUB_SHA::7}" -o "bin/$arch/shed" ./cmd/shed
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shed-${{ github.sha }}
+          path: bin/
+          retention-days: 14
+      - name: Sizes against the base branch
+        id: sizes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git worktree add -q base "$BASE"
+          (cd base/web && bun ci && bun run build)
+          (cd base && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o shed ./cmd/shed)
+          row() {
+            awk -v name="$1" -v b="$2" -v h="$3" 'BEGIN {
+              printf "| %s | %.2f MB | %.2f MB | %+.2f MB (%+.1f%%) |\n", name, b/1e6, h/1e6, (h-b)/1e6, (h-b)*100/b
+            }'
+          }
+          {
+            echo 'table<<EOF'
+            echo '| | base | this PR | change |'
+            echo '| --- | --- | --- | --- |'
+            row 'shed (linux/amd64)' "$(stat -c %s base/shed)" "$(stat -c %s bin/amd64/shed)"
+            row 'dashboard (web/dist)' "$(du -sb base/web/dist | cut -f1)" "$(du -sb web/dist | cut -f1)"
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+
+  size-comment:
+    needs: build
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SIZES: ${{ needs.build.outputs.sizes }}
+        run: |
+          printf '### Size\n\n%s\n' "$SIZES" >body.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md --edit-last --create-if-none
+
+  lint:
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: shellcheck deploy/*.sh .github/scripts/*.sh
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: pipx run zizmor==1.31.1 --offline .github/workflows
+
+  # The one check to require on main: it fails if any job above failed.
+  ci-ok:
+    if: always()
+    needs: [changes, go, web, build, size-comment, lint]
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

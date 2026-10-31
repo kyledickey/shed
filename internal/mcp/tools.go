@@ -1,13 +1,25 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/kyledickey/shed/internal/audit"
+	"github.com/kyledickey/shed/internal/store"
 )
 
 // Bounds on what the tools return.
@@ -64,6 +76,15 @@ type shedLogArgs struct {
 	Lines int `json:"lines,omitempty" jsonschema:"how many of the last lines to return; default 200, at most 2000"`
 }
 
+type auditArgs struct {
+	Actor     string `json:"actor,omitempty" jsonschema:"a GitHub login, or an actor kind: user, agent, github, system, docker, anonymous"`
+	Action    string `json:"action,omitempty" jsonschema:"an action, or its dotted prefix such as service or service.variables"`
+	ServiceID string `json:"service_id,omitempty" jsonschema:"ID of the service the events are about"`
+	Outcome   string `json:"outcome,omitempty" jsonschema:"ok, failed, or denied"`
+	Since     string `json:"since,omitempty" jsonschema:"RFC 3339 time, or a duration before now such as 15m or 24h"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"how many events to return, newest first; default 100, at most 500"`
+}
+
 type branchesArgs struct {
 	Owner string `json:"owner" jsonschema:"owner of the repository, the part before the slash in its full name"`
 	Repo  string `json:"repo" jsonschema:"name of the repository, the part after the slash in its full name"`
@@ -116,11 +137,56 @@ func (s *Server) addTools() {
 	add(s, "list_branches", "List branches",
 		"Lists the branches of a GitHub repository the shed GitHub App is installed on.",
 		s.listBranches)
+	addWithSchema(s, "audit_events", "Audit events",
+		"Lists audit log events, newest first: who (actorKind, actor, actorIp) did what (action, target, detail) to which project and service, and whether it was ok, failed, or denied. Detail holds names and changed fields or keys, never values.",
+		s.auditEvents, outcomeEnum)
+	s.addTelemetryTools()
 }
 
 // add registers a read-only tool.
 func add[In, Out any](s *Server, name, title, description string, h sdk.ToolHandlerFor[In, Out]) {
-	sdk.AddTool(s.server, readOnly(name, title, description), h)
+	sdk.AddTool(s.server, readOnly(name, title, description), audited(s, name, h))
+}
+
+// auditedArguments are the tool arguments an mcp.call event records: IDs and
+// structured parameters. Any other, such as a query, span name, or tags, is
+// left out, since it can hold a secret being looked for.
+var auditedArguments = map[string]bool{
+	"project_id": true, "service_id": true, "deployment_id": true, "trace_id": true, "folder_uid": true,
+	"owner": true, "repo": true, "actor": true, "action": true, "outcome": true,
+	"lines": true, "limit": true, "range": true, "since": true, "time": true, "start": true, "end": true,
+	"step": true, "min_duration": true, "max_duration": true,
+}
+
+// audited records every call of h, with its audited arguments, as an mcp.call
+// audit event of the agent calling it. It also traces the call, without its
+// arguments, and counts it in shed_mcp_tool_calls_total.
+func audited[In, Out any](s *Server, name string, h sdk.ToolHandlerFor[In, Out]) sdk.ToolHandlerFor[In, Out] {
+	return func(ctx context.Context, req *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Out, error) {
+		ctx, span := otel.Tracer(scope).Start(ctx, "tools/call "+name, trace.WithAttributes(
+			attribute.String("mcp.method.name", "tools/call"),
+			attribute.String("gen_ai.tool.name", name),
+		))
+		defer span.End()
+		res, out, err := h(ctx, req, in)
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		actor := audit.ActorFrom(ctx)
+		s.toolCalls.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("tool", name), attribute.String("client", cmp.Or(actor.ClientName, actor.ClientID))))
+		e := audit.Event{Action: "mcp.call", Outcome: audit.Result(err), Detail: map[string]any{"tool": name}}
+		var args map[string]any
+		if raw, merr := json.Marshal(in); merr == nil && json.Unmarshal(raw, &args) == nil {
+			maps.DeleteFunc(args, func(k string, _ any) bool { return !auditedArguments[k] })
+		}
+		if len(args) > 0 {
+			e.Detail["arguments"] = args
+			e.ServiceID, _ = args["service_id"].(string)
+		}
+		s.backend.Record(ctx, e)
+		return res, out, err
+	}
 }
 
 // addWithSchema registers a read-only tool after edit adjusts the schema
@@ -133,7 +199,7 @@ func addWithSchema[In, Out any](s *Server, name, title, description string, h sd
 	edit(schema)
 	t := readOnly(name, title, description)
 	t.InputSchema = schema
-	sdk.AddTool(s.server, t, h)
+	sdk.AddTool(s.server, t, audited(s, name, h))
 }
 
 func readOnly(name, title, description string) *sdk.Tool {
@@ -148,6 +214,11 @@ func readOnly(name, title, description string) *sdk.Tool {
 // rangeEnum limits the range argument to the supported ranges.
 func rangeEnum(s *jsonschema.Schema) {
 	s.Properties["range"].Enum = []any{"1h", "6h", "24h", "7d"}
+}
+
+// outcomeEnum limits the outcome argument to the outcomes of events.
+func outcomeEnum(s *jsonschema.Schema) {
+	s.Properties["outcome"].Enum = []any{"ok", "failed", "denied"}
 }
 
 func (s *Server) listProjects(ctx context.Context, _ *sdk.CallToolRequest, _ none) (*sdk.CallToolResult, projectsOut, error) {
@@ -282,6 +353,42 @@ func (s *Server) listBranches(ctx context.Context, _ *sdk.CallToolRequest, in br
 	}
 	n := min(len(branches), maxListItems)
 	return nil, branchesOut{Branches: append([]string{}, branches[:n]...), Omitted: len(branches) - n}, nil
+}
+
+func (s *Server) auditEvents(ctx context.Context, _ *sdk.CallToolRequest, in auditArgs) (*sdk.CallToolResult, auditOut, error) {
+	f := store.AuditFilter{
+		Actor: in.Actor, Action: in.Action, ServiceID: in.ServiceID, Outcome: in.Outcome,
+		Limit: min(max(in.Limit, 0), audit.MaxLimit),
+	}
+	if in.Since != "" {
+		since, err := parseSince(in.Since, time.Now())
+		if err != nil {
+			return nil, auditOut{}, err
+		}
+		f.Since = since
+	}
+	page, err := s.backend.AuditEvents(ctx, f)
+	if err != nil {
+		return nil, auditOut{}, s.fail(err, "", "")
+	}
+	return nil, toAudit(page), nil
+}
+
+// parseSince parses an RFC 3339 time or a duration before now.
+func parseSince(v string, now time.Time) (time.Time, error) {
+	return parseTime("since", v, now)
+}
+
+// parseTime parses the argument name, an RFC 3339 time or a duration before
+// now.
+func parseTime(name, v string, now time.Time) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return now.Add(-d), nil
+	}
+	return time.Time{}, fmt.Errorf("%s must be an RFC 3339 time or a duration such as 15m or 24h, not %q", name, v)
 }
 
 // logLines returns the number of lines to ask for: lines, or the default if

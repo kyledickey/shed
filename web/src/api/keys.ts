@@ -12,8 +12,15 @@ export const keys = {
   systemBackups: ["backups", "system"] as const,
   backupSettings: ["backups", "settings"] as const,
   update: ["update"] as const,
+  onePassword: ["onepassword"] as const,
   repos: ["github", "repos"] as const,
   branches: (repo: string) => ["github", "repos", repo, "branches"] as const,
   oauthRequest: (id: string) => ["oauth", "requests", id] as const,
   oauthGrants: ["oauth", "grants"] as const,
+  audit: (filters: object) => ["audit", "events", filters] as const,
+  auditSettings: ["audit", "settings"] as const,
+  telemetry: ["telemetry"] as const,
+  serviceTelemetry: (serviceId: string) => ["services", serviceId, "telemetry"] as const,
+  logHistory: (serviceId: string, filters: object) =>
+    ["services", serviceId, "logs", "history", filters] as const,
 };

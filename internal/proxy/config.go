@@ -13,9 +13,11 @@ import (
 // obj is a JSON object.
 type obj = map[string]any
 
-// buildConfig returns the Caddy JSON configuration for cfg and routes. The
-// result is deterministic: it does not depend on the order of routes.
-func buildConfig(cfg Config, routes []Route) ([]byte, error) {
+// buildConfig returns the Caddy JSON configuration for cfg and routes. With
+// edge, the server sends its access log to the shed_access writer and every
+// route starts a trace. The result is deterministic: it does not depend on
+// the order of routes.
+func buildConfig(cfg Config, routes []Route, edge bool) ([]byte, error) {
 	if cfg.HTTPPort <= 0 || cfg.HTTPSPort <= 0 {
 		return nil, fmt.Errorf("invalid ports: http %d, https %d", cfg.HTTPPort, cfg.HTTPSPort)
 	}
@@ -55,9 +57,13 @@ func buildConfig(cfg Config, routes []Route) ([]byte, error) {
 				"X-Forwarded-Host": []string{"{http.request.hostport}"},
 			}}}
 		}
+		handle := []obj{proxy}
+		if edge {
+			handle = []obj{{"handler": "tracing", "span": "{http.request.method}"}, proxy}
+		}
 		handlers = append(handlers, obj{
 			"match":    []obj{{"host": []string{r.Host}}},
-			"handle":   []obj{proxy},
+			"handle":   handle,
 			"terminal": true,
 		})
 		if isPublicName(r.Host) {
@@ -80,9 +86,20 @@ func buildConfig(cfg Config, routes []Route) ([]byte, error) {
 		server["client_ip_headers"] = []string{"CF-Connecting-IP"}
 	}
 
+	logs := obj{"default": obj{"writer": logWriter(cfg.LogFile)}}
+	if edge {
+		server["logs"] = obj{"default_logger_name": accessLoggerName}
+		logs["default"].(obj)["exclude"] = []string{accessLogger}
+		logs[accessLoggerName] = obj{
+			"writer":  obj{"output": "shed_access"},
+			"encoder": obj{"format": "json"},
+			"include": []string{accessLogger},
+		}
+	}
+
 	conf := obj{
 		"admin":   obj{"disabled": true},
-		"logging": obj{"logs": obj{"default": obj{"writer": logWriter(cfg.LogFile)}}},
+		"logging": obj{"logs": logs},
 		"apps": obj{
 			"http": obj{
 				"http_port":  cfg.HTTPPort,

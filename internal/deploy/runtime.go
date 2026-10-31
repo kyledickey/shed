@@ -17,70 +17,14 @@ import (
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
-	"github.com/kyledickey/shed/internal/vars"
 )
 
 // keepImages is how many built images are kept per service.
 const keepImages = 5
 
-// environment returns the resolved variables of svc: its own variables over
-// the ones shed injects, with references to other services of the project
-// expanded. sha is the commit being deployed. PORT comes from svc.Port.
-func (d *Deployer) environment(ctx context.Context, svc store.Service, project store.Project, sha string) (map[string]string, error) {
-	services, err := d.store.Services(ctx, svc.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	all := make(map[string]map[string]string, len(services))
-	for _, s := range services {
-		own, err := d.store.Variables(ctx, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		domains, err := d.store.Domains(ctx, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		commit := ""
-		if s.ID == svc.ID {
-			commit = sha
-			s.Port = svc.Port
-		}
-		merged := injected(project, s, domains, commit)
-		maps.Copy(merged, own)
-		all[s.Name] = merged
-	}
-	env, err := vars.Resolve(svc.Name, all)
-	if err != nil {
-		return nil, fmt.Errorf("deploy: resolve variables: %w", err)
-	}
-	return env, nil
-}
-
-// ResolveVariables returns the variables of a service with references
-// expanded, as its next deployment would see them. SHED_GIT_COMMIT_SHA is the
-// commit of the active deployment, if any.
-func (d *Deployer) ResolveVariables(ctx context.Context, serviceID string) (map[string]string, error) {
-	svc, err := d.store.Service(ctx, serviceID)
-	if err != nil {
-		return nil, err
-	}
-	project, err := d.store.Project(ctx, svc.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	sha := ""
-	switch dep, err := d.store.ActiveDeployment(ctx, serviceID); {
-	case err == nil:
-		sha = dep.CommitSHA
-	case !errors.Is(err, store.ErrNotFound):
-		return nil, err
-	}
-	return d.environment(ctx, svc, project, sha)
-}
-
-// injected returns the variables shed provides to every service.
-func injected(project store.Project, svc store.Service, domains []store.Domain, sha string) map[string]string {
+// injected returns the variables shed provides to every service. otlp is
+// the gateway URL apps send telemetry to, "" while telemetry is off.
+func injected(project store.Project, svc store.Service, domains []store.Domain, sha, otlp string) map[string]string {
 	m := map[string]string{
 		"SHED_PROJECT_NAME":   project.Name,
 		"SHED_SERVICE_NAME":   svc.Name,
@@ -98,7 +42,27 @@ func injected(project store.Project, svc store.Service, domains []store.Domain, 
 	if svc.Branch != "" {
 		m["SHED_GIT_BRANCH"] = svc.Branch
 	}
+	if otlp != "" && svc.Kind == "app" {
+		m["OTEL_EXPORTER_OTLP_ENDPOINT"] = otlp
+		m["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+		m["OTEL_SERVICE_NAME"] = svc.Name
+		if v := cmp.Or(sha, svc.Image); v != "" {
+			m["OTEL_RESOURCE_ATTRIBUTES"] = "service.version=" + v
+		}
+	}
 	return m
+}
+
+// telemetryOn reports whether telemetry is on.
+func (d *Deployer) telemetryOn(ctx context.Context) (bool, error) {
+	if d.telemetry == nil {
+		return false, nil
+	}
+	on, err := d.telemetry(ctx)
+	if err != nil {
+		return false, fmt.Errorf("deploy: telemetry settings: %w", err)
+	}
+	return on, nil
 }
 
 // runContainer creates and starts the container described by spec, creating
@@ -116,12 +80,12 @@ func (d *Deployer) runContainer(ctx context.Context, spec docker.RunSpec) (strin
 }
 
 // runtimeOf returns the container configuration of svc with the resolved
-// variables env, masking the variables under secretKeys in logs, and the
+// variables r, masking the variables under secretKeys in logs, and the
 // volumes vols.
-func runtimeOf(svc store.Service, env map[string]string, secretKeys []string, vols []store.Volume) store.DeploymentRuntime {
+func runtimeOf(svc store.Service, r Resolved, secretKeys []string, vols []store.Volume) store.DeploymentRuntime {
 	rt := store.DeploymentRuntime{
 		Cmd:        command(svc),
-		Env:        env,
+		Env:        r.Env,
 		SecretKeys: secretKeys,
 		CPUs:       svc.CPULimit,
 		Memory:     svc.MemoryLimit,
@@ -564,15 +528,11 @@ func (d *Deployer) deployedRuntime(ctx context.Context, svc store.Service, dep s
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		env, err := d.environment(ctx, svc, project, dep.CommitSHA)
+		r, err := d.environment(ctx, svc, project, dep.CommitSHA, d.saved)
 		if err != nil {
 			return store.DeploymentRuntime{}, err
 		}
-		keys, err := d.secretKeys(ctx, svc, env)
-		if err != nil {
-			return store.DeploymentRuntime{}, err
-		}
-		return runtimeOf(svc, env, keys, vols), nil
+		return runtimeOf(svc, r, secretKeys(r), vols), nil
 	}
 	rt := *dep.Runtime
 	rt.Volumes = nil
@@ -639,7 +599,8 @@ func (d *Deployer) DeleteService(ctx context.Context, serviceID string) error {
 	return nil
 }
 
-// DeleteProject deletes every service of a project as DeleteService does,
+// DeleteProject removes the containers attached to a project's network (see
+// [Attached]), deletes every service of the project as DeleteService does,
 // then its network, then the project itself. It returns ErrServiceBusy while
 // any of its services is held.
 func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
@@ -657,6 +618,13 @@ func (d *Deployer) DeleteProject(ctx context.Context, projectID string) error {
 	defer func() { d.mu.Lock(); delete(d.deletingProjects, projectID); d.mu.Unlock() }()
 	if _, err := d.store.Project(ctx, projectID); err != nil {
 		return err
+	}
+	if d.attached != nil {
+		release, err := d.attached.DetachProject(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("deploy: detach project %s: %w", projectID, err)
+		}
+		defer release()
 	}
 	services, err := d.store.Services(ctx, projectID)
 	if err != nil {

@@ -102,7 +102,7 @@ export type ServicePatch = Partial<
   >
 >;
 
-export type DeploymentTrigger = "push" | "manual" | "redeploy" | "create";
+export type DeploymentTrigger = "push" | "manual" | "redeploy" | "create" | "telemetry";
 
 export type Deployment = {
   id: string;
@@ -116,6 +116,8 @@ export type Deployment = {
   /** Whether the image is on the server; only set in deployment lists. */
   imageAvailable?: boolean;
   error: string;
+  /** The deploy trace, "" if telemetry was off. */
+  traceId: string;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -124,6 +126,14 @@ export type Deployment = {
 export type Domain = { id: string; host: string; generated: boolean; url: string };
 export type Volume = { id: string; mountPath: string; createdAt: string };
 export type Repo = { fullName: string; defaultBranch: string; private: boolean };
+/**
+ * Whether variables are kept in 1Password, the vault's name, and how many
+ * services have an item in it. The token is write-only: PUT /api/onepassword
+ * takes it.
+ */
+export type OnePassword = { connected: boolean; vault: string; items: number };
+/** A vault a service account token can access: POST /api/onepassword/vaults. */
+export type OnePasswordVault = { id: string; name: string };
 
 export type Variables = Record<string, string>;
 
@@ -268,8 +278,11 @@ export type Release = {
 
 export type UpdateState = "idle" | "checking" | "downloading" | "restarting";
 
+/** Stable updates to stable releases; nightly also to nightly pre-releases. */
+export type UpdateChannel = "stable" | "nightly";
+
 export type UpdateStatus = {
-  /** The running version, e.g. "v1.3.2" or "dev". */
+  /** The running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234". */
   current: string;
   /** Null until a check succeeds. */
   latest: Release | null;
@@ -283,6 +296,7 @@ export type UpdateStatus = {
   /** The last check or download failure, "" if none. */
   error: string;
   autoDownload: boolean;
+  channel: UpdateChannel;
   /** Why this build cannot update itself, "" if it can. */
   unsupported: string;
 };
@@ -309,3 +323,109 @@ export type OAuthGrant = {
   /** Null until the client first uses an access token. */
   lastUsedAt: string | null;
 };
+
+export type AuditActorKind = "user" | "agent" | "github" | "system" | "docker" | "anonymous";
+export type AuditOutcome = "ok" | "failed" | "denied";
+
+/** One audit log event. detail holds names and changed fields or keys, never values. */
+export type AuditEvent = {
+  id: number;
+  ts: string;
+  actorKind: AuditActorKind;
+  /** GitHub login of a user or agent, "" otherwise. */
+  actor: string;
+  actorIp: string;
+  /** Dotted, e.g. service.variables.update. */
+  action: string;
+  outcome: AuditOutcome;
+  projectId: string;
+  serviceId: string;
+  /** ID of what was acted on. */
+  target: string;
+  detail: Record<string, unknown>;
+};
+
+/** A page of audit events, newest first. Pass next as before for the next page; null at the end. */
+export type AuditPage = { events: AuditEvent[]; next: number | null };
+
+export type AuditSettings = { retentionDays: number };
+
+export type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
+
+/** A service's telemetry: its caps and whether records are being dropped. */
+export type TelemetrySettings = {
+  enabled: boolean;
+  metricsRetentionDays: number;
+  logsRetentionDays: number;
+  tracesRetentionDays: number;
+  /** Disk for logs and traces together, 60/40. */
+  diskLimitGB: number;
+  defaultCaps: TelemetryCaps;
+};
+
+export type TelemetryComponentName = "metrics" | "logs" | "traces" | "grafana";
+
+export type TelemetryComponent = {
+  name: TelemetryComponentName;
+  state: "running" | "starting" | "stopped" | "failed";
+  version: string;
+  /** The last failure starting it, "" if none. */
+  error: string;
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimit: number;
+  /** From the store's own metrics; null for grafana. */
+  diskBytes: number | null;
+};
+
+export type DashboardLink = {
+  uid: string;
+  title: string;
+  url: string;
+  /** Saved by a user since shed wrote it; shed no longer overwrites it. */
+  customized: boolean;
+  /** Customized, and its default has changed since. */
+  outdated: boolean;
+};
+export type ServiceTelemetry = {
+  /** Effective: the service's own caps, or the defaults. */
+  caps: TelemetryCaps;
+  overridden: boolean;
+  /** Records were dropped in the last 5 minutes. */
+  dropping: boolean;
+  /** Why shed cannot listen for OTLP inside the service's container; "" if it can. */
+  listenerError: string;
+  /** "" while telemetry is off. */
+  folderUrl: string;
+  dashboards: DashboardLink[];
+  firingAlerts: { name: string; since: string }[];
+};
+
+export type Telemetry = {
+  settings: TelemetrySettings;
+  /** Empty while never enabled. */
+  components: TelemetryComponent[];
+  /** Per second, over the last minute. */
+  ingest: { spans: number; logs: number; points: number };
+  droppedLastHour: { reason: string; signal: string; count: number }[];
+  firingAlerts: { name: string; serviceId: string; since: string }[];
+  /** "<server.url>/grafana/" */
+  grafanaUrl: string;
+  /** "http://localhost:4318" */
+  otlpEndpoint: string;
+};
+
+/** One stored log record of a service: GET /api/services/{id}/logs/history. */
+export type LogRecord = {
+  time: string;
+  source: "container" | "otlp";
+  stream: "stdout" | "stderr" | "";
+  level: string;
+  message: string;
+  deploymentId: string;
+  traceId: string;
+  fields: Record<string, string>;
+};
+
+/** A page of log records, newest first; next is the before cursor, "" at the end. */
+export type LogPage = { records: LogRecord[]; next: string };

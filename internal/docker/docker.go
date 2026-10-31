@@ -25,12 +25,18 @@ import (
 // Client talks to a Docker Engine.
 type Client struct {
 	api *client.Client
+	// execs are the execs Exec started.
+	execs execSet
 }
 
 // New returns a Client configured from the standard DOCKER_* environment
 // variables. The API version is negotiated with the daemon on first use.
 func New() (*Client, error) {
-	api, err := client.New(client.FromEnv)
+	opts, err := instrument()
+	if err != nil {
+		return nil, err
+	}
+	api, err := client.New(append([]client.Opt{client.FromEnv}, opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("docker: new client: %w", err)
 	}
@@ -258,6 +264,25 @@ func volumeMounts(ms []Mount) []mount.Mount {
 	return mounts
 }
 
+// Bind mounts a host path into a container.
+type Bind struct {
+	Source, Target string
+	ReadOnly       bool
+}
+
+// bindMounts converts bs to Docker bind mounts.
+func bindMounts(bs []Bind) []mount.Mount {
+	mounts := make([]mount.Mount, 0, len(bs))
+	for _, b := range bs {
+		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: b.Source, Target: b.Target, ReadOnly: b.ReadOnly})
+	}
+	return mounts
+}
+
+// HostNetwork is the network of a container that shares the host's network
+// stack.
+const HostNetwork = "host"
+
 // PortBinding publishes a container TCP port on all host interfaces.
 type PortBinding struct {
 	HostPort, ContainerPort int
@@ -265,14 +290,16 @@ type PortBinding struct {
 
 // RunSpec describes a container to create, and usually to start.
 type RunSpec struct {
-	Name    string
-	Image   string
-	Cmd     []string // nil means the image default
-	Env     []string // KEY=VALUE
-	Labels  map[string]string
+	Name   string
+	Image  string
+	Cmd    []string // nil means the image default
+	Env    []string // KEY=VALUE
+	Labels map[string]string
+	// Network is a bridge network or [HostNetwork].
 	Network string
-	Aliases []string // DNS names on Network
+	Aliases []string // DNS names on Network; none on HostNetwork
 	Mounts  []Mount
+	Binds   []Bind
 	Publish []PortBinding
 	// CPUs is the CPU quota in cores and Memory the memory limit in bytes,
 	// with no extra swap. Zero means unlimited.
@@ -331,13 +358,13 @@ func (c *Client) Create(ctx context.Context, spec RunSpec) (string, error) {
 		HostConfig: &container.HostConfig{
 			NetworkMode:   container.NetworkMode(spec.Network),
 			PortBindings:  bindings,
-			Mounts:        volumeMounts(spec.Mounts),
+			Mounts:        append(volumeMounts(spec.Mounts), bindMounts(spec.Binds)...),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			Resources:     workloadResources(spec),
 			LogConfig:     container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
 		},
 	}
-	if spec.Network != "" {
+	if spec.Network != "" && spec.Network != HostNetwork {
 		opts.NetworkingConfig = &network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				spec.Network: {Aliases: spec.Aliases},
@@ -403,11 +430,18 @@ type Container struct {
 	Running bool
 	// ExitCode is the exit code of the last run.
 	ExitCode int
+	// Pid is the host PID of the container's init process while it runs.
+	// Only Inspect sets it.
+	Pid int
 	// IPs maps network name to the container's IP address on it.
 	IPs    map[string]string
 	Labels map[string]string
 	// Volumes lists the named volumes mounted into the container.
 	Volumes []string
+	// HealthCommand is the command line of the image's or spec's health
+	// check as the daemon renders an exec of it, or empty if there is none.
+	// Only Inspect sets it.
+	HealthCommand string
 	// CPULimit is the configured CPU limit in cores; zero means unlimited.
 	// Only Inspect sets it.
 	CPULimit float64
@@ -431,11 +465,13 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	if info.Config != nil {
 		ctr.Image = info.Config.Image
 		ctr.Labels = info.Config.Labels
+		ctr.HealthCommand = healthCommand(info.Config.Healthcheck)
 	}
 	if info.State != nil {
 		ctr.State = string(info.State.Status)
 		ctr.Running = info.State.Running
 		ctr.ExitCode = info.State.ExitCode
+		ctr.Pid = info.State.Pid
 	}
 	if info.NetworkSettings != nil {
 		addIPs(ctr.IPs, info.NetworkSettings.Networks)
@@ -446,6 +482,38 @@ func (c *Client) Inspect(ctx context.Context, id string) (Container, error) {
 	}
 	ctr.Volumes = volumeNames(info.Mounts)
 	return ctr, nil
+}
+
+// healthCommand renders the command of h as the daemon names it in the
+// exec_create event of a health check run.
+func healthCommand(h *container.HealthConfig) string {
+	if h == nil || len(h.Test) == 0 {
+		return ""
+	}
+	switch h.Test[0] {
+	case "CMD-SHELL":
+		return "/bin/sh -c " + strings.Join(h.Test[1:], " ")
+	case "CMD":
+		return strings.Join(h.Test[1:], " ")
+	}
+	return ""
+}
+
+// NetworkSubnets returns the address ranges of every Docker network.
+func (c *Client) NetworkSubnets(ctx context.Context) ([]netip.Prefix, error) {
+	res, err := c.api.NetworkList(ctx, client.NetworkListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker: list networks: %w", err)
+	}
+	var out []netip.Prefix
+	for _, n := range res.Items {
+		for _, cfg := range n.IPAM.Config {
+			if cfg.Subnet.IsValid() {
+				out = append(out, cfg.Subnet)
+			}
+		}
+	}
+	return out, nil
 }
 
 // List returns all containers, stopped ones included, that have every one of
@@ -524,6 +592,27 @@ func (c *Client) Logs(ctx context.Context, id string, tail int, follow bool, w i
 	defer rc.Close()
 
 	if _, err := stdcopy.StdCopy(w, w, rc); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("docker: logs %s: %w", id, err)
+	}
+	return nil
+}
+
+// LogStream copies the container's stdout and stderr, from since on (all of
+// it if since is zero), to separate writers, each line prefixed with its
+// RFC 3339 timestamp at nanosecond precision and a space. It follows the
+// output until ctx is done or the container exits; canceling ctx is not an
+// error.
+func (c *Client) LogStream(ctx context.Context, id string, since time.Time, stdout, stderr io.Writer) error {
+	opts := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true, Timestamps: true}
+	if !since.IsZero() {
+		opts.Since = since.UTC().Format(time.RFC3339Nano)
+	}
+	rc, err := c.api.ContainerLogs(ctx, id, opts)
+	if err != nil {
+		return fmt.Errorf("docker: logs %s: %w", id, err)
+	}
+	defer rc.Close()
+	if _, err := stdcopy.StdCopy(stdout, stderr, rc); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("docker: logs %s: %w", id, err)
 	}
 	return nil

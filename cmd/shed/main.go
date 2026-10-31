@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/kyledickey/shed/internal/api"
+	"github.com/kyledickey/shed/internal/audit"
 	"github.com/kyledickey/shed/internal/auth"
 	"github.com/kyledickey/shed/internal/backup"
 	"github.com/kyledickey/shed/internal/build"
@@ -30,14 +32,22 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/docker"
+	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/host"
 	"github.com/kyledickey/shed/internal/logtail"
 	"github.com/kyledickey/shed/internal/mcp"
 	"github.com/kyledickey/shed/internal/metrics"
+	"github.com/kyledickey/shed/internal/netns"
+	"github.com/kyledickey/shed/internal/observability"
+	"github.com/kyledickey/shed/internal/onepassword"
+	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/s3"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/telemetry"
 	"github.com/kyledickey/shed/internal/update"
+	"github.com/kyledickey/shed/internal/variables"
+	"github.com/kyledickey/shed/internal/victoria"
 	"github.com/kyledickey/shed/web"
 )
 
@@ -85,11 +95,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	tail := logtail.New(shedLogTail)
-	log, err := newLogger(cfg.Log, config.LogFile(*configPath), tail)
+	hostname, _ := os.Hostname()
+	providers, err := telemetry.New(context.Background(), telemetry.Config{
+		Endpoint: fmt.Sprintf("http://127.0.0.1:%d", cfg.Telemetry.OTLPPort),
+		Version:  version,
+		Host:     hostname,
+	})
 	if err != nil {
 		return err
 	}
+	providers.Register()
+	tail := logtail.New(shedLogTail)
+	log, err := newLogger(cfg.Log, config.LogFile(*configPath), tail, providers)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := providers.Shutdown(context.Background()); err != nil {
+			log.Warn("shut down telemetry providers", "err", err)
+		}
+	}()
 	log.Info("starting shed", "version", version, "config", *configPath)
 	binary, err := executable()
 	if err != nil {
@@ -134,23 +159,64 @@ func run() error {
 		return err
 	}
 
+	vm := victoria.NewMetrics("http://"+cfg.Telemetry.MetricsAddr, nil)
+	vl := victoria.NewLogs("http://"+cfg.Telemetry.LogsAddr, nil)
+	vt := victoria.NewTraces("http://"+cfg.Telemetry.TracesAddr, nil)
+
+	var plane *control.Plane // Masks access records once telemetry runs.
+	edge := observability.NewEdge(observability.EdgeConfig{
+		Store:         st,
+		Logs:          vl,
+		Mask:          func(ctx context.Context) (func(string) string, error) { return plane.ShedMask(ctx) },
+		DashboardHost: dashboardRoute(cfg.Server).Host,
+		Log:           log,
+	})
+	var px *proxy.Proxy
 	var routes deploy.Proxy // nil disables routing
 	if cfg.Proxy.Enabled {
-		px := proxy.New(proxy.Config{
+		px = proxy.New(proxy.Config{
 			HTTPPort:   cfg.Proxy.HTTPPort,
 			HTTPSPort:  cfg.Proxy.HTTPSPort,
 			Email:      cfg.Proxy.ACMEEmail,
 			StorageDir: filepath.Join(dataDir, "caddy"),
 			LogFile:    filepath.Join(filepath.Dir(*configPath), "caddy.log"),
 			Cloudflare: cfg.Proxy.Cloudflare,
+			Access:     edge.Handle,
+			TracesURL:  fmt.Sprintf("http://127.0.0.1:%d/v1/traces", cfg.Telemetry.OTLPPort),
 		})
 		defer func() {
 			if err := px.Stop(); err != nil {
 				log.Error("stop proxy", "err", err)
 			}
 		}()
-		routes = px
+		routes = edgeRoutes{px, edge}
 	}
+
+	vars := variables.New(st, onepassword.New(version, log))
+	if err := vars.Preload(ctx); err != nil {
+		log.Warn("load 1Password", "err", err)
+	}
+
+	otlpEndpoint := fmt.Sprintf("http://localhost:%d", cfg.Telemetry.OTLPPort)
+	grafanaURL := strings.TrimRight(cfg.Server.URL, "/") + "/grafana/"
+	newGrafana := func(password string) *grafana.Client {
+		return grafana.New("http://"+cfg.Telemetry.GrafanaAddr+"/grafana", password, &http.Client{Timeout: 30 * time.Second})
+	}
+	// The stack is built after the deployer, which asks it at deploy time
+	// and which it redeploys databases with.
+	var stack *observability.Manager
+	dashboards := observability.NewDashboards(observability.DashboardsConfig{
+		Store: st,
+		Grafana: func(ctx context.Context) (observability.DashboardAPI, error) {
+			pw, err := stack.AdminPassword(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return newGrafana(pw), nil
+		},
+		GrafanaURL: grafanaURL,
+		Log:        log,
+	})
 
 	gh := &api.GitHubHolder{}
 	deployer := deploy.New(deploy.Config{
@@ -170,13 +236,68 @@ func run() error {
 			}
 			return nil, false
 		},
+		Variables:       vars,
 		LogDir:          logDir,
 		LogLimit:        int64(cfg.Deployments.LogMaxMB) << 20,
 		KeepDeployments: cfg.Deployments.Keep,
 		Dashboard:       dashboardRoute(cfg.Server),
-		Log:             log,
+		Telemetry: func(ctx context.Context) (bool, error) {
+			s, err := stack.Settings(ctx)
+			return s.Enabled, err
+		},
+		OTLPEndpoint: otlpEndpoint,
+		Events:       dashboards.Annotate,
+		Attached:     stackExporters{&stack},
+		Log:          log,
 	})
 	defer deployer.Stop()
+
+	auditLog := audit.New(st, log)
+	stack = observability.New(observability.Config{
+		Store:   st,
+		Docker:  dc,
+		Metrics: vm,
+		Logs:    vl,
+		Traces:  vt,
+		Grafana: func(password string) observability.GrafanaAPI { return newGrafana(password) },
+		Addrs: observability.Addrs{
+			Metrics: cfg.Telemetry.MetricsAddr,
+			Logs:    cfg.Telemetry.LogsAddr,
+			Traces:  cfg.Telemetry.TracesAddr,
+			Grafana: cfg.Telemetry.GrafanaAddr,
+		},
+		Dir:          filepath.Join(dataDir, "telemetry"),
+		MinFreeBytes: int64(cfg.Build.MinFreeMB) << 20,
+		GrafanaURL:   grafanaURL,
+		OTLPEndpoint: otlpEndpoint,
+		Databases:    st,
+		Redeployer:   deployer,
+		Security: &observability.Security{
+			Docker:    dc,
+			Catalog:   st,
+			Audit:     auditLog,
+			Logs:      vl,
+			Conntrack: conntrackTable{},
+			Crashed: func(d observability.Death) {
+				svc, err := st.Service(context.Background(), d.ServiceID)
+				if err != nil {
+					return
+				}
+				text := fmt.Sprintf("exited with code %d", d.ExitCode)
+				if d.OOM {
+					text = "killed for running out of memory"
+				}
+				dashboards.Annotate(telemetry.Event{
+					Kind:    telemetry.EventCrash,
+					Service: telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind},
+					Start:   time.Now(),
+					Text:    text,
+				})
+			},
+		},
+		Log: log,
+	})
+	stack.AddWorker(dashboards.Run)
 
 	backups := backup.New(backup.Config{
 		Store:    st,
@@ -185,14 +306,16 @@ func run() error {
 		NewRemote: func(c backup.S3Config) (backup.Remote, error) {
 			return s3.New(s3.Config(c))
 		},
-		Dir: backupDir,
-		Log: log,
+		Dir:    backupDir,
+		Events: dashboards.Annotate,
+		Log:    log,
 	})
 
 	collector := metrics.New(metrics.Config{
 		Docker: dc,
 		Host:   host.Reader{Path: cfg.Data.Dir},
 		Store:  st,
+		Remote: vm,
 		Log:    log,
 	})
 
@@ -210,7 +333,7 @@ func run() error {
 	}
 	var restarting atomic.Bool
 
-	authn := auth.New(api.AuthStore(st), func() (auth.OAuth, bool) {
+	authn := auth.New(api.AuthStore(st), auditLog, func() (auth.OAuth, bool) {
 		if c := gh.Get(); c != nil {
 			return c, true
 		}
@@ -221,7 +344,19 @@ func run() error {
 		return err
 	}
 
-	plane := control.New(control.Config{
+	stack.AddWorker(edge.Run)
+	if px != nil {
+		stack.OnEnabled(func(on bool) {
+			if err := px.SetTelemetry(on); err != nil {
+				log.Error("switch proxy telemetry", "on", on, "err", err)
+			}
+		})
+	}
+	stack.OnEnabled(collector.SetRemote)
+
+	// The gateway masks with the plane, which reports its listener errors.
+	var gateway *observability.Gateway
+	plane = control.New(control.Config{
 		Store:    st,
 		Deployer: deployer,
 		Backups:  backups,
@@ -234,10 +369,47 @@ func run() error {
 			}
 			return nil, false
 		},
+		Variables:  vars,
+		Audit:      auditLog,
+		Telemetry:  stack,
+		Dashboards: dashboards,
+		ListenerError: func(serviceID string) string {
+			return gateway.ListenerError(serviceID)
+		},
+		Stores:     control.TelemetryStores{Metrics: vm, Logs: vl, Traces: vt},
 		BaseURL:    cfg.Server.URL,
 		BaseDomain: cfg.Proxy.BaseDomain,
 		Log:        log,
 	})
+
+	gateway = observability.NewGateway(observability.GatewayConfig{
+		Store:      st,
+		Docker:     dc,
+		Namespaces: namespaces{},
+		Masks:      plane,
+		Settings:   stack.Settings,
+		Port:       cfg.Telemetry.OTLPPort,
+		Log:        log,
+	})
+	receiver, err := otlp.New(otlp.Config{
+		Attribute: gateway.Attribute,
+		Mask:      gateway.Mask,
+		Caps:      gateway.Caps,
+		Forwarder: observability.NewForwarder(vm, vt, vl),
+		Logger:    log,
+	})
+	if err != nil {
+		return err
+	}
+	stack.AddWorker(func(ctx context.Context) { gateway.Run(ctx, receiver) })
+	stack.OnServiceContainer(gateway.Kick)
+	stack.AddWorker(observability.NewLogShipper(observability.LogShipperConfig{
+		Store: st, Docker: dc, Logs: vl, Masks: plane, Cap: receiver, Log: log,
+	}).Run)
+	stack.AddWorker(observability.NewAuditMirror(st, vl, log).Run)
+	// shed's own telemetry flows through the loopback listener, which the
+	// gateway opens once the stack is up.
+	stack.OnEnabled(providers.SetEnabled)
 
 	server, err := api.New(ctx, api.Config{
 		Control:  plane,
@@ -246,12 +418,13 @@ func run() error {
 			restarting.Store(true)
 			stop()
 		},
-		Auth:    authn,
-		GitHub:  gh,
-		BaseURL: cfg.Server.URL,
-		Web:     web.Dist(),
-		MCP:     mcp.New(mcp.Config{Backend: plane, Version: version, Log: log}).Handler(),
-		Log:     log,
+		Auth:        authn,
+		GitHub:      gh,
+		BaseURL:     cfg.Server.URL,
+		Web:         web.Dist(),
+		MCP:         mcp.New(mcp.Config{Backend: plane, Version: version, Log: log}).Handler(),
+		GrafanaAddr: cfg.Telemetry.GrafanaAddr,
+		Log:         log,
 	})
 	if err != nil {
 		return err
@@ -269,10 +442,12 @@ func run() error {
 	}
 	var background sync.WaitGroup
 	background.Go(func() { collector.Run(ctx) })
+	background.Go(func() { auditLog.Run(ctx) })
 	background.Go(func() { backups.Run(ctx) })
 	background.Go(func() { plane.ReplayPushes(ctx) })
 	background.Go(func() { plane.SyncRoutes(ctx) })
 	background.Go(func() { updater.Run(ctx) })
+	background.Go(func() { stack.Run(ctx) })
 	defer func() {
 		stop() // Also ends the collector and backups when serve fails.
 		background.Wait()
@@ -285,6 +460,24 @@ func run() error {
 		return restartError{binary}
 	}
 	return nil
+}
+
+// conntrackTable reads the kernel's connection tracking table.
+type conntrackTable struct{}
+
+func (conntrackTable) Flows(ctx context.Context) ([]host.Flow, error) {
+	return host.ConntrackFlows(ctx)
+}
+
+func (conntrackTable) EnableAccounting() error { return host.EnableConntrackAccounting("") }
+
+// namespaces opens the telemetry gateway's listeners inside containers.
+type namespaces struct{}
+
+func (namespaces) ID(pid int) (uint64, error) { return netns.ID(pid) }
+
+func (namespaces) Listen(ctx context.Context, pid int, addr string) (net.Listener, error) {
+	return netns.Listen(ctx, pid, addr)
 }
 
 // executable returns the path of the running shed binary, with symlinks
@@ -316,6 +509,18 @@ func (s updateSettings) SetSetting(ctx context.Context, key, value string) error
 	return s.st.SetSetting(ctx, key, value)
 }
 
+// edgeRoutes tells the edge to read the domain table again whenever routes
+// are applied.
+type edgeRoutes struct {
+	*proxy.Proxy
+	edge *observability.Edge
+}
+
+func (r edgeRoutes) Apply(routes []proxy.Route) error {
+	defer r.edge.Refresh()
+	return r.Proxy.Apply(routes)
+}
+
 // backupServices adapts the deployer to backup.Services.
 type backupServices struct{ d *deploy.Deployer }
 
@@ -327,12 +532,20 @@ func (b backupServices) Hold(ctx context.Context, serviceID string) (backup.Held
 	return h, nil
 }
 
+// stackExporters adapts the telemetry stack, built after the deployer, to
+// deploy.Attached.
+type stackExporters struct{ stack **observability.Manager }
+
+func (e stackExporters) DetachProject(ctx context.Context, projectID string) (func(), error) {
+	return (*e.stack).DetachProject(ctx, projectID)
+}
+
 // shedLogTail is how many lines of shed's log the dashboard can replay.
 const shedLogTail = 1000
 
 // newLogger returns a text logger writing to stderr, to a rotated file, and
-// to tail.
-func newLogger(cfg config.Log, file string, tail *logtail.Tail) (*slog.Logger, error) {
+// to tail, whose records also go to shed's telemetry while it is on.
+func newLogger(cfg config.Log, file string, tail *logtail.Tail, providers *telemetry.Providers) (*slog.Logger, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(cfg.Level)); err != nil {
 		return nil, fmt.Errorf("log level: %w", err)
@@ -345,7 +558,8 @@ func newLogger(cfg config.Log, file string, tail *logtail.Tail) (*slog.Logger, e
 	}
 	// Stderr first: MultiWriter stops at the first failing writer.
 	w := io.MultiWriter(os.Stderr, tail, rotated)
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})), nil
+	h := slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
+	return slog.New(telemetry.NewSlogHandler(h, providers.LoggerProvider())), nil
 }
 
 // dashboardRoute routes the host of the dashboard URL to the listener.

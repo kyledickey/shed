@@ -7,6 +7,7 @@ import (
 	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/deploy"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 )
 
 // The JSON types below mirror the TypeScript types of the design document.
@@ -66,6 +67,23 @@ type serviceJSON struct {
 	CreatedAt        time.Time            `json:"createdAt"`
 }
 
+// onePasswordJSON is the 1Password connection, without its token.
+type onePasswordJSON struct {
+	Connected bool   `json:"connected"`
+	Vault     string `json:"vault"`
+	Items     int    `json:"items"`
+}
+
+func toOnePassword(s variables.Status) onePasswordJSON {
+	return onePasswordJSON{Connected: s.Connected, Vault: s.Vault, Items: s.Items}
+}
+
+// onePasswordVaultJSON is a vault a service account token can access.
+type onePasswordVaultJSON struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // restoreFenceJSON is the fence a failed restore left on a service.
 type restoreFenceJSON struct {
 	RestoreID string             `json:"restoreId"`
@@ -85,6 +103,7 @@ type deploymentJSON struct {
 	CommitAuthor   string                 `json:"commitAuthor"`
 	Image          string                 `json:"image"`
 	Error          string                 `json:"error"`
+	TraceID        string                 `json:"traceId"`
 	CreatedAt      time.Time              `json:"createdAt"`
 	StartedAt      *time.Time             `json:"startedAt"`
 	FinishedAt     *time.Time             `json:"finishedAt"`
@@ -170,6 +189,7 @@ func toDeployment(d control.DeploymentView) deploymentJSON {
 		CommitAuthor:   d.CommitAuthor,
 		Image:          d.Image,
 		Error:          d.Error,
+		TraceID:        d.TraceID,
 		CreatedAt:      d.CreatedAt,
 		StartedAt:      d.StartedAt,
 		FinishedAt:     d.FinishedAt,

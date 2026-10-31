@@ -1,0 +1,94 @@
+name: Prepare release
+
+# Writes the CHANGELOG.md section for a new version from the commits since
+# the last stable release and opens a pull request with it. Merging the pull
+# request publishes the release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as v1.2.3.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  notes:
+    runs-on: namespace-profile-shed-md
+    timeout-minutes: 20
+    outputs:
+      from: ${{ steps.range.outputs.from }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - id: range
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::$VERSION is not a version such as v1.2.3"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::$VERSION is already tagged"
+            exit 1
+          fi
+          echo "from=$(git describe --tags --abbrev=0 --exclude '*-*')" >>"$GITHUB_OUTPUT"
+      - name: Write notes
+        env:
+          NOTES_MODEL: ${{ vars.NOTES_MODEL }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          FROM: ${{ steps.range.outputs.from }}
+        run: .github/scripts/release-notes.sh "$FROM" HEAD notes.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes.md
+
+  # The model runs above with a read-only token; only this job can write.
+  pull-request:
+    needs: notes
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      FROM: ${{ needs.notes.outputs.from }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked] pushes the branch
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: ${{ runner.temp }}
+      - name: Open pull request
+        env:
+          NOTES: ${{ runner.temp }}/notes.md
+        run: |
+          set -euo pipefail
+          branch="release/$VERSION"
+          # The new section goes above the newest one.
+          awk -v heading="## $VERSION - $(date -u +%F)" -v notes="$NOTES" '
+            /^## v/ && !done {
+              print heading "\n"
+              while ((getline line < notes) > 0) print line
+              print ""
+              done = 1
+            }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.new
+          mv CHANGELOG.new CHANGELOG.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -am "changelog: $VERSION"
+          git push -u origin "$branch"
+          gh pr create --title "Release $VERSION" --body "Merging this publishes $VERSION with its new CHANGELOG.md section as the release notes. Edit the section in this pull request first if it needs it. It covers $FROM..$(git rev-parse --short HEAD~1)."

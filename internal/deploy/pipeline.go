@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/kyledickey/shed/internal/build"
 	"github.com/kyledickey/shed/internal/docker"
 	"github.com/kyledickey/shed/internal/github"
@@ -32,11 +34,14 @@ type job struct {
 	stoppedPrev *store.Deployment // the previous deployment, if its container was stopped early
 }
 
-// run executes the pipeline for dep and records the outcome.
-func (d *Deployer) run(ctx context.Context, dep store.Deployment) {
+// run executes the pipeline for dep, which queuedBy queued, and records the
+// outcome.
+func (d *Deployer) run(ctx context.Context, dep store.Deployment, queuedBy trace.SpanContext) {
+	ctx, span := startDeploy(ctx, &dep, queuedBy)
+	defer span.End()
 	f, err := os.OpenFile(d.logPath(dep.ID), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		d.log.Error("open build log", "deployment", dep.ID, "err", err)
+		d.log.ErrorContext(ctx, "open build log", "deployment", dep.ID, "err", err)
 		d.abandon(dep, store.StatusFailed, "open build log: "+err.Error())
 		return
 	}
@@ -46,6 +51,7 @@ func (d *Deployer) run(ctx context.Context, dep store.Deployment) {
 	if err := j.execute(ctx); err != nil {
 		j.fail(ctx, err)
 	}
+	j.finish(ctx, span)
 }
 
 // execute runs the pipeline steps in order.
@@ -60,20 +66,22 @@ func (j *job) execute(ctx context.Context) error {
 	now := time.Now()
 	j.dep.StartedAt = &now
 	j.save()
-	j.log.Info("deployment started", "deployment", j.dep.ID, "service", j.svc.Name, "trigger", j.dep.Trigger)
+	j.started()
+	j.log.InfoContext(ctx, "deployment started", "deployment", j.dep.ID, "service", j.svc.Name, "trigger", j.dep.Trigger)
 
-	if err := j.waitForCI(ctx); err != nil {
-		return err
+	if j.waitsForCI() {
+		if err := j.inStage(ctx, stageWaitForCI, j.waitForCI); err != nil {
+			return err
+		}
 	}
-	env, err := j.environment(ctx, j.svc, j.project, j.dep.CommitSHA)
+	read := readOnce(j.variables.Get)
+	r, err := j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, read)
 	if err != nil {
 		return err
 	}
-	if j.masked, err = j.secretKeys(ctx, j.svc, env); err != nil {
-		return err
-	}
-	j.secrets = secretValues(env, j.masked)
-	if err := j.buildImage(ctx, env); err != nil {
+	j.masked = secretKeys(r)
+	j.secrets = secretValues(r.Env, j.masked)
+	if err := j.buildImage(ctx, r.Env); err != nil {
 		return err
 	}
 	if j.svc.Port == 0 {
@@ -81,26 +89,29 @@ func (j *job) execute(ctx context.Context) error {
 			return err
 		} else if found {
 			// PORT is injected only once the service has a port.
-			if env, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA); err != nil {
+			if r, err = j.environment(ctx, j.svc, j.project, j.dep.CommitSHA, read); err != nil {
 				return err
 			}
-			j.secrets = append(j.secrets, secretValues(env, j.masked)...)
+			j.secrets = append(j.secrets, secretValues(r.Env, j.masked)...)
 		}
 	}
-	if err := j.start(ctx, env); err != nil {
+	if err := j.inStage(ctx, stageStart, func(ctx context.Context) error { return j.start(ctx, r) }); err != nil {
 		return err
 	}
-	if err := j.checkHealth(ctx); err != nil {
+	if err := j.inStage(ctx, stageHealthCheck, j.checkHealth); err != nil {
 		return err
 	}
-	return j.switchOver(ctx)
+	return j.inStage(ctx, stageActivate, j.switchOver)
 }
 
-// waitForCI waits until the commit's checks pass, for apps that ask for it.
+// waitsForCI reports whether the deployment waits for CI: apps that ask for
+// it and build a commit.
+func (j *job) waitsForCI() bool {
+	return j.svc.Kind == "app" && j.svc.WaitForCI && j.svc.Repo != "" && j.dep.CommitSHA != "" && j.dep.Image == ""
+}
+
+// waitForCI waits until the commit's checks pass.
 func (j *job) waitForCI(ctx context.Context) error {
-	if j.svc.Kind != "app" || !j.svc.WaitForCI || j.svc.Repo == "" || j.dep.CommitSHA == "" || j.dep.Image != "" {
-		return nil
-	}
 	gh, err := j.githubClient()
 	if err != nil {
 		return err
@@ -142,47 +153,64 @@ func (j *job) buildImage(ctx context.Context, env map[string]string) error {
 	}
 	j.setStatus(store.StatusBuilding)
 
+	var err error
 	if j.svc.Kind == "app" && j.svc.Repo != "" {
-		if j.dep.CommitSHA == "" {
-			return errors.New("no commit to build")
-		}
-		gh, err := j.githubClient()
-		if err != nil {
-			return err
-		}
-		url, err := gh.CloneURL(ctx, j.svc.Repo)
-		if err != nil {
-			return err
-		}
-		j.step("Building %s@%s", j.svc.Repo, shortSHA(j.dep.CommitSHA))
-		image := imageRepo(j.svc.ID) + ":" + j.dep.ID
-		err = j.builder.Build(ctx, j.dep.ID, build.Request{
-			RepoURL:        url,
-			Commit:         j.dep.CommitSHA,
-			RootDir:        j.svc.RootDir,
-			DockerfilePath: j.svc.DockerfilePath,
-			Image:          image,
-			Env:            env,
-		}, j.out)
-		if err != nil {
-			return err
-		}
-		j.dep.Image = image
+		err = j.inStage(ctx, stageBuild, func(ctx context.Context) error { return j.build(ctx, env) })
 	} else {
-		if j.svc.Image == "" {
-			return errors.New("service has no image or repository")
-		}
-		j.step("Pulling %s", j.svc.Image)
-		if err := j.docker.PullImage(ctx, j.svc.Image, j.out); err != nil {
-			return err
-		}
-		image, err := j.docker.ResolveImage(ctx, j.svc.Image)
-		if err != nil {
-			return err
-		}
-		j.dep.Image = image
+		err = j.inStage(ctx, stagePull, j.pull)
+	}
+	if err != nil {
+		return err
 	}
 	j.save()
+	return nil
+}
+
+// build builds the commit of a repo app.
+func (j *job) build(ctx context.Context, env map[string]string) error {
+	if j.dep.CommitSHA == "" {
+		return errors.New("no commit to build")
+	}
+	gh, err := j.githubClient()
+	if err != nil {
+		return err
+	}
+	url, err := gh.CloneURL(ctx, j.svc.Repo)
+	if err != nil {
+		return err
+	}
+	j.step("Building %s@%s", j.svc.Repo, shortSHA(j.dep.CommitSHA))
+	image := imageRepo(j.svc.ID) + ":" + j.dep.ID
+	err = j.builder.Build(ctx, j.dep.ID, build.Request{
+		RepoURL:        url,
+		Commit:         j.dep.CommitSHA,
+		RootDir:        j.svc.RootDir,
+		DockerfilePath: j.svc.DockerfilePath,
+		Image:          image,
+		Env:            env,
+		Labels:         j.service().Labels(),
+	}, j.out)
+	if err != nil {
+		return err
+	}
+	j.dep.Image = image
+	return nil
+}
+
+// pull pulls the image of a service that is not built from a repo.
+func (j *job) pull(ctx context.Context) error {
+	if j.svc.Image == "" {
+		return errors.New("service has no image or repository")
+	}
+	j.step("Pulling %s", j.svc.Image)
+	if err := j.docker.PullImage(ctx, j.svc.Image, j.out); err != nil {
+		return err
+	}
+	image, err := j.docker.ResolveImage(ctx, j.svc.Image)
+	if err != nil {
+		return err
+	}
+	j.dep.Image = image
 	return nil
 }
 
@@ -212,7 +240,7 @@ func (j *job) detectPort(ctx context.Context) (bool, error) {
 // start runs the new container. Services with volumes or a published port
 // cannot run two containers at once, so every other container of the
 // service is stopped first.
-func (j *job) start(ctx context.Context, env map[string]string) error {
+func (j *job) start(ctx context.Context, r Resolved) error {
 	j.setStatus(store.StatusDeploying)
 	vols, err := j.store.Volumes(ctx, j.svc.ID)
 	if err != nil {
@@ -228,7 +256,7 @@ func (j *job) start(ctx context.Context, env map[string]string) error {
 	j.dep.Port = j.svc.Port
 	// The runtime is recorded on activation, so a missing container is
 	// recreated as it runs now, whatever is saved later.
-	rt := runtimeOf(j.svc, env, j.masked, vols)
+	rt := runtimeOf(j.svc, r, j.masked, vols)
 	j.dep.Runtime = &rt
 	spec := containerSpec(j.svc, j.dep, rt)
 	// Private traffic must not reach the new container before it is healthy,
@@ -497,11 +525,11 @@ func (j *job) switchOver(ctx context.Context) error {
 		}
 		return fmt.Errorf("activate deployment: %w", err)
 	}
-	j.log.Info("deployment active", "deployment", j.dep.ID, "service", j.svc.Name)
+	j.log.InfoContext(ctx, "deployment active", "deployment", j.dep.ID, "service", j.svc.Name)
 
 	if svc.Stopped {
 		if err := j.store.SetServiceStopped(ctx, j.svc.ID, false); err != nil {
-			j.log.Error("clear stopped flag", "service", j.svc.Name, "err", err)
+			j.log.ErrorContext(ctx, "clear stopped flag", "service", j.svc.Name, "err", err)
 		}
 	}
 	if hasPrev && prev.ContainerID != "" {
@@ -509,7 +537,7 @@ func (j *job) switchOver(ctx context.Context) error {
 		// graceful stop, so private traffic reaches only the new one.
 		err := j.docker.DisconnectNetwork(ctx, networkName(j.svc.ProjectID), prev.ContainerID)
 		if err != nil && !docker.IsNotFound(err) {
-			j.log.Warn("disconnect previous container", "container", prev.ContainerID, "err", err)
+			j.log.WarnContext(ctx, "disconnect previous container", "container", prev.ContainerID, "err", err)
 		}
 	}
 	j.removeOthers(ctx, j.svc.ID, j.container)
@@ -573,7 +601,7 @@ func (j *job) recheckHealth(ctx context.Context) error {
 // fail records that the deployment did not go live, removes its container,
 // and restarts the previous container if it was stopped.
 func (j *job) fail(ctx context.Context, err error) {
-	status, msg := store.StatusFailed, build.NewRedactor(io.Discard, j.secrets).Redact(err.Error())
+	status, msg := store.StatusFailed, j.redact(err.Error())
 	switch cause := context.Cause(ctx); {
 	case errors.Is(err, errCIFailed):
 		status = store.StatusSkipped
@@ -583,12 +611,12 @@ func (j *job) fail(ctx context.Context, err error) {
 		status, msg = store.StatusCanceled, cause.Error()
 	}
 	j.printf("==> Deployment %s: %s", status, msg)
-	j.log.Info("deployment ended", "deployment", j.dep.ID, "status", status, "reason", msg)
+	j.log.InfoContext(ctx, "deployment ended", "deployment", j.dep.ID, "status", status, "reason", msg)
 
 	cleanup := context.WithoutCancel(ctx)
 	if j.container != "" {
 		if err := j.docker.Remove(cleanup, j.container); err != nil && !docker.IsNotFound(err) {
-			j.log.Error("remove failed container", "container", j.container, "err", err)
+			j.log.ErrorContext(ctx, "remove failed container", "container", j.container, "err", err)
 		}
 	}
 	if prev := j.stoppedPrev; prev != nil {
@@ -597,16 +625,21 @@ func (j *job) fail(ctx context.Context, err error) {
 		// other container of the service is left to share its storage.
 		if err := j.clearStrays(cleanup, j.svc.ID, prev.ID); err != nil {
 			j.printf("Previous deployment %s remains stopped: %v", prev.ID, err)
-			j.log.Error("cannot safely restart previous container", "container", prev.ContainerID, "err", err)
+			j.log.ErrorContext(ctx, "cannot safely restart previous container", "container", prev.ContainerID, "err", err)
 			msg += "; previous deployment left stopped because the replacement could not be confirmed removed"
 		} else if err := j.docker.Start(cleanup, prev.ContainerID); err != nil {
-			j.log.Error("restart previous container", "container", prev.ContainerID, "err", err)
+			j.log.ErrorContext(ctx, "restart previous container", "container", prev.ContainerID, "err", err)
 		}
 	}
 
 	now := time.Now()
 	j.dep.Status, j.dep.Error, j.dep.FinishedAt = status, msg, &now
 	j.save()
+}
+
+// redact masks the values of the deployment's secret variables in s.
+func (j *job) redact(s string) string {
+	return build.NewRedactor(io.Discard, j.secrets).Redact(s)
 }
 
 // githubClient returns the GitHub client, or an error if GitHub is not set up.

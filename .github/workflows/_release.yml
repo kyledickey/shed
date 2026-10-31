@@ -1,0 +1,145 @@
+name: Publish release
+
+# Builds, signs, and publishes one release. Building runs no secrets;
+# signing gets the minisign key and runs nothing from the repository.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag, such as v1.2.3 or v1.2.4-nightly.1.
+        type: string
+        required: true
+      ref:
+        description: Commit to build and tag.
+        type: string
+        required: true
+      notes:
+        description: Release notes, Markdown.
+        type: string
+        required: true
+    secrets:
+      MINISIGN_SECRET_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag }}
+  MINISIGN_PUBLIC_KEY: RWRBeRUdMkDg7PI7SQWikYL/5Evv0feGGQ07ZbVIfV5Q80snhMX7QaMK
+
+jobs:
+  build:
+    runs-on: namespace-profile-shed-md
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Build dashboard
+        working-directory: web
+        run: bun ci && bun run build
+
+      - name: Build archives
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            stage="$(mktemp -d)"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=$TAG" -o "$stage/shed" ./cmd/shed
+            cp deploy/shed.service deploy/shed.example.toml "$stage/"
+            tar -czf "dist/shed_${version}_linux_${arch}.tar.gz" -C "$stage" shed shed.service shed.example.toml
+          done
+          cp deploy/install.sh dist/
+          cd dist
+          sha256sum shed_*.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Sign checksums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          keyfile="$(mktemp)"
+          trap 'rm -f "$keyfile"' EXIT
+          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile")
+          cd dist
+          go run aead.dev/minisign/cmd/minisign@v0.3.0 -S -W -s "$keyfile" -m checksums.txt
+          go run aead.dev/minisign/cmd/minisign@v0.3.0 -V -P "$MINISIGN_PUBLIC_KEY" -m checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signature
+          path: dist/checksums.txt.minisig
+          retention-days: 7
+
+  publish:
+    needs: [build, sign]
+    runs-on: namespace-profile-shed-sm
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REF: ${{ inputs.ref }}
+      NOTES: ${{ inputs.notes }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/shed_*.tar.gz
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NOTES" > notes.md
+          flags=()
+          if [[ "$TAG" == *-* ]]; then
+            flags=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$REF" \
+            --title "$TAG" --notes-file notes.md "${flags[@]}" \
+            dist/shed_*.tar.gz dist/checksums.txt dist/checksums.txt.minisig dist/install.sh
+      # shed.land deploys from the stable branch, so the public site and its
+      # docs match the latest stable release rather than main.
+      - name: Move the stable branch
+        if: ${{ !contains(inputs.tag, '-') }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/stable" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/stable" -f sha="$REF" -F force=true >/dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/stable -f sha="$REF" >/dev/null
+          fi

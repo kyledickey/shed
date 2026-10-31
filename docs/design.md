@@ -20,6 +20,10 @@ embedded Caddy reverse proxy. Docker runs all workloads.
   with restore, download, and run-now from the dashboard.
 - Sign in with GitHub through a single GitHub App, which is also used for repo
   access, push webhooks, and CI status.
+- Optional telemetry: Grafana at `/grafana` behind the same sign-in, with
+  VictoriaMetrics, VictoriaLogs, and VictoriaTraces fed by container logs,
+  proxy access logs, database exporters, OTLP from apps, and shed's own
+  instrumentation. An audit log of every mutation is always kept.
 
 ## Host requirements
 
@@ -80,6 +84,13 @@ min_free_mb = 2048                 # refuse builds below this free space on data
 log_max_mb = 10                    # per-deployment build log cap; 0 = unlimited
 keep = 50                          # deployments kept per service; 0 = keep all
 
+[telemetry]                        # loopback addresses of the telemetry components
+metrics_addr = "127.0.0.1:8428"
+logs_addr    = "127.0.0.1:9428"
+traces_addr  = "127.0.0.1:10428"
+grafana_addr = "127.0.0.1:3001"
+otlp_port    = 4318                # OTLP/HTTP on localhost inside each app's container
+
 [log]
 level = "info"
 max_size_mb = 20
@@ -103,24 +114,33 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `cmd/shed` | flags, config, logging, wiring, signals | everything |
 | `internal/config` | koanf → `Config` struct with defaults + validation | — |
 | `internal/store` | SQLite (modernc), embedded migrations, CRUD on plain structs | — |
-| `internal/docker` | Docker Engine ops via `github.com/moby/moby/client` | — |
+| `internal/docker` | Docker Engine ops and events via `github.com/moby/moby/client` | — |
 | `internal/build` | clone a commit, build an image (Dockerfile or Railpack) | — |
-| `internal/proxy` | embedded Caddy; `Apply(routes)` | — |
+| `internal/proxy` | embedded Caddy; `Apply(routes)`, access entries and tracing while telemetry is on | — |
 | `internal/github` | GitHub App: manifest, JWT, installation tokens, repos, branches, CI status, OAuth, webhooks | — |
 | `internal/vars` | `${{ ... }}` variable reference resolution | — |
 | `internal/catalog` | database templates (image, port, volume path, default vars) | — |
 | `internal/logtail` | in-memory tail of shed's own log, followed over SSE | — |
-| `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs | — |
+| `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
+| `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
 | `internal/notify` | notification types, provider registry, fan-out to endpoints, Hark push adapter | store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
-| `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker types |
-| `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars types |
-| `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store types |
-| `internal/auth` | sessions, GitHub sign-in handlers, middleware, OAuth 2.1 authorization server and bearer middleware for agents | store via interface |
-| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, views merging live status, masked log snapshots | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail types |
-| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions | control via interface + types of control/deploy/github/metrics/update |
-| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens; handlers decode, call `control`, map errors, encode | control via interface, auth + types of deploy/github/metrics/backup/store/update |
+| `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
+| `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
+| `internal/victoria` | VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients: writes, MetricsQL, LogsQL, Jaeger queries, store stats | — |
+| `internal/grafana` | Grafana container config, provisioning files, HTTP API (folders, dashboards, annotations, alerts), dashboard templates | — |
+| `internal/onepassword` | 1Password vault and item operations with a service account token (official Go SDK) | — |
+| `internal/variables` | where services' variables live: shed.db, or one 1Password item per service while connected; connecting and disconnecting | interfaces only + store/onepassword types |
+| `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker/telemetry types |
+| `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars/telemetry types |
+| `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store/victoria types |
+| `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
+| `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
+| `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/firewall/proxy/telemetry types |
+| `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/variables/onepassword/audit/observability/grafana/victoria types |
+| `internal/mcp` | read-only MCP server (Streamable HTTP, stateless) for agents: tools, their compact results, server instructions, an audit event per tool call | control via interface + types of control/github/metrics/update/store/audit/observability/victoria |
+| `internal/api` | JSON HTTP API, SSE logs, webhook endpoint, SPA serving, mounting `/mcp` behind bearer tokens, the `/grafana/` reverse proxy; handlers decode, call `control`, map errors, encode; audit events of setup and webhook denials | control via interface, auth + types of deploy/github/metrics/backup/store/update/variables/onepassword/audit/observability |
 | `web` | Vite+ React dashboard; `embed.go` exposes `dist` as `fs.FS` | — |
 
 Style: Google Go style guide and Go doc comments. Every package has a
@@ -179,6 +199,11 @@ CREATE TABLE services (
   UNIQUE (project_id, name)
 );
 
+CREATE TABLE onepassword_items (         -- see "1Password"
+  service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL                  -- the service's item in the connected vault
+);
+
 CREATE TABLE variables (
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   key TEXT NOT NULL,
@@ -206,7 +231,7 @@ CREATE TABLE deployments (
   id TEXT PRIMARY KEY,
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
   status TEXT NOT NULL,      -- see statuses below
-  trigger TEXT NOT NULL,     -- push | manual | redeploy | create
+  trigger TEXT NOT NULL,     -- push | manual | redeploy | create | telemetry
   commit_sha TEXT NOT NULL DEFAULT '',
   commit_message TEXT NOT NULL DEFAULT '',
   commit_author TEXT NOT NULL DEFAULT '',
@@ -217,7 +242,8 @@ CREATE TABLE deployments (
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
-  runtime TEXT NOT NULL DEFAULT '' -- encrypted JSON container config of the active deployment
+  runtime TEXT NOT NULL DEFAULT '', -- encrypted JSON container config of the active deployment
+  trace_id TEXT NOT NULL DEFAULT ''  -- the deploy trace, when telemetry was on
 );
 CREATE INDEX deployments_service ON deployments(service_id, created_at DESC);
 -- At most one active deployment per service.
@@ -367,15 +393,57 @@ CREATE TABLE oauth_tokens (
 CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
 ```
 
+-- Audit log; see "Audit". No foreign keys: events outlive what they name.
+CREATE TABLE audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,   -- monotonic; the VictoriaLogs mirror's cursor
+  ts TEXT NOT NULL,
+  actor_kind TEXT NOT NULL,               -- user | agent | github | system | docker | anonymous
+  actor TEXT NOT NULL DEFAULT '',         -- GitHub login, container ID, …
+  actor_ip TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,                   -- dotted, e.g. service.variables.update
+  outcome TEXT NOT NULL,                  -- ok | failed | denied
+  project_id TEXT NOT NULL DEFAULT '',
+  service_id TEXT NOT NULL DEFAULT '',
+  target TEXT NOT NULL DEFAULT '',        -- ID of the thing acted on
+  detail TEXT NOT NULL DEFAULT '{}'       -- JSON; never secret values
+);
+CREATE INDEX audit_events_ts ON audit_events(ts);
+CREATE INDEX audit_events_service ON audit_events(service_id, id);
+
+-- Telemetry; see "Telemetry".
+CREATE TABLE telemetry_caps (             -- absent row = the default caps
+  service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+  spans_per_second INTEGER NOT NULL,
+  logs_per_second INTEGER NOT NULL,
+  series INTEGER NOT NULL
+);
+
+CREATE TABLE grafana_dashboards (         -- dashboards shed created
+  uid TEXT PRIMARY KEY,
+  template TEXT NOT NULL,
+  folder TEXT NOT NULL,                   -- UID of the folder shed created it in
+  template_version INTEGER NOT NULL,      -- version shed last wrote
+  grafana_version INTEGER NOT NULL,       -- Grafana's dashboard version after that write
+  customized INTEGER NOT NULL DEFAULT 0   -- saved by a user since; never overwritten
+);
+
+CREATE TABLE log_cursors (                -- container log shipping position
+  container_id TEXT PRIMARY KEY,
+  ts TEXT NOT NULL                        -- Docker timestamp of the last acknowledged line
+);
+```
+
 Deployment statuses: `queued`, `waiting` (for CI), `building`, `deploying`,
 `active`, `failed`, `crashed`, `removed` (superseded), `canceled`, `skipped`
-(CI failed).
+(CI failed). Deployment triggers also include `telemetry`: a database
+redeployed once to pick up query statistics arguments.
 
 ### Encryption at rest
 
 Secret columns in shed.db are encrypted with AES-256-GCM under a 32-byte master
 key: every `settings.value` (including the GitHub App credentials and the backup
-age identity), `variables.value`, `backup_destinations.secret_access_key`, and
+age identity and the 1Password token), `variables.value`,
+`backup_destinations.secret_access_key`, and
 `deployments.runtime` (the active deployment's resolved variables).
 
 - **Format.** `v1:` + base64 (raw std, no padding) of `nonce‖ciphertext`. The
@@ -404,8 +472,8 @@ age identity), `variables.value`, `backup_destinations.secret_access_key`, and
   the key file; root on the running host is out of scope. Full-disk encryption
   covers the rest.
 
-Losing the key loses the variables, GitHub App credentials, S3 secret, and age
-identity in shed.db. shed.db system backups hold ciphertext.
+Losing the key loses the variables, GitHub App credentials, 1Password token,
+S3 secret, and age identity in shed.db. shed.db system backups hold ciphertext.
 
 ## Runtime model
 
@@ -451,6 +519,105 @@ Database templates create variables on service creation, e.g. postgres:
 `DATABASE_URL=postgresql://${{POSTGRES_USER}}:${{POSTGRES_PASSWORD}}@${{SHED_PRIVATE_DOMAIN}}:5432/${{POSTGRES_DB}}`.
 An app then sets `DATABASE_URL=${{ postgres.DATABASE_URL }}`.
 
+### 1Password
+
+shed can keep every service's variables in a 1Password vault instead of
+shed.db. The operator creates a vault in 1Password (any name), then one
+service account on 1Password.com with read and write access to it.
+1Password allows 100 service accounts per account, so shed needs exactly one.
+shed never creates the vault: a vault a service account creates belongs to
+it, and on Individual and Families accounts nobody else can be given access,
+so the operator could not see their own variables.
+
+**Layout.** One vault, chosen when connecting. One item per service (`onepassword_items`
+maps service to item): category Secure Note, titled `<project> / <service>`,
+tagged `shed/<project>` (1Password nests tags with `/`, so the sidebar shows
+shed › project › items). Each variable is a concealed field in a section
+titled `Variables`, field title = key. Reading an item takes every field whose
+title is a valid variable name (`^[A-Za-z_][A-Za-z0-9_]*$`; other fields,
+notes, and untitled fields are ignored); writing replaces those fields and
+keeps the others.
+
+**Choosing the vault** (`POST /api/onepassword/vaults {token}`) signs in and
+lists the vaults the token can access, sorted by name; 400 if 1Password
+rejects the token. The dashboard calls it first: with one vault it connects
+to it, with several it asks which, with none it says to give the service
+account access to one.
+
+**Connecting** (`PUT /api/onepassword {token, vault?}`):
+
+1. Sign in with the token; 400 if that fails.
+2. Pick the vault: `vault` is a vault ID from the list; without it, the only
+   vault the token can access. 400 if the token cannot access `vault`, can
+   access none, or (without `vault`) several. Its ID and name are saved as
+   settings `onepassword.vault` and `onepassword.vault_name` at the end.
+3. For every service without an item, create one holding its variables from
+   shed.db (template variables included). Services that already have an item
+   (from an earlier, failed attempt) get their fields replaced instead.
+4. Delete every service's rows from `variables`, then save the token as
+   setting `onepassword.token`. Connected means the token setting exists.
+
+A failure in steps 2–3 saves nothing in shed.db and returns the 1Password
+error (400 for a rejected token, 502 otherwise); retrying reuses the items
+already created, so connecting converges.
+
+**While connected:**
+
+- `GET /api/services/{id}/variables` reads the service's item (one read);
+  `PUT` replaces its variable fields (one read, one write). The values never
+  touch shed.db.
+- Creating a service creates its item with the template's variables; if
+  1Password fails, the service is not created (502).
+- Renaming a project updates its services' items' titles and tags (tags
+  outside `shed/` are kept); if 1Password fails, the rename is not saved
+  (502).
+- Deleting a service (or its project) archives its item once the deletion
+  succeeds; a failed deletion leaves the item alone. The item ID is looked up
+  first, since deleting the service drops its `onepassword_items` row. An
+  archive failure is logged and the item stays in the vault.
+- A service whose item is missing (deleted in 1Password, or none recorded)
+  fails reads with 409 "the 1Password item of service <name> is missing";
+  saving its variables creates a new item.
+- Deployments read the deploying service's item, and another service's item
+  only when a reference (`${{ api.KEY }}`) needs one of its variables. Each
+  item is read at most once per deployment. A failed read fails the
+  deployment with the 1Password error; the running deployment keeps serving.
+- Restarts, crash recovery, boot reconcile, and container log masking use
+  the active deployment's recorded runtime and never call 1Password. Masking
+  saved values (shed's own log and telemetry, a project's telemetry) reads
+  the items, so it fails rather than miss a value if 1Password does. Every
+  variable is masked in logs as before.
+- 1Password has no change notifications, so an edit made in the 1Password app
+  applies on the service's next deployment.
+
+**Disconnecting** (`DELETE /api/onepassword`) reads every item, saves their
+variables to shed.db (encrypted), and then deletes the token, the vault
+settings, and `onepassword_items`. The vault and its items are left in
+1Password. If any read fails, nothing changes (502; 409 naming the service
+if its item is missing, which saving its variables recreates).
+
+`internal/variables` is the one place that decides between shed.db and
+1Password; deploy and control read and write variables through it. It
+serializes connecting and disconnecting with every read and write of
+variables, so no read sees shed.db emptied before the token is saved and no
+write lands on the side being left.
+
+`GET /api/onepassword` reports `{connected, vault, items}` without calling
+1Password: the vault's name as saved when connecting and how many services
+have an item;
+`""` and 0 while not connected.
+
+`internal/onepassword` wraps the official Go SDK, which runs a WebAssembly
+core in-process: loading it takes about a second and about 110 MB of memory
+that stays for the life of the process. shed loads it in the background at
+boot when connected, and when connecting. The SDK ends a client's session
+when the `*sdk.Client` is garbage collected, so the client holds it.
+
+Service account limits apply to the one token: Business accounts get 10,000
+reads and 1,000 writes per hour and 50,000 requests per day; other plans get
+1,000 reads and 100 writes per hour, and 1,000 (individual, Families) or 5,000
+(Teams) requests per day for the whole account.
+
 ### Deploy pipeline
 
 One worker per service; a new deployment cancels older non-terminal ones for
@@ -472,7 +639,7 @@ the same service.
    outside the repository-controlled source tree.
    Once the image is available, a service with `port` 0 gets the lowest TCP
    port the image exposes (`EXPOSE`) as its `port`, which is saved.
-3. **Start**: resolve variables, record the service's port and container
+3. **Start**: resolve variables (reading 1Password items when connected), record the service's port and container
    configuration on the deployment (persisted on activation), and create and start the new container, without the service's network
    alias. Services with volumes or a public port stop the old container first
    if it is running (volumes can't be shared safely, e.g. database data dirs);
@@ -516,14 +683,15 @@ volume, or container is created, the error is logged, and the service shows
 `crashed`.
 
 The active deployment's `runtime` stores its command, resolved variables,
-masked variable keys, CPU/memory limits, public port, and volume IDs and mount
+masked variable keys, CPU/memory limits, public port, volume IDs and mount
 paths. Activation writes it and clears the superseded deployment's runtime
 in the same transaction, so resolved variables remain only on the active record.
 A missing container is recreated from this snapshot, including during boot,
 start, or release of a hold. Saved settings wait for a new deployment. Volumes
 deleted since are not mounted and their Docker volumes are removed; newly added
 volumes wait for deployment. Deployments activated before migration 011 have no
-snapshot and fall back to current settings with a warning when recreated.
+snapshot and fall back to current settings with a warning when recreated;
+that fallback resolves variables without reading 1Password.
 
 ### Stopping a service
 
@@ -897,6 +1065,1001 @@ Upstreams then get `X-Forwarded-For` set to that one client IP and
 `X-Forwarded-Host` set to the request host, since Cloudflare passes a visitor's
 `X-Forwarded-Host` through.
 
+## Telemetry
+
+Telemetry is optional and off by default. Turned on under Server → Telemetry,
+shed runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana, serves
+Grafana at `<server.url>/grafana/` behind the dashboard sign-in, receives
+OTLP from every workload as a gateway, and fills the stores with:
+
+| Signal | Source | Needs app changes |
+|---|---|---|
+| container resources | the metrics sampler (CPU, memory, network, block I/O) | no |
+| container logs | stdout/stderr of every service container | no |
+| HTTP requests | the proxy's access log: RED metrics, access log records, edge spans | no |
+| database internals | an exporter next to each database, scraped by VictoriaMetrics | no |
+| Docker events | exec, OOM kill, die, restart, image pull | no |
+| egress | outbound connections per container, from conntrack | no |
+| app traces, metrics, logs | any OpenTelemetry SDK, through the injected `OTEL_*` variables | instrument the code |
+| shed itself | spans, metrics, and logs of every request, deploy, build, backup, and store call | — |
+| audit | one event per mutation and security-relevant read | — |
+
+The audit stream is not optional: it is written to shed.db whether telemetry
+is on or off (see [Audit](#audit)), and mirrored into VictoriaLogs while it is
+on.
+
+### Components
+
+`internal/observability` runs each component as a Docker container on the
+host network, listening on loopback only, with a pinned image (tag and digest,
+bumped with shed releases), restart policy `unless-stopped`, label
+`shed.telemetry=<component>`, and a named volume for its data:
+
+| Component | Container | Listens (config key) | Memory | CPUs |
+|---|---|---|---|---|
+| VictoriaMetrics | `shed-telemetry-metrics` | `telemetry.metrics_addr` (127.0.0.1:8428) | 512 MiB | 1 |
+| VictoriaLogs | `shed-telemetry-logs` | `telemetry.logs_addr` (127.0.0.1:9428) | 512 MiB | 1 |
+| VictoriaTraces | `shed-telemetry-traces` | `telemetry.traces_addr` (127.0.0.1:10428) | 384 MiB | 1 |
+| Grafana | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | 1 GiB | 0.5 |
+
+Host networking is what lets VictoriaMetrics scrape exporters at their
+container addresses on every project network (Docker isolates bridges from
+each other, not from the host); binding to loopback keeps the components
+unreachable from outside and from containers. Volumes are
+`shed-telemetry-<component>`. Grafana's provisioning files are written to
+`<data>/telemetry/grafana/provisioning` and VictoriaMetrics' scrape config to
+`<data>/telemetry/scrape/scrape.yaml`; both directories are bind-mounted
+read-only (the directory rather than the file, so a config replaced by rename
+reaches the container), and their files are made world-readable whatever
+shed's umask, since Grafana runs as uid 472. Grafana 13 is OOM-killed at
+256 MiB while it installs its plugins on first start, hence 512 MiB; it idles
+near 300 MiB. `scrape.yaml` scrapes the three stores' own `/metrics` with
+shed's labels and the database exporters (see [Databases](#databases)).
+
+Flags derived from settings:
+
+- VictoriaMetrics: `-retentionPeriod=<metrics days>d`,
+  `-storage.minFreeDiskSpaceBytes=<build.min_free_mb>`,
+  `-promscrape.config=/etc/shed/scrape.yaml`, `-promscrape.configCheckInterval=10s`,
+  `-opentelemetry.usePrometheusNaming`, `-search.latencyOffset=5s` (the
+  default 30 s would hold the built-in charts' newest buckets back).
+- VictoriaLogs: `-retentionPeriod=<logs days>d`,
+  `-retention.maxDiskSpaceUsageBytes=<60% of the disk limit>`.
+- VictoriaTraces: `-retentionPeriod=<traces days>d`,
+  `-retention.maxDiskSpaceUsageBytes=<40% of the disk limit>`.
+
+Each store's disk use is the sum of its `vm_data_size_bytes`,
+`vl_data_size_bytes`, or `vt_data_size_bytes` series on `/metrics`.
+
+Metrics have no disk-based eviction in VictoriaMetrics; they are bounded by
+retention and the per-service series cap, and VictoriaMetrics stops accepting
+writes rather than fill the disk below `build.min_free_mb`.
+
+### Settings and lifecycle
+
+Telemetry settings live in the `settings` table (key `telemetry`, JSON),
+edited on the Telemetry page:
+
+| Setting | Default |
+|---|---|
+| `enabled` | false |
+| `metricsRetentionDays` | 30 |
+| `logsRetentionDays` | 14 |
+| `tracesRetentionDays` | 14 |
+| `diskLimitGB` (logs + traces) | 20 |
+| default per-service caps | 5000 spans/s, 2000 log records/s, 50000 series |
+
+Retention is 1 to 3650 days per signal, the disk limit at least 1 GB, and
+each cap at least 1; other values answer 400.
+
+Reconciliation is idempotent and runs at boot, after every settings change,
+and a minute after a failed attempt. `PUT /api/telemetry` saves the settings
+and returns; reconciliation runs in the background, and the page shows
+components `starting` until their health checks pass, or `failed` with the
+error. Each component container is compared with the spec those settings
+produce (a `shed.spec` label holds its hash; Grafana's includes the store
+addresses its data sources name) and created, recreated on the same volume,
+started, or left alone; a pinned image missing locally is pulled before an
+existing container is removed. Enabling then waits for each store's `/health`, writes
+Grafana's data sources file, starts Grafana, reconciles folders, writes the
+alert rules file and reloads it (see [Folders and
+dashboards](#folders-and-dashboards)), reconciles dashboards, opens the ingest
+listeners, and starts the shippers (container
+logs, edge, audit mirror, egress). Changing retention recreates the affected
+store; data is kept.
+
+Disabling closes the listeners, stops the shippers, and stops the containers.
+Volumes, `<data>/telemetry`, and the `grafana_dashboards` rows are kept, so
+enabling again resumes with history and edited dashboards intact.
+`DELETE /api/telemetry/data` (only while disabled) stops the workers if a
+disable is not yet reconciled, then removes the containers,
+volumes, `<data>/telemetry`, and those rows, and clears `log_cursors` and the
+`audit_mirror_cursor` setting: the shipped logs are gone, so container output
+is shipped again from what Docker still holds and the audit mirror starts
+over. The Grafana admin password in `settings` is kept. Saving settings
+waits for a deletion in progress, so telemetry cannot be turned on midway.
+
+Workers that only make sense while telemetry is on (ingest listeners,
+shippers) register with the manager and run from the moment the stack is up
+until it is disabled or shed shuts down; a hook is told when telemetry turns
+on (stack up, workers started) and off (before the workers stop). shed's own
+providers are switched by that hook once the loopback listener exists.
+
+Injected variables (see [Ingest](#ingest)) are part of a container's
+config, so they appear or disappear with each app's next deployment; the
+page says so after a toggle. The listeners inside containers follow
+telemetry at once.
+
+The Telemetry page shows each component's state, image version, CPU and memory
+(Docker stats; CPU from the difference to the previous request's sample),
+disk used (each store's own `/metrics`), ingest rate per signal
+(`shed_telemetry_ingested_total` over the last minute), records dropped in
+the last hour by reason and signal (`shed_telemetry_dropped_total`), and
+firing alerts, with a restart button per component (recorded as
+`telemetry.component.restart`).
+
+### Grafana
+
+Grafana runs with `root_url = <server.url>/grafana/` and
+`serve_from_sub_path`. shed's handler serves `/grafana/` to signed-in users
+only: unauthenticated browser navigations redirect to
+`/api/auth/login?next=<path>`, other requests answer 401, and mutating
+requests must match `server.url`'s origin like `/api`. A navigation is a
+GET or HEAD with `Sec-Fetch-Mode: navigate`, or, from a browser without Fetch
+Metadata, one that accepts `text/html`. It drops every
+`X-WEBAUTH-*` header the client sent, sets `X-WEBAUTH-USER: <login>` and
+`X-WEBAUTH-NAME: <name>`, and reverse-proxies to `telemetry.grafana_addr`,
+including WebSocket upgrades (Grafana Live), which must also come from
+`server.url`'s origin. The request keeps its `Host` (Grafana checks a
+mutation's `Origin` against it), and shed's own cookies (`shed_*`, the
+session among them) are removed before it reaches Grafana. shed's security
+headers apply to Grafana's pages as to the dashboard's; Grafana's copies of
+them are dropped so each is sent once. While telemetry is off,
+`/grafana/` redirects to `/server/telemetry`.
+
+Grafana's configuration (environment variables on its container):
+
+- `auth.proxy`: enabled, header `X-WEBAUTH-USER` as `username`, auto sign-up,
+  `whitelist = 127.0.0.1`.
+- `users.auto_assign_org_role = Admin`, `users.allow_sign_up = false`; every
+  shed user is a Grafana Admin, matching shed, where every allowed user can do
+  everything.
+- `auth.disable_login_form`, `auth.basic` enabled (only for shed's own API
+  calls), `security.admin_user = shed` with a random password kept in
+  `settings` (`grafana_admin_password`, encrypted like other settings).
+- Analytics, update checks, and gravatar off; `security.allow_embedding` off.
+- `plugins.preinstall_sync`: `victoriametrics-metrics-datasource`,
+  `victoriametrics-logs-datasource`, installed before Grafana starts because
+  the provisioned data sources need them (`plugins.preinstall` installs in
+  the background).
+
+Data sources are provisioned from files and reapplied on every Grafana start,
+so editing or deleting them in Grafana is undone by a restart:
+
+| UID | Type | URL |
+|---|---|---|
+| `shed-metrics` | `victoriametrics-metrics-datasource` | `http://<metrics_addr>` |
+| `shed-logs` | `victoriametrics-logs-datasource` | `http://<logs_addr>` |
+| `shed-traces` | `jaeger` | `http://<traces_addr>/select/jaeger` |
+
+Logs link `trace_id` to `shed-traces`; traces link back to logs by trace ID.
+
+### Label schema
+
+Every record carries the same resource attributes, whatever its source.
+shed sets them; values a sender supplies are overwritten.
+
+| Attribute | VictoriaMetrics label | Value |
+|---|---|---|
+| `shed.project.id` | `shed_project_id` | project ID, `""` for shed itself |
+| `shed.project.name` | `shed_project_name` | project name |
+| `shed.service.id` | `shed_service_id` | service ID, `shed` for shed itself |
+| `shed.service.name` | `shed_service_name` | service name |
+| `shed.service.kind` | `shed_service_kind` | `app`, a database kind, or `shed` |
+| `shed.deployment.id` | `shed_deployment_id` | deployment the container belongs to |
+| `shed.source` | `shed_source` | `otlp`, `container`, `edge`, `exporter`, `sampler`, `docker`, `egress`, `audit`, `shed` |
+
+VictoriaLogs stream fields are `shed.project.id`, `shed.service.id`, and
+`shed.source`; the rest are ordinary fields. Dashboards and queries filter by
+IDs, which survive renames, and display names.
+
+Metrics shed records about a service (edge requests, span metrics, drops,
+restarts, egress) carry that service's `shed.*` labels as data point
+attributes. VictoriaMetrics lets a data point attribute override the resource
+attribute of the same name, so `shed_service_id` names the service the record
+is about, not shed.
+
+That override, and VictoriaLogs merging log record attributes and the keys of
+a map-shaped log body with the resource's, would let any sender claim another
+service. So the gateway removes the `shed` namespace from the data point, log
+record, and scope attributes, and from the top level of map-shaped log bodies,
+of every request but shed's own (the host loopback listener): every key that is
+`shed` or starts with `shed` followed by anything other than a letter or
+digit (`shed.service.id`, `shed_service_id`, `shed-project.id`, a nested
+`shed` map). It does so before the series cap counts the data point. Span
+attributes are kept: VictoriaTraces stores them apart from the resource's, as
+`span_attr:*`.
+
+### Ingest
+
+`internal/otlp` is an OTLP/HTTP receiver: `POST /v1/traces`, `/v1/metrics`,
+and `/v1/logs`, protobuf or JSON, optionally gzip, bodies up to 8 MiB. There is
+no gRPC and no public endpoint.
+
+Listeners:
+
+- One inside each running app container's network namespace (every
+  container labeled `shed.service` whose service is of kind `app`;
+  databases and exporters get none), on `127.0.0.1:<otlp_port>` and, if the
+  namespace has IPv6 loopback, `[::1]:<otlp_port>`, since `localhost`
+  resolves to either. shed runs as root: `internal/netns` opens
+  `/proc/<pid>/ns/net` of the container's init process (`State.Pid`), and
+  on a goroutine locked to its OS thread saves the thread's own namespace,
+  `setns`es into the container's, listens, and `setns`es back. The thread
+  is unlocked only if restoring succeeded; otherwise it stays locked and the
+  runtime discards it. The socket stays bound to the container's
+  namespace, so apps reach the gateway at `localhost` without leaving it,
+  and host firewalls never see the traffic.
+- One on `127.0.0.1:<otlp_port>` on the host, for shed's own telemetry and
+  the proxy's edge spans.
+
+The gateway follows the containers from one Docker list (`shed.service`)
+every 5 s and whenever the Docker events follower sees such a container
+start or die. A listener is opened for each running app container without
+one (inspecting it for its PID), and closed when the container stops, goes
+away, or no longer runs in the namespace the listener was opened in: the
+gateway keeps the PID and the namespace's inode (`stat` of
+`/proc/<pid>/ns/net`) and compares them on every pass, so a restart, which
+gives the container a new process and namespace, reopens it there. If the
+app already listens on the port itself (`EADDRINUSE`), the container gets
+no listener; the gateway logs it once per distinct error, reports it as
+`ServiceTelemetry.listenerError`, and tries again on every pass. Any other
+failure is handled alike. When telemetry is turned off, the gateway's
+context ends and every listener closes.
+
+Attribution: each container listener carries its container's source (the
+service, its project, and the deployment in its `shed.deployment` label),
+refreshed on every pass so renames apply, and passes it to the handler in
+the request context. The `shed.*` attributes are set from it (`shed.source`
+= `otlp`); `service.name` is kept if the sender set one, else it becomes
+the service name. On the host loopback listener, records are attributed to
+shed (`shed.source` = `shed`), except edge spans: spans whose resource has
+no `shed.service.id` (shed's own resource always sets it; Caddy's has
+`webengine.name=Caddy`). An edge span is attributed by its request host,
+read from `server.address` (what Caddy's otelhttp sets), else `http.host`,
+else the host of `url.full`, lowercase without a port, through the domain
+table (reloaded on every pass), with `shed.source` = `edge`; the dashboard
+host and unrouted hosts go to shed with `shed.source` = `edge`.
+
+Masking: string attribute values, span status messages, and log bodies are masked with the saved
+values of every variable in the sender's project and the values its container
+was started with (the [build secret handling](#build-secret-handling) limits
+apply). shed's own records are masked with every project's values, like
+`ShedLog`. The value sets come from `internal/control` (`TelemetryMask`,
+`ShedMask`, `RuntimeMask`), the same code `ShedLog` and `RuntimeLogs` use;
+the gateway caches each masking function for 30 s, so a changed value is
+masked within 30 s. If one cannot be built while a
+request is attributed, the request answers 503.
+
+Caps: each service has a token bucket per signal (spans/s, log records/s),
+holding one second's worth, and a series cap (distinct sets of resource
+attributes, metric name, and data point attributes in the last hour).
+Records over a cap are dropped and the request is answered with an OTLP
+partial success naming the rejected count, so SDKs do not retry. Overrides
+live in `telemetry_caps`; the gateway reloads them and the default caps every
+5 s. shed itself has the default caps. Every drop increments
+`shed_telemetry_dropped_total{shed_service_id, signal, reason}` (signal
+`traces`, `metrics`, or `logs`; reason `rate_cap` or `series_cap`); the service page shows "dropping telemetry" while it rises.
+
+Span metrics: for spans of kind server or consumer the gateway records
+`shed_span_duration_seconds` (histogram) labeled with the service's `shed.*`
+labels (project and service IDs, names, and kind), `service_name` (the
+`service.name` of the span's resource, masked; at most 20 per service, the
+rest `other`), `span_name` (at most 200 names per service, the rest `other`),
+and `status_code` (`unset`, `ok`, or
+`error`). These drive the Traces dashboards, whose trace search takes its
+`service.name` from `service_name`. Span metrics and
+`shed_telemetry_ingested_total` are recorded only once the store accepted the
+batch, so a retried request is not counted twice.
+
+Forwarding: traces to VictoriaTraces and logs to VictoriaLogs (OTLP, with
+`VL-Stream-Fields`), metrics to VictoriaMetrics' OTLP endpoint. If a store
+does not accept the batch, the request answers 503 with `Retry-After: 5`.
+
+Injected variables, for every app while telemetry is on (a variable the user
+sets with the same name wins):
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:<otlp_port>
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_SERVICE_NAME=<service name>
+OTEL_RESOURCE_ATTRIBUTES=service.version=<commit sha or image>
+```
+
+The deployer asks the telemetry settings (`enabled`, the operator's intent,
+not whether the stack is up yet) when it resolves a deployment's variables,
+so variable listings show these as injected while telemetry is on.
+`http://localhost:4318` is also the OpenTelemetry SDKs' default endpoint.
+`OTEL_RESOURCE_ATTRIBUTES` is left out
+when there is neither a commit nor an image. `ServiceTelemetry.dropping`
+comes from `sum(increase(shed_telemetry_dropped_total{shed_service_id=…}[5m])) > 0`
+in VictoriaMetrics, false while telemetry is off or the store does not
+answer.
+
+### Container logs
+
+While telemetry is on, `internal/observability` follows the Docker logs
+(with timestamps) of every container labeled `shed.service` and ships each
+line to VictoriaLogs (`shed.source=container`) in batches of up to 1 s or
+1 MiB:
+
+- `_time` is Docker's timestamp; `stream` is `stdout` or `stderr`.
+- A line that is a JSON object has its top-level fields kept (at most 64);
+  `msg` or `message` becomes the message, `level`, `severity`, or `lvl` the
+  level, `trace_id` and `span_id` link to traces.
+- Otherwise the level is a leading `ERROR`, `WARN`, `INFO`, or `DEBUG` token,
+  if any. Lines are cut at 16 KiB.
+- Lines are masked like `RuntimeLogs` and count against the service's log cap.
+
+`log_cursors` holds the timestamp of each container's last acknowledged
+line (nanoseconds, as Docker reports it); after a restart of shed, following
+resumes 1 ns after it, so the last shipped line is not repeated (an unshipped
+line with exactly the same timestamp would be skipped). Lines Docker rotated
+away while shed was down are lost.
+
+The shipper lists `shed.service` containers every 5 s, follows each running
+one it does not follow yet, and stops following and deletes the cursor of
+containers that are gone. A follower ends when its container stops and starts
+again from where it read if the container runs again. A JSON line without
+`msg` or `message` keeps the whole line as the message; JSON fields named
+like the record's own (`_time`, `_msg`, `stream`, `level`, `shed.*`) are
+overwritten, and fields starting with `_` are dropped. Lines over the log cap
+are dropped (counted as `rate_cap`) but still advance the cursor. A batch the
+store refuses is retried every 5 s, holding the followers back; Docker keeps
+the output meanwhile.
+
+### Edge
+
+While telemetry is on, `internal/proxy` enables Caddy's access log on its
+server and sends it to a log writer module registered in the proxy package
+(`caddy.logging.writers.shed_access`) instead of a file. The writer parses
+each JSON entry into an `AccessEntry` and hands it to a callback. Caddy's own
+log (`caddy.log`) excludes the access logger. Turning telemetry on or off
+reloads the proxy with the last applied routes.
+
+For every entry, `internal/observability` resolves the host to a service
+through the domain table. The dashboard host maps to shed. Any other host is
+unrouted, and its label is `host="unrouted"` because clients choose the host
+freely. The table is read again after every route apply and every 30 s.
+The edge then:
+
+- records `shed_http_requests_total{host, method, code}`,
+  `shed_http_request_duration_seconds` (a histogram with the same labels
+  except `method`), and `shed_http_response_bytes_total{host}`. Each also
+  carries the service's `shed.*` labels and `shed_source="edge"` as data
+  point attributes. The path is never a label, and a method outside the
+  standard nine is `other`. An unrouted request has empty service labels.
+  VictoriaMetrics drops empty labels, so it counts under shed's own
+  resource labels (`shed_service_id="shed"`);
+- ships an access record (`shed.source=edge`, stream fields as in
+  [Label schema](#label-schema), `_msg` = `<method> <path> <status>`): client
+  IP (after `proxy.cloudflare` handling), method, host, path, query, status,
+  duration, bytes in and out, user agent, referer, TLS version, and trace ID
+  (fields `client_ip`, `method`, `host`, `path`, `query`, `status`,
+  `duration` in seconds, `bytes_in` (request body), `bytes_out` (response
+  body), `user_agent`, `referer`, `tls_version` such as `TLS 1.3`,
+  `trace_id`). Path, query, referer, and user agent are masked with every
+  project's values, like `ShedLog`. A value that appears only
+  percent-decoded is masked in decoded form. Unrouted records have empty
+  `shed.*` service fields. Request headers other than the user agent and
+  referer, and bodies, are not recorded.
+
+Metrics are recorded on the request's goroutine. Records go through a queue
+of 4096 to a worker that ships batches of up to 1000 records or 1 s to
+VictoriaLogs' JSON lines endpoint. When the queue is full, the record is
+dropped and counted as
+`shed_telemetry_dropped_total{signal="logs", reason="edge_queue_full"}` with
+the service's labels. Caddy is never blocked. A batch the store rejects is
+logged and dropped.
+
+Every route, the dashboard's included, also gets Caddy's tracing handler
+before `reverse_proxy`. The handler starts a server span named after the
+method, or continues an incoming `traceparent`. It forwards its own span as
+`traceparent` upstream, and exports OTLP/HTTP to
+`http://127.0.0.1:<otlp_port>/v1/traces`. The catch-all 404 for unrouted
+hosts has no tracing handler. Caddy's spans carry the host in `server.address`
+(port stripped), and their resource has `webengine.name = "Caddy"`, which
+tells them apart from shed's own spans on the loopback listener. Caddy reads
+its exporter settings (`OTEL_TRACES_EXPORTER`,
+`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_PROPAGATORS=tracecontext`) only from the process environment. Caddy
+creates its tracer provider when the first tracing handler is provisioned and
+shuts it down when the last one is removed. `internal/proxy` therefore sets
+these variables only for the duration of a config load, then restores the
+previous values. Processes shed starts later, such as builds, never inherit
+them.
+
+### Databases
+
+While telemetry is on, every database service with an active deployment, that
+is not stopped and recorded its resolved variables, gets an exporter container
+`shed-exp-<serviceID>` on its project network (no alias, label
+`shed.exporter=<serviceID>`, label `shed.exporter.spec` with the hash of its
+spec, 0.1 CPU, 64 MiB, restart `unless-stopped`). It connects to
+`<service name>:<port>` with credentials from the variables the active
+deployment runs with (`DeploymentRuntime.Env`), passed as environment variables
+and never as arguments. A worker registered with the Manager reconciles the
+exporters every 10 s: it creates the missing ones (pulling the image first),
+recreates one whose spec changed, starts one that exited, and removes one
+whose database is deleted, stopped, or has no active deployment. The Manager
+also removes every exporter when telemetry is disabled. Deleting a project
+first removes its exporters and holds the worker off that project until the
+deletion ends, because Docker refuses to remove a network with a container
+still attached.
+
+| Kind | Exporter (pinned tag@digest) | Flags | Credentials (env) |
+|---|---|---|---|
+| postgres | `prometheuscommunity/postgres-exporter:v0.20.1` | `--collector.stat_statements --collector.stat_statements.include_query`, only when the database was started with `pg_stat_statements` preloaded | `DATA_SOURCE_URI` (`<target>/<POSTGRES_DB>?sslmode=disable`), `DATA_SOURCE_USER`, `DATA_SOURCE_PASS` |
+| mysql | `prom/mysqld-exporter:v0.21.0` | `--mysqld.address=<target> --mysqld.username=root --collect.perf_schema.eventsstatements --collect.info_schema.innodb_metrics` | `MYSQLD_EXPORTER_PASSWORD` (`MYSQL_ROOT_PASSWORD`) |
+| mongo | `percona/mongodb_exporter:0.54.0` | `--collect-all` | `MONGODB_URI` (`mongodb://<user>:<password>@<target>/admin`) |
+| redis | `oliver006/redis_exporter:v1.96.0` | none (slowlog, keyspace, and memory are default) | `REDIS_ADDR`, `REDIS_PASSWORD` |
+
+The default collectors supply the rest (postgres `stat_database`, `locks`,
+`stat_bgwriter`, `wal`; mysql `global_status`; redis slowlog). The exporter
+for a postgres database started without the statistics arguments omits the
+`stat_statements` flags, so that a failing collector does not mark every
+scrape failed; it is recreated after the telemetry redeploy.
+`perf_schema.eventsstatementssum` only has grand totals, so mysql uses
+`eventsstatements` (per digest).
+
+The Manager owns `scrape.yaml`: a job `shed-telemetry` scrapes the three
+stores' own `/metrics` (labels of shed itself), which the Telemetry dashboard
+reads for store disk use (`vm_data_size_bytes`, `vl_data_size_bytes`,
+`vt_data_size_bytes`), and a job `shed-exporters` has one static config per
+exporter: target `<exporter address on the project network>:<exporter port>`
+(9187, 9104, 9216, 9121), scrape interval 15 s, and the labels
+`shed_project_id`, `shed_project_name`, `shed_service_id`, `shed_service_name`,
+`shed_service_kind`, `shed_deployment_id`, and `shed_source=exporter`. The
+worker hands the Manager the targets whenever they change, and the Manager
+rewrites the file atomically (rename) under the same lock that enable uses,
+so a reconciliation never drops them. VictoriaMetrics notices the new file
+within `-promscrape.configCheckInterval` (10 s). The host's firewall only
+needs to allow the host to reach container addresses, which it does.
+
+Query statistics are part of each database template's start arguments
+(`catalog.Template.Cmd`), whether or not telemetry is on:
+
+- postgres: `-c shared_preload_libraries=pg_stat_statements -c
+  pg_stat_statements.track=all -c log_min_duration_statement=250`; after each
+  activation the worker runs `CREATE EXTENSION IF NOT EXISTS
+  pg_stat_statements` in `POSTGRES_DB` through `docker exec` (once per
+  container, retried until it succeeds, so a restore, which recreates the
+  container on the restored data, gets it back).
+- mysql: `--performance-schema=ON --slow-query-log=ON --long-query-time=0.25`.
+  mysqld cannot log to `/dev/stderr` or a pipe ("Could not use /dev/stderr for
+  logging" and it turns the log off), so the start command is a script that
+  writes the log to `/tmp/slow.log`, copies it to stderr with `tail -F`, and
+  empties it once it passes 10 MiB, then `exec`s the image entrypoint.
+- mongo: `--profile=1 --slowms=250`.
+- redis: `--slowlog-log-slower-than 250000` after the existing arguments.
+
+Slow-query lines reach the logs through container log shipping. Each time
+telemetry is activated (enabled, or at boot while enabled), the worker
+redeploys, one at a time, each database whose active deployment was started
+without these arguments, as a deployment with trigger `telemetry`. "Started
+without" means the active deployment's recorded `Runtime.Cmd` differs from the
+template's `Cmd`. It reuses the deployment's image (`Deployer.RedeployAs`), so
+the database does not change version. A database with a stopped service or a
+start command of its own is skipped, and a failed redeployment is logged and
+leaves the previous deployment running.
+
+### Folders and dashboards
+
+`internal/grafana` builds dashboards in Go (embedded templates, each with a
+name and an integer version) and talks to Grafana's HTTP API as `shed`.
+Folders (nested):
+
+| Folder | UID | Holds |
+|---|---|---|
+| shed | `shed` | shed's internals, security, the default alert rules |
+| `<project name>` | `p-<projectID>` | the project overview |
+| `<project name>` / `<service name>` | `s-<serviceID>` | the service's dashboards |
+| Archived | `archived` | folders of deleted services and projects |
+
+Folder titles follow renames. A deleted service's folder moves under Archived
+as `<project> / <service> (deleted <date>)`, a deleted project's folder as
+`<project> (deleted <date>)`; their data ages out through retention.
+
+Each scope has one Overview dashboard whose concerns are rows of panels,
+rather than a dashboard per concern; only shed's Security dashboard stands
+apart. Dashboard UIDs are `<template>-<scope ID>` (e.g.
+`svc-overview-<serviceID>`); shed's own dashboards have no scope
+(`shed-security`). Grafana UIDs are at most 40 characters, so template names
+stay short: `svc-overview`, `proj-overview`, `shed-overview`, and
+`shed-security`. Dashboard titles are the template's ("Overview",
+"Security"), never a service or project name, so renames only retitle
+folders. A service's Overview links to its project's Overview, the
+project's Services table links each row to that service's Overview, and
+shed's two dashboards link to each other; links keep the time range.
+`grafana_dashboards` records, for each dashboard shed created, its folder,
+the template version, and the Grafana dashboard version that write
+produced. `observability.Dashboards` reconciles folders and dashboards as a
+manager worker, so only while telemetry is on: when the stack comes up
+(enable, boot while enabled, which is also how a shed upgrade's newer
+templates arrive), after `control` creates, renames, or deletes a project or
+service (it calls `Dashboards.Refresh`, which asks for a pass without
+blocking), every 10 minutes as a safety net, and a minute after a pass that
+failed. A pass ensures every folder with its title and parent (recreating
+one a user deleted), then decides each default dashboard with
+`grafana.Reconcile`:
+
+- Missing and never created: create it.
+- Missing but recorded: the user deleted it; leave it gone. The Telemetry page
+  offers "Restore default dashboards".
+- Present but not recorded (shed.db restored from an older backup): mark it
+  `customized`, keeping whatever is there.
+- Grafana version equals the recorded one and the template is newer:
+  overwrite and record the new versions.
+- Grafana version differs from the recorded one: someone saved it (or deleted
+  and recreated it); mark it `customized` and never overwrite it. The service
+  page shows "newer default available" when the template moved on; "Reset to
+  default" overwrites it and clears `customized`.
+
+Writes name the Grafana version they replace, so a save that lands between
+reading and writing makes the write fail (409) instead of being lost; the
+pass then leaves that dashboard to the next pass. Grafana keeps the version
+when a write does not change the dashboard.
+
+A recorded dashboard in a kept folder whose template shed no longer has (the
+Logs, HTTP, Traces, database, Deploys, API & MCP, Proxy, Host & Docker,
+Backups, Runtime, and Telemetry dashboards of earlier versions, now rows of
+an Overview) is retired: deleted from Grafana if its Grafana version is
+still the recorded one and it is not customized, left in place as the
+user's own otherwise, and its row deleted either way.
+
+Folders of recorded dashboards that no longer belong to a project or service
+are archived: project folders first (their service folders move with them),
+then service folders whose project still exists, titled from Grafana's
+current folder titles. A folder already under Archived, inside an archived
+project folder, or deleted by a user is left alone. Their rows are then
+deleted, so archiving happens once.
+
+`POST /api/telemetry/dashboards/{uid}/reset` writes the current template
+over the dashboard (creating it, and its folder, if missing), records the
+new versions, and clears `customized`; a UID that is not one of the current
+default dashboards answers 404. `POST /api/telemetry/dashboards/restore`
+runs a pass that also creates every default dashboard missing from Grafana,
+recorded or not, and leaves the others to the usual rules. Both answer 409
+while telemetry is off. In `ServiceTelemetry`, `dashboards` lists the
+service's default dashboards with their `/grafana/d/<uid>` URLs;
+`outdated` means customized and the template is newer than the recorded
+template version (unknown, so 0, for a dashboard marked customized without a
+record). `folderUrl` is `<server.url>/grafana/dashboards/f/s-<serviceID>/`.
+While telemetry is off, `folderUrl` is empty and both lists are empty.
+
+Templates:
+
+Service Overview rows, top to bottom:
+
+| Row | Services | Panels |
+|---|---|---|
+| Resources | all | status, deploy annotations, CPU and memory against limits, network, block I/O, restarts, OOM kills |
+| HTTP | apps | requests/s by status class, error ratio, p50/p95/p99 latency, bytes, top paths and client IPs (from edge records), per-domain variable |
+| Traces | apps | span rate, errors, and duration by span name, slowest traces |
+| Postgres | postgres | connections by state against `max_connections`, commits and rollbacks/s, cache hit ratio, row operations, locks, deadlocks, database size, WAL, top statements by total time, slow query log |
+| MySQL | mysql | connections against `max_connections`, queries/s by command, InnoDB buffer pool hit ratio, row operations, locks, top digests, slow query log |
+| MongoDB | mongo | operations/s by type, connections, WiredTiger cache, latency by operation, slow operations |
+| Redis | redis | commands/s, hit ratio, memory against `maxmemory`, evictions, clients, keys per database, slowlog |
+| Logs | all | volume by level, error rate, a searchable logs panel |
+
+The project Overview has a Services table, one row per service with status,
+CPU, memory, requests/s, error ratio, and error log count, each linking to the
+service's Overview, then CPU, memory, requests, and error logs by service.
+
+shed's Overview has host CPU, memory, and disk at the top, then rows:
+Deploys (stage durations, outcomes, queue depth, build cache use, image
+pulls); API & MCP (rate and latency by route, tool calls by agent, webhook
+deliveries); Proxy (edge totals, route applies); Host & Docker (host
+resources, container counts, Docker API latency); Backups (duration, size,
+failures, uploads); Runtime (goroutines, heap, GC, store query latency);
+Telemetry (ingest per signal, drops by reason, store disk); Log (shed's own
+log). Security is separate: audit timeline, sign-ins by outcome and IP,
+webhook signature failures, MCP calls per agent, container exec and OOM,
+egress first-seen destinations, edge top IPs, 4xx bursts, scanner paths.
+
+Annotations: deploy started, active, and failed, redeploys, restarts,
+crashes, stops, backups, and restores become Grafana annotations tagged
+`shed`, the event kind, `service:<serviceID>`, and `project:<projectID>`
+(neither for backups of shed.db). Packages report a `telemetry.Event` (kind,
+service, start, end for a span of time, text) through an `Events func`
+in their config, which `cmd/shed` points at `Dashboards.Annotate`:
+
+| Kind | Reported by | Time |
+|---|---|---|
+| `deploy.started`, or `redeploy` for a redeploy's deployment | the deployer, once the pipeline starts a deployment | start |
+| `deploy.active`, `deploy.failed` | the deployer, when the deployment ends (canceled and skipped ones are not marked) | started to finished |
+| `restart`, `stop` | the deployer, after `RestartService` or `StopService` succeeds | now |
+| `backup`, `backup.failed`, `restore`, `restore.failed` | the backup manager, when a job ends, scheduled or not | job start to end |
+| `crash` | the Docker events follower, for a service container's `die` that shed did not cause (`Security.Crashed`) | the event |
+
+The deployer and the backup manager are the single sources because every
+interface (API, MCP, webhook, schedules, retries) goes through them and
+they alone see outcomes; `control` sees neither asynchronous outcomes nor
+scheduled backups.
+Templates show them through a tag-filtered annotation query (`service:`,
+`project:`, or `shed` for shed's own dashboards); custom dashboards can add
+the same query.
+Writing an annotation is best effort: `Annotate` never blocks, queues up to
+256 events for one writer, drops events while telemetry is off or the queue
+is full, and a failed write is logged and dropped.
+
+Alert rules are provisioned from a file into folder shed, group
+`shed-defaults`, with no contact point configured: service restarted more
+than 3 times in 10 min, container OOM killed, host disk above 85%, host memory
+above 90% for 10 min, 5xx ratio above 5% for 5 min at more than 1 request/s,
+p95 latency above 2 s for 10 min, database connections above 80% of the
+maximum, deploy failed, backup failed, telemetry dropping records. Grafana does
+not allow editing provisioned rules; copy one to change it. Grafana files the
+rules under a folder by title and creates a missing one with a random UID, so
+shed writes the rules file only after creating folder `shed`, then calls
+`POST /api/admin/provisioning/alerting/reload`. Firing alerts
+(from Grafana's alert API) appear on the Telemetry page and on the affected
+service: an alert instance belongs to the service in its `shed_service_id`
+label (the default rules group by it), and has none without one.
+
+### shed's own telemetry
+
+`internal/telemetry` builds shed's tracer, meter, and logger providers
+(resource `service.name=shed`, `service.version`, `host.name`, and the
+`shed.service.id`, `shed.service.kind`, and `shed.source` attributes of
+"Label schema", all set to `shed`), exporting OTLP/HTTP to the
+loopback listener. The providers are switchable and start off: while
+telemetry is off the sampler drops spans, the log processor refuses records,
+and the exporters drop anything already queued, so nothing is exported or
+buffered. Providers also register the Go runtime metrics. At startup `cmd/shed`
+registers them as the OpenTelemetry globals (with the W3C trace context and
+baggage propagators), and instrumented packages call `otel.Tracer` and
+`otel.Meter` with their import path as the name. Tests leave the globals
+unset, so instrumentation is a no-op there. The gateway itself
+records metrics but no spans, so its own work does not feed back into it.
+
+Spans:
+
+- every HTTP request, named by its method and route pattern
+  (`GET /api/services/{id}`). Incoming trace context starts a new trace
+  linked to it. Event streams (`GET` with `Accept: text/event-stream`) and
+  protocol upgrades get no span and no HTTP metrics, since they last as long
+  as the client stays;
+- every MCP tool call (`tools/call <tool>`, without its arguments) and GitHub
+  webhook delivery (`github webhook`, with `github.event`,
+  `github.delivery`, and `outcome` once the signature is valid);
+- one `deploy` root span per deployment, linked to the request or webhook
+  span that queued it, with a child per stage that runs: `wait_for_ci`,
+  `build` or `pull`, `start`, `health_check`, and `activate`. Images are
+  loaded into the local engine, so there is no push stage. `build` holds
+  `git clone`, `railpack prepare`, and the build steps.
+  `deployments.trace_id` records the trace while spans are recorded;
+- build steps, read from BuildKit's plain progress output after masking:
+  one span per vertex, named by it, with `cached`;
+- Docker Engine calls, named by operation (`container_inspect`,
+  `image_pull`, …, or method and path without IDs), from the Docker client's
+  own instrumentation;
+- GitHub API and S3 calls, through instrumented HTTP clients that send no
+  trace context out;
+- 1Password calls, one span per SDK call (`1password get items`), since the
+  SDK makes its requests inside its WebAssembly core;
+- backups (`backup`: `write archive`, `upload`, `prune`) and restores
+  (`restore`: the pre-restore `backup`, `fetch archive`, `check archive`,
+  `replace data`);
+- store queries, under a recording span only: a driver wrapper records one
+  span per query, named by its first keyword, with the statement text as
+  `db.query.text`, never its arguments.
+
+Spans never carry secrets. URL attributes of outbound requests drop the user
+info and query, so clone URLs keep their installation token and presigned
+URLs their signature to themselves; the clone span records the repository
+URL without them. Stage and build step errors are recorded with variable
+values masked, as in the build log. 1Password spans carry no arguments,
+results, or error text. Server spans record the path, not the query. The
+GitHub App manifest conversion, whose code is in its URL path, is not
+traced.
+
+Metrics: Go runtime metrics from
+`go.opentelemetry.io/contrib/instrumentation/runtime` (`go_goroutine_count`,
+`go_memory_used_bytes{go_memory_type}`, `go_memory_gc_goal_bytes`,
+`go_memory_allocated_bytes_total`, `go_schedule_duration_seconds`), the
+OpenTelemetry HTTP server and client metrics, and:
+
+| Metric | Labels | Records |
+|---|---|---|
+| `shed_deployments_total` | `trigger`, `outcome` | deployments the pipeline ran, by final status (`active`, `failed`, `canceled`, `skipped`); not those canceled while queued |
+| `shed_deploy_stage_duration_seconds` | `stage` | stage durations, with the stage names above |
+| `shed_deploy_queue_depth` | | deployments queued or running |
+| `shed_build_steps_total` | `cached` | build steps that ended |
+| `shed_webhook_deliveries_total` | `event`, `outcome` | deliveries; `event` is `unverified` until the signature is checked; `outcome` is `accepted`, `ignored`, `unauthorized`, `throttled`, `rejected`, or `failed` |
+| `shed_route_apply_duration_seconds` | | loading a changed route set into Caddy |
+| `shed_backups_total` | `kind`, `outcome` | backups and restores (`kind` `backup` or `restore`) that `succeeded` or `failed` |
+| `shed_backup_bytes` | | archive sizes of successful backups (histogram) |
+| `shed_backup_duration_seconds` | `kind` | backup and restore durations (histogram) |
+| `shed_docker_request_duration_seconds` | `op` | Engine API requests until their response headers; requests that fail without a response are not timed |
+| `shed_store_query_duration_seconds` | | store queries, including reading their rows |
+| `shed_mcp_tool_calls_total` | `tool`, `client` | tool calls; `client` is the OAuth client's name |
+| `shed_signins_total` | `outcome` | dashboard sign-ins: `ok`, `denied`, `declined`, `invalid_state`, or `failed` |
+| `shed_telemetry_ingested_total` | `signal` | records the gateway accepted |
+| `shed_telemetry_dropped_total` | `signal`, `reason` | records the gateway dropped, with the sender's `shed_service_id` |
+
+Deployment, stage, build step, and service backup metrics also carry the
+service's `shed_*` labels (see [Label schema](#label-schema)); backups of
+shed.db carry shed's. Dashboards select shed's own metrics with
+`shed_service_id="shed"`, and these with `shed_source="shed"`.
+
+Logs: the slog handler fans out to the log file, stderr, the in-memory tail,
+and an OpenTelemetry bridge that attaches the trace and span IDs of the
+record's context. The deploy pipeline, webhook, and backups log with the
+`*Context` variants, so their records carry them. `shed.log` is unchanged.
+
+### Audit
+
+`audit_events` records one row per mutation, sign-in, denial, and
+security-relevant read, written by `internal/control` after the operation
+(outcome `ok` or `failed`, including requests it rejects as invalid), by
+`internal/auth` for sign-ins, grants, and denials, by `internal/api` for
+first-run setup and webhook denials, and by `internal/mcp` for tool calls. The actor comes
+from the request context (`internal/audit`): every HTTP request starts
+`anonymous`; `Require` makes it a signed-in user (`user`, login),
+`RequireBearer` an agent token (`agent`, login, with the OAuth client as
+`detail.client` and `detail.clientId`), and a webhook with a valid signature
+`github`. A context without an actor is shed itself (`system`, such as a push
+deployed on retry). Docker (`docker`) acts in the Docker events below.
+`actor_ip` is the client IP the proxy resolved, as for rate limits but
+without reducing IPv6 to its /64. `detail` holds names at the time of the
+event (service, project, host, mount path, vault) and changed field names or
+variable keys (`added`, `changed`, `removed`), never values: an updated start
+command is recorded as `fields: ["startCommand"]`, a new S3 secret as
+`fields: ["secretAccessKey"]`.
+
+| Action | When |
+|---|---|
+| `auth.signin`, `auth.signin.denied`, `auth.logout` | sign-in flow |
+| `setup.token.invalid`, `setup.github` | first-run setup |
+| `oauth.grant`, `oauth.denied`, `oauth.revoke` | agent authorization; `oauth.denied` also for a refused token request and an invalid bearer token |
+| `webhook.signature.invalid` | GitHub delivery with a bad signature |
+| `project.create`, `.rename`, `.delete` | |
+| `service.create`, `.update` (changed fields), `.delete`, `.stop`, `.start`, `.restart`, `service.fence.clear` | |
+| `service.variables.update` (changed keys), `service.variables.read`, `service.variables.resolved.read` | |
+| `deployment.create`, `.redeploy`, `.cancel` | manual, and each push deployed (not each deferred retry) |
+| `domain.create`, `.delete`, `volume.create`, `.delete` | |
+| `backup.run`, `.download`, `.restore`, `.delete`, `backup.policy.update`, `backup.settings.update`, `backup.key.read` | |
+| `onepassword.connect`, `.disconnect` | |
+| `update.download`, `.install`, `update.settings.update` | |
+| `audit.settings.update` | retention changed |
+| `telemetry.enable`, `.disable`, `.settings.update` (changed fields), `.data.delete`, `telemetry.component.restart`, `telemetry.dashboard.reset` (target: UID), `telemetry.dashboards.restore` | |
+| `telemetry.caps.update` (`overridden`) | a service's own caps set or cleared |
+| `mcp.call` (tool; arguments except query, operation, tags) | every MCP tool call |
+| `container.exec` (command), `container.oom` | Docker events |
+
+Denied events from anonymous actors are coalesced to one row per action and
+IP per minute, with `detail.count`. Rows older than the audit retention
+(setting `audit`, JSON `{retentionDays}`: default 365, 1 to 3650 days,
+`PUT /api/audit/settings`) are pruned at startup and hourly. Server → Audit
+lists them with filters. While telemetry is on, a shipper copies rows
+with an `id` above the `audit_mirror_cursor` setting into VictoriaLogs
+(`shed.source=audit`, the columns as fields) and advances the cursor after each acknowledged batch,
+so the mirror catches up after any outage. It reads up to 500 rows at a time,
+every 5 s (at once while a batch is full), and retries 5 s after a failure.
+A record's `_time` is the row's `ts`, its message `<action> <outcome>`, and
+its `shed.project.id` and `shed.service.id` the row's IDs (`shed` for rows
+without a service).
+
+### Docker events
+
+`internal/docker` reports the daemon's events through `Events(ctx, since, fn)`:
+`start`, `die` (with the exit code), `kill`, `restart`, `oom`, and
+`exec_create` of containers, and image `pull`. Docker cannot filter on one of
+several labels, so the stream is filtered by type and action, and callers
+select containers by their attributes. `Exec` also records the IDs of the
+execs it starts, in a set bounded to 4096 entries that forgets each after 10
+minutes (`IsOwnExec`), safe for concurrent use.
+
+`internal/observability` follows the stream for containers with a
+`shed.service`, `shed.exporter`, or `shed.telemetry` label from `Run` until
+shutdown, whether telemetry is on or not (`Manager.AddAlways` registers
+workers with that lifetime, next to `AddWorker`, whose workers run only while
+telemetry is on). When the stream breaks it reconnects with a backoff from 1
+s to 30 s, which a stream that lasted a minute resets, asking for events
+after the last one handled. Events that happened while shed was not running
+are not seen. A container maps to its service by `shed.service` (or
+`shed.exporter`); containers of the stack and others belong to `shed`.
+
+- `exec_create` becomes a `container.exec` audit event (actor `docker`, no
+  IP, target the container ID, `detail.command`, `detail.container`,
+  `detail.service`), except an exec shed started itself (backups, dumps,
+  `CREATE EXTENSION`) and a run of the container's own health check. The
+  command is the one in the event's action, which is the arguments joined by
+  spaces, without quoting (the exec inspect result has no command), cut at
+  2 KiB. The daemon announces an exec before the call that created it has
+  returned its ID, so the event waits a second and then asks `IsOwnExec`.
+  Health checks are told apart by comparing the command with the container's
+  configured health check, rendered the way the daemon renders it
+  (`/bin/sh -c <cmd>` for `CMD-SHELL`), because the daemon announces them like
+  any exec.
+- `oom` becomes a `container.oom` audit event (outcome `failed`).
+- while telemetry is on, `start`, `die`, `kill`, `restart`, `oom`, and image
+  `pull` are also log records (`shed.source=docker`, `event`, `container`,
+  `container.id`, `image`, `exit_code` for `die`, the container's
+  `shed.deployment.id`; level `warn` for a non-zero exit and for `kill`,
+  `error` for `oom`; an image pull belongs to `shed`), written to VictoriaLogs
+  as they happen; a write that fails is logged and dropped.
+  `shed_container_restarts_total` counts a start of a container that has
+  started or died since shed began following (restart policies, `docker
+  restart`, and a start after a stop; the daemon sends no `restart` event for
+  a policy restart, so that event is only logged), and
+  `shed_container_oom_kills_total` counts `oom`. Both carry the service's
+  `shed_*` labels as data point attributes.
+
+The follower also calls `Security.Crashed(Death{ServiceID, Container,
+ExitCode, OOM})` for a container with a `shed.service` label that dies without
+a `kill` event since it started (the daemon sends one before the die of a
+container that was stopped or restarted) and either exited non-zero or was
+OOM killed. `cmd/shed` turns each into a `crash` annotation ("exited with
+code N" or "killed for running out of memory").
+
+For every `start` and `die` of a container with a `shed.service` label it
+calls the functions registered with `Manager.OnServiceContainer`, whether
+telemetry is on or not; `cmd/shed` registers the gateway's `Kick`, so a
+listener opens or closes right away instead of on the next 5 s pass (see
+[Ingest](#ingest)). They must not block.
+
+### Egress
+
+While telemetry is on, every 10 s `internal/host` dumps the conntrack table
+(netlink, `github.com/ti-mo/conntrack`: pure Go, on `mdlayher/netlink`, with
+the per-direction counters) into plain `host.Flow` values (protocol, original
+and reply tuples, packets and bytes in both directions), and
+`internal/observability` keeps the flows whose original source is the address
+of a container with a `shed.service` label (listed from Docker each interval,
+every network) and whose destination is neither loopback nor in the subnet
+of any Docker network. It aggregates them per service, destination address,
+port, and protocol as the change since the previous dump, so long-lived
+connections are not counted twice:
+
+- a connection is keyed by protocol and original tuple; a counter lower than
+  before is a new connection with the same tuple. A connection counts as
+  active when it moved packets or appeared since the previous dump. The first
+  dump after enabling is only a baseline: it adds no traffic, since
+  connections already open carry their whole history;
+- ships one record per aggregate with activity and interval
+  (`shed.source=egress`, `dst`, `dst_port`, `proto`, `packets` and `bytes`
+  sent, `packets_in` and `bytes_in` received, `flows`) (bytes need
+  `net.netfilter.nf_conntrack_acct=1`, which shed sets on enable by writing
+  `/proc/sys/net/netfilter/nf_conntrack_acct`, and does not restore; it only
+  affects connections that begin afterwards, so the others have no bytes);
+- increments `shed_egress_bytes_total{shed_service_id, proto, …}` by the
+  bytes sent;
+- ships an `egress.first_seen` record (level `warn`, `event=egress.first_seen`,
+  message `egress.first_seen <addr>:<port>`) the first time a service
+  reaches a destination address and port (any protocol) not reached in the
+  last 7 days, including by connections that were open before the first dump.
+  The seen set is in memory, holds at most 65536 destinations (the longest
+  unreached is forgotten first), and is seeded from VictoriaLogs on enable by
+  a `stats by (shed.service.id, dst, dst_port)` over the egress records of
+  the last 7 days; if that fails, destinations are reported again.
+
+Without `CAP_NET_ADMIN` (`host.ErrNotPermitted`) or the `nf_conntrack`
+module (`host.ErrConntrackUnavailable`) the worker logs the failure once and
+retries every interval.
+
+Destinations are addresses: containers resolve names through Docker's
+embedded DNS, which forwards from the host, so lookups are not attributed.
+
+### Built-in charts
+
+While telemetry is on (`observability.Manager.OnEnabled` calls
+`metrics.Collector.SetRemote`), the metrics sampler pushes each tick to
+VictoriaMetrics in one `ImportPrometheus` call instead of writing
+`metric_samples` and `host_samples`. Series, stamped with the tick's time:
+
+- per service, with the service's `shed.*` labels (`shed_source="sampler"`):
+  `shed_container_cpu_percent`, `shed_container_memory_bytes`,
+  `shed_container_network_{rx,tx}_bytes_per_second`,
+  `shed_container_disk_{read,write}_bytes_per_second`, and the limits of its
+  running containers, summed, `shed_container_cpu_limit_percent` and
+  `shed_container_memory_limit_bytes` (0 = unlimited);
+- the host, with `shed_service_id="shed"`: the same names with `shed_host_`
+  in place of `shed_container_`, plus `shed_host_memory_total_bytes`,
+  `shed_host_disk_used_bytes`, and `shed_host_disk_total_bytes`.
+
+A tick the store refuses is written to SQLite instead, so a failing store
+leaves no gap. `/api/services/{id}/metrics` and `/api/host/metrics` then
+query VictoriaMetrics with the same 180 buckets, widths, and window rules.
+Each metric is one range query, `avg(avg_over_time(<metric>{shed_service_id="…"}[<width>s] offset 1ms))`,
+evaluated at `from + (i+1) × width`, which are multiples of the width: the
+store's `(t − width, t]` window shifted back 1 ms covers exactly the whole
+seconds of SQLite's `[from + i × width, from + (i+1) × width)`, so both paths
+bucket the same samples the same way (`avg` merges the series a rename
+splits). The CPU and memory limits shown with the chart still come from
+Docker. If the query fails, finds nothing in the window, or telemetry is off,
+they read SQLite, which has a gap for the time telemetry was on.
+
+### Log history and trace links
+
+`GET /api/services/{id}/logs/history` searches the service's stored logs
+(container and OTLP) across deployments, newest first.
+
+- `q` is parsed by shed into LogsQL: space-separated terms, each a word, a
+  `"quoted phrase"` (with `\"` and `\\`), or `field:value` /
+  `field:"quoted value"` (field names are letters, digits, `_`, `.`, `-`;
+  `http://x` stays a word). Every term becomes a quoted literal, joined with
+  `AND`: no operators, wildcards, pipes, parentheses, or negation reach the
+  store, and `or` is just a word. At most 512 bytes and 16 terms (400
+  beyond).
+- The query is always `_stream:{"shed.service.id"="<id>"} AND <terms> AND <level>`.
+  `level` (`debug`, `info`, `warn`, `error`) matches the `level`, `severity`,
+  `lvl`, or `severity_text` field case-insensitively, with the usual synonyms
+  (`warning`; `err`, `fatal`, `critical`), or an OTLP `severity_number` in
+  the level's range (`debug` 1–8, `info` 9–12, `warn` 13–16, `error` 17–24,
+  which takes in fatal). VictoriaLogs stores an OTLP record's severity in
+  `severity_text` and `severity_number`; a record's level is the first of
+  those text fields that is set, else its number's level. The MCP
+  `error_logs` tool uses the same `error` filter, and the Grafana error
+  panels match `severity_text` and `severity_number` alike.
+- `from` and `to` are RFC 3339 times; `limit` defaults to 100, at most 500.
+  `next` in the page is the RFC 3339 time of its oldest record when the page
+  is full, else `""`; passing it as `before` returns records older than it
+  (by one nanosecond, so lines sharing that exact timestamp can be skipped).
+- 404 for an unknown service, 409 while telemetry is off, 400 for a bad
+  parameter or search.
+
+The service Logs tab shows Live and History modes while telemetry is on.
+History has a search box, a level filter, a time range (1 h to 7 d), "Load
+older", and a Trace link on records with a `traceId`.
+
+Deployments started while telemetry is on carry `traceId`; the build log
+(deployment dialog) shows "View trace", linking to
+`GET /api/telemetry/trace/{traceId}`. The ID must be 32 lowercase hex
+characters (400), and telemetry must be on (409). It answers 302 to a
+relative Location on the Grafana proxy:
+
+```
+/grafana/explore?schemaVersion=1&orgId=1&panes={"trc":{"datasource":"shed-traces",
+  "queries":[{"refId":"A","datasource":{"type":"jaeger","uid":"shed-traces"},"query":"<traceId>"}],
+  "range":{"from":"now-<traces retention>d","to":"now"}}}
+```
+
+(`panes` URL-encoded.) Grafana 13 builds its own Explore links this way
+(`schemaVersion` 1, `panes` keyed by a three-letter ID); the Jaeger data
+source reads a trace ID from `query`. Dashboards are linked by their
+deterministic UIDs (`/grafana/d/<uid>`) from the project, service, and
+deployment pages.
+
+### Agents
+
+The MCP server gains telemetry tools (see [MCP](#mcp)); the instructions it
+sends describe the label schema and give sample queries. Results come from
+the stores as ingested (already masked); `query_logs` and `error_logs` mask
+every field again with the saved variable values of every service, the set
+`ShedLog` uses, to cover records ingested before a variable existed. While
+telemetry is off, every telemetry tool except `audit_events` and
+`telemetry_status` (which reports `enabled: false`) answers with `isError`
+and `telemetry is off`. Store failures are `isError` with
+`<op>: the store did not answer`; a query the store rejects returns its
+message.
+
+JSON cannot carry NaN or infinity, so `query_metrics` encodes them as `null`
+(a series' values are `[unix seconds, number | null]`). VictoriaMetrics itself drops NaN points from results (`0/0` answers an empty series), so `null` shows up only for infinities and for NaN a store does return. A range query's
+`step` is raised to the larger of 1 s and what keeps it within 500 points;
+the result's `stepSeconds` says which was used. `top_queries` reads
+`pg_stat_statements_{calls,seconds,rows}_total` (Postgres, keyed by
+`queryid` and joined with `pg_stat_statements_query_id{queryid, query}`,
+which `--collector.stat_statements.include_query` adds, for the text) or
+`mysql_perf_schema_events_statements_{total,seconds_total,rows_sent_total}`
+(MySQL, by `digest_text`), summed per statement text for the service; other
+kinds are rejected. `list_dashboards` lists Grafana's dashboards through the
+dashboards worker, which marks shed's defaults `customized` or `outdated`
+from its `grafana_dashboards` records. `slow_requests` reads the `shed.source=edge` records (`duration`
+in seconds) with `quantile` and `sort by (duration desc)`. `search_traces`
+with a `service_id` filters on the resource attribute `shed.service.id` (Jaeger tag `resource_attr:shed.service.id`) and, since the Jaeger API searches one service name at a time, asks about each known service (at most 50).
+
 ## GitHub
 
 ### Setup (first run)
@@ -1046,9 +2209,32 @@ from GitHub or deployed manually.
 
 ## Releases and updates
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds the
-dashboard once and `shed` for `linux/amd64` and `linux/arm64`
-(`CGO_ENABLED=0`, `-X main.version=<tag>`) and publishes a GitHub release
+A release is cut by committing a new `## vX.Y.Z - date` section at the top
+of `CHANGELOG.md` to `main`. `.github/workflows/release.yml` runs on pushes to
+`main` that change `CHANGELOG.md`; when the newest section's version has no
+tag yet, it runs CI and then publishes that
+version with the section's body as the notes. The **Prepare release**
+workflow (`prepare-release.yml`, run by hand with a version) writes that
+section with `.github/scripts/release-notes.sh` from the commits since the
+last stable tag and opens a pull request with it; merging the pull request
+releases. Release notes follow `.github/release-notes.md`.
+
+`.github/workflows/nightly.yml` runs daily at 07:00 UTC and on demand. When
+`main` has commits since the newest tag, it publishes them as the pre-release
+`vX.Y.Z-nightly.N`, where `vX.Y.Z` is the patch release after the newest
+stable tag and `N` counts up from 1. It publishes only once CI passes. It
+also runs the integration tests (the `integration` build tag), which don't
+block the release yet, and its notes are written from the commits since the previous tag and
+not added to `CHANGELOG.md`. While the nightly or its integration tests
+fail it keeps one open issue,
+"Nightly release failing", and closes it on the next success. Nightlies are
+never deleted.
+
+Both call `.github/workflows/_release.yml`, which builds the dashboard once
+and `shed` for `linux/amd64` and `linux/arm64` (`CGO_ENABLED=0`,
+`-X main.version=<tag>`) in a job with no secrets, signs `checksums.txt` in a
+job that gets only the built files and the minisign key, and publishes a
+GitHub release (a pre-release, not marked latest, for tags with a suffix)
 with:
 
 - `shed_<version>_linux_<arch>.tar.gz` (version without the `v`), holding
@@ -1058,21 +2244,48 @@ with:
   the `MINISIGN_SECRET_KEY` repository secret
 - `install.sh`
 
-The release notes are the tag's `## vX.Y.Z - date` section of `CHANGELOG.md`;
-the release fails if there is none, so add the entry before tagging. The
-dashboard shows those notes for the latest release.
+The archives get GitHub build provenance attestations
+(`gh attestation verify <archive> --repo kyledickey/shed`). A stable release
+also moves the `stable` branch to its commit; shed.land deploys from
+`stable`, so the public site matches the latest stable release. The
+dashboard shows the latest release's notes.
 
-Tags with a pre-release suffix (`v1.2.0-rc.1`) publish pre-releases, which
-the update check ignores. `.github/workflows/ci.yml` runs gofmt, vet,
-`go test -race`, the dashboard checks, tests, and build (failing if
-`routeTree.gen.ts` is stale), and shellcheck on every pull request and push
-to `main`.
+The notes script runs an OpenCode agent (`opencode-ai`; model from the
+`NOTES_MODEL` repository variable, default `opencode-go/kimi-k3`; key from the
+`OPENCODE_API_KEY` secret) that may only read the repository, run `git log`,
+`git show`, and `git diff`, and write files, in a job with a read-only token.
+If it fails, the notes are the list of commits.
 
-`internal/update` checks `GET https://api.github.com/repos/<repo>/releases/latest`
-one minute after start and then every 6 hours; `POST /api/update/check` checks
-now. A release is newer when its tag is a greater semver than the running
-version. Development builds (`version` not a semver tag) report
-`unsupported` and never download or install.
+`.github/workflows/ci.yml` runs on every pull request and push to `main`:
+gofmt, vet, `go test -race`, and govulncheck when Go files change; the
+dashboard checks, tests, and build (failing if `routeTree.gen.ts` is stale)
+when `web/` changes; a build of both release binaries with the real
+dashboard, uploaded as an artifact; shellcheck, actionlint, and zizmor. On
+pull requests it comments the binary and dashboard sizes against the base.
+`ci-ok` fails if any job failed and is the check to require. Jobs run on Namespace runner profiles: `namespace-profile-shed-sm`
+(2 vCPU, 4 GB) for small jobs, `shed-md` (4 vCPU, 8 GB) for Go tests,
+builds, the dashboard checks (oxlint's allocator needs more than 4 GB), and
+the notes agent, and `shed-lg` (8 vCPU, 16 GB) for the
+integration tests. Dependabot
+updates actions, Go modules, and dashboard packages weekly, waiting 7 days
+after a release, except `vite` and `vite-plus`, which `bunx vp migrate`
+updates together.
+
+`internal/update` checks for the latest release on the update channel one
+minute after start and then every 6 hours; `POST /api/update/check` checks
+now. The channel is `update.channel` in `settings`, `stable` or `nightly`;
+unset, it is `nightly` when the running version has a semver pre-release
+suffix (`v1.3.0-nightly.4`) and `stable` otherwise. `stable` checks
+`GET https://api.github.com/repos/<repo>/releases/latest`, which excludes
+drafts and pre-releases. `nightly` lists
+`GET https://api.github.com/repos/<repo>/releases?per_page=30` and takes the
+highest semver tag that is not a draft, stable releases included. A release
+is newer when its tag is a greater semver than the running version, so shed
+never downgrades: switching from `nightly` to `stable` offers no update until
+a stable release is newer than the running nightly. Changing the channel
+discards the latest release and any staged download, then checks again.
+Development builds (`version` not a semver tag; `make build` stamps
+`dev-<git describe>`) report `unsupported` and never download or install.
 
 Downloading fetches `checksums.txt` and its signature, verifies the signature
 with the minisign public key built into shed, downloads the archive for
@@ -1147,9 +2360,14 @@ POST   /api/services/{id}/start                 → Service  (409 if never deplo
 POST   /api/services/{id}/restart               → Service  (409 if stopped, nothing deployed, or fenced)
 POST   /api/services/{id}/restore-fence/clear   → Service  (drop a failed restore's fence, keep data; 409 while held)
 
-GET    /api/services/{id}/variables             → Record<string,string>
-PUT    /api/services/{id}/variables  Record     → Record  (replace all)
-GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment)
+GET    /api/services/{id}/variables             → Record<string,string>  (from the 1Password item when connected; 409 if it is missing; 502 if 1Password fails)
+PUT    /api/services/{id}/variables  Record     → Record  (replace all; writes the 1Password item when connected, creating it if missing)
+GET    /api/services/{id}/variables/resolved    → Record<string,string>  (references expanded, incl. injected; commit of active deployment; 409 if a needed 1Password item is missing; 502 if 1Password fails)
+
+GET    /api/onepassword                         → OnePassword
+POST   /api/onepassword/vaults   {token}        → OnePasswordVault[]  (vaults the token can access, by name; 400 {error} if 1Password rejects the token; 502 if 1Password fails)
+PUT    /api/onepassword          {token, vault?} → OnePassword  (connect to vault, an ID, or the token's only vault: create the items, move variables out of shed.db; 400 {error} if 1Password rejects the token or the vault is not one it can access, none, or one of several; 409 if already connected; 502 if 1Password fails)
+DELETE /api/onepassword                         → OnePassword  (disconnect: copy variables back into shed.db; 409 if an item is missing, 502 if 1Password fails, nothing changed)
 
 POST   /api/services/{id}/domains   {host?}     → Domain  (no host = generate; Shed-Routes: pending if route application fails)
 DELETE /api/domains/{id}                        204 (Shed-Routes: pending if route application fails)
@@ -1184,8 +2402,23 @@ GET    /api/backups/settings/key                → { identity: string }  (age s
 GET    /api/update                              → UpdateStatus
 POST   /api/update/check                        → UpdateStatus  (checks GitHub now; a failed check is reported in error; 409 if unsupported or busy)
 POST   /api/update/download                     202 → UpdateStatus  (409 if unsupported, no newer release, or busy)
-PUT    /api/update/settings  {autoDownload}     → UpdateStatus
+PUT    /api/update/settings  {autoDownload?, channel?}  → UpdateStatus  (at least one; channel "stable" or "nightly", 400 otherwise)
 POST   /api/update/install                      202 → UpdateStatus  (state restarting; 409 if nothing is downloaded or busy; then shed restarts)
+
+GET    /api/services/{id}/logs/history?q=&level=&from=&to=&before=&limit=  → LogPage  (see Telemetry → Log history; 400 for a bad parameter, 409 if telemetry is off)
+GET    /api/services/{id}/telemetry             → ServiceTelemetry
+PUT    /api/services/{id}/telemetry  {caps: TelemetryCaps | null} → ServiceTelemetry  (null = defaults; 400 if a cap is below 1)
+GET    /api/telemetry                           → Telemetry
+PUT    /api/telemetry           TelemetrySettings → Telemetry  (enable, disable, retention, caps; 400 if out of bounds; reconciles in the background)
+POST   /api/telemetry/components/{name}/restart → Telemetry  (409 if telemetry is off or the container does not exist yet; 404 for an unknown name)
+DELETE /api/telemetry/data                      204  (containers, volumes, dashboards; 409 while enabled)
+POST   /api/telemetry/dashboards/{uid}/reset    204  (overwrite with the current default; 404 if not shed's)
+POST   /api/telemetry/dashboards/restore        204  (recreate default dashboards the user deleted)
+GET    /api/telemetry/trace/{traceId}           302 → Grafana Explore  (400 unless 32 hex characters, 409 if telemetry is off)
+GET    /api/audit?before=&limit=&actor=&action=&service=&outcome=  → AuditPage  (newest first; limit default 100, at most 500; actor = login or actor kind; action = action or dotted prefix; service = service ID; 400 for a bad number or outcome)
+GET    /api/audit/settings                      → AuditSettings
+PUT    /api/audit/settings      AuditSettings   → AuditSettings  (400 unless 1 to 3650 days)
+GET    /grafana/*, other methods                Grafana, reverse-proxied as the signed-in user (see Telemetry → Grafana)
 
 GET    /api/github/repos                        → Repo[]
 GET    /api/github/repos/{owner}/{repo}/branches → string[]
@@ -1230,7 +2463,11 @@ off; the Origin check and the bearer token take its place.
 
 `initialize` returns instructions that explain projects, services,
 deployments, and how to diagnose a failed deploy. Every tool is annotated
-`readOnlyHint` and calls a `control.Plane` method. Results are compact JSON
+`readOnlyHint` and calls a `control.Plane` method. Every call is recorded as
+an `mcp.call` audit event of the agent, with the tool, its arguments, and
+`service_id` as the event's service. Only IDs, repository names, audit filters,
+times, durations, and limits are recorded (an allowlist of argument names); a query, span name, or tags
+can hold a secret being looked for and are left out. Results are compact JSON
 (camelCase; empty strings, zero settings, and false flags left out) as both
 `structuredContent` and a text block, except the log tools, which return the
 lines as one text block. Not-found, invalid, and conflict errors become tool
@@ -1251,19 +2488,34 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `list_variables` | `service_id` | `{variables: [{name, injected?, reference?}], resolveError?}` (`VariableNames`): names only |
 | `list_backups` | `service_id` | `{policy, backups (newest 20), omitted?, restore?}` |
 | `shed_log` | `lines?` | text: last lines of shed's own log (`ShedLog`) |
-| `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, unsupported?}` |
+| `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, channel, unsupported?}` |
 | `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
 | `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
+| `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
+| `telemetry_status` | — | `{enabled, components: [{name, state, version, error?}], ingest: {spansPerSecond, logsPerSecond, pointsPerSecond}, dropped: [{reason, signal, count}]}`; works while telemetry is off |
+| `query_metrics` | `query` (MetricsQL), `time?` or `start?`/`end?`/`step?` | `{resultType, stepSeconds?, series: [{labels, values: [[t, v]]}], truncated?}`; `t` is Unix seconds, `v` a number or `null` (NaN, ±Inf); at most 500 series × the newest 500 points |
+| `query_logs` | `query` (LogsQL), `start?`, `end?`, `limit?` (default 200, at most 2000) | text: one JSON record per line, newest first, values masked, fields cut at 2000 characters, the oldest records dropped beyond 256 KiB with a `_note` line |
+| `search_traces` | `service_id?`, `operation?`, `min_duration?`, `max_duration?` (durations such as `250ms`), `tags?` (object), `start?`, `end?`, `limit?` (default 20, at most 100) | `{traces: [{traceId, service, name, start, durationMs, spans, errors}]}` |
+| `get_trace` | `trace_id` | `{spans: [{spanId, parentId, service, name, kind, start, durationMs, status, attributes}], omitted?}` (at most 1000 spans) |
+| `error_logs` | `service_id`, `since?` (default 1h), `limit?` (default 200, at most 2000) | text: error-level records of the service as `query_logs` returns them |
+| `slow_requests` | `service_id`, `since?` (default 1h), `limit?` (default 20, at most 100) | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, clientIp, traceId}]}` |
+| `top_queries` | `service_id` (a database) | `{queries: [{query, calls, totalMs, meanMs, rows}]}` from the exporter's statement statistics |
+| `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url, customized?, outdated?}]}`; `url` is absolute under `server.url`; `customized` marks a default dashboard a user saved, `outdated` one whose default changed since |
+
+Times accept RFC 3339 or a duration before now (`15m`, `24h`). Telemetry
+tool instructions describe the [label schema](#label-schema) and sample
+queries.
 
 `lines` defaults to 200 and is capped at 2000. Log lines are cut at 2000
 characters, and the oldest lines are dropped to keep a log result under
 256 KiB, with a note saying how many.
 
-Secrets: no tool returns a variable value, the resolved variables, the age
-key, S3 credentials, or a backup archive, and none changes anything. Log
+Secrets: no tool returns a variable value, the resolved variables, a
+1Password token, the age key, S3 credentials, or a backup archive, and none changes anything. Log
 text is masked before it reaches the tools: `BuildLog` masks the values the
 deployment's container was started with, the saved values of every service in
-its project, and the service's variables as they resolve now;
+its project, and the service's variables as they resolve now (without
+1Password; its values are covered by the container's);
 `RuntimeLogs` masks the values the running container was started with;
 `ShedLog` masks the saved values of every service's variables (references
 unexpanded, so a database password is masked wherever it appears, including
@@ -1329,9 +2581,10 @@ type ServicePatch = Partial<Pick<Service,
 
 type Deployment = {
   id: string; serviceId: string; status: DeploymentStatus;
-  trigger: "push" | "manual" | "redeploy" | "create";
+  trigger: "push" | "manual" | "redeploy" | "create" | "telemetry";
   commitSha: string; commitMessage: string; commitAuthor: string;
   image: string; error: string;
+  traceId: string;          // deploy trace, "" if telemetry was off
   imageAvailable?: boolean; // only in lists: image remains on this server
   createdAt: string; startedAt: string | null; finishedAt: string | null;
 };
@@ -1339,6 +2592,9 @@ type Deployment = {
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
 type Repo = { fullName: string; defaultBranch: string; private: boolean };
+// The token is write-only: PUT /api/onepassword takes it.
+type OnePassword = { connected: boolean; vault: string; items: number };
+type OnePasswordVault = { id: string; name: string };
 
 // Container resource usage. Sample i is at start + i*step seconds; series
 // are the same length, oldest first, null where nothing was running.
@@ -1424,8 +2680,9 @@ type Release = {
   publishedAt: string;
 };
 type UpdateState = "idle" | "checking" | "downloading" | "restarting";
+type UpdateChannel = "stable" | "nightly";
 type UpdateStatus = {
-  current: string;                     // running version, e.g. "v1.3.2" or "dev"
+  current: string;                     // running version, e.g. "v1.3.2" or "dev-v1.3.2-4-gabc1234"
   latest: Release | null;              // null until a check succeeds
   available: boolean;                  // latest is newer than current
   checkedAt: string | null;            // last successful check
@@ -1433,8 +2690,63 @@ type UpdateStatus = {
   staged: string;                      // verified version ready to install, "" if none
   error: string;                       // last check or download failure, "" if none
   autoDownload: boolean;
+  channel: UpdateChannel;
   unsupported: string;                 // why this build cannot update itself, "" if it can
 };
+type TelemetryCaps = { spansPerSecond: number; logsPerSecond: number; series: number };
+type TelemetrySettings = {
+  enabled: boolean;
+  metricsRetentionDays: number;        // 30
+  logsRetentionDays: number;           // 14
+  tracesRetentionDays: number;         // 14
+  diskLimitGB: number;                 // logs + traces, 20
+  defaultCaps: TelemetryCaps;
+};
+type TelemetryComponentName = "metrics" | "logs" | "traces" | "grafana";
+type TelemetryComponent = {
+  name: TelemetryComponentName;
+  state: "running" | "starting" | "stopped" | "failed";
+  version: string;
+  error: string;                       // "" if none
+  cpuPercent: number | null;
+  memoryBytes: number | null;
+  memoryLimit: number;
+  diskBytes: number | null;            // from the store's own metrics; null for grafana
+};
+type Telemetry = {
+  settings: TelemetrySettings;
+  components: TelemetryComponent[];    // empty while never enabled
+  ingest: { spans: number; logs: number; points: number };   // per second, last minute
+  droppedLastHour: { reason: string; signal: string; count: number }[];
+  firingAlerts: { name: string; serviceId: string; since: string }[];
+  grafanaUrl: string;                  // "<server.url>/grafana/"
+  otlpEndpoint: string;                // "http://localhost:4318"
+};
+type ServiceTelemetry = {
+  caps: TelemetryCaps;                 // effective
+  overridden: boolean;
+  dropping: boolean;                   // records dropped in the last 5 minutes
+  listenerError: string;               // why the gateway cannot listen in its container; "" if it can
+  folderUrl: string;
+  dashboards: { uid: string; title: string; url: string; customized: boolean; outdated: boolean }[];
+  firingAlerts: { name: string; since: string }[];
+};
+type LogRecord = {
+  time: string; source: "container" | "otlp"; stream: "stdout" | "stderr" | "";
+  level: string; message: string; deploymentId: string; traceId: string;
+  fields: Record<string, string>;
+};
+type LogPage = { records: LogRecord[]; next: string };   // next = before cursor, "" at the end
+type AuditEvent = {
+  id: number; ts: string;
+  actorKind: "user" | "agent" | "github" | "system" | "docker" | "anonymous";
+  actor: string; actorIp: string; action: string;
+  outcome: "ok" | "failed" | "denied";
+  projectId: string; serviceId: string; target: string;
+  detail: Record<string, unknown>;
+};
+type AuditPage = { events: AuditEvent[]; next: number | null };  // pass as before
+type AuditSettings = { retentionDays: number };                    // 365
 type OAuthRequest = {                  // pending agent authorization, for the consent page
   id: string;
   clientName: string;
@@ -1488,7 +2800,8 @@ Log snapshots for agents (`control.Plane.BuildLog`, `RuntimeLogs`, `ShedLog`)
 return at most 2000 lines and never follow. A build log snapshot is masked
 again when read, with the values its container started with, the saved values
 of every variable of every service in the project, and the service's own
-variables as they resolve now, so values saved after the build are masked too.
+variables as they resolve now (without reading 1Password), so values saved
+after the build are masked too.
 A runtime snapshot masks like the runtime stream. A snapshot of shed's own log
 masks the saved values of every service's variables.
 

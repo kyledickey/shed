@@ -55,6 +55,12 @@ type release struct {
 	status  int    // of the latest-release endpoint; 0 means 200
 }
 
+// listed is a release in the fake GitHub release list.
+type listed struct {
+	tag   string
+	draft bool
+}
+
 type fixture struct {
 	t      *testing.T
 	pub    string
@@ -63,8 +69,9 @@ type fixture struct {
 	binary string
 	dir    string
 
-	mu  sync.Mutex
-	rel release
+	mu   sync.Mutex
+	rel  release
+	list []listed // the release list; rel.tag is the one with assets
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -95,6 +102,12 @@ func (f *fixture) set(r release) {
 	f.rel = r
 }
 
+func (f *fixture) setList(list ...listed) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.list = list
+}
+
 // assets returns the archive, checksums, and signature of the release.
 func (f *fixture) assets() (archive, sums, sig []byte) {
 	f.mu.Lock()
@@ -118,25 +131,39 @@ func (f *fixture) assets() (archive, sums, sig []byte) {
 
 func (f *fixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	rel := f.rel
+	rel, list := f.rel, f.list
 	f.mu.Unlock()
 	archive, sums, sig := f.assets()
+	asset := func(name string) map[string]string {
+		return map[string]string{"name": name, "browser_download_url": f.srv.URL + "/dl/" + name}
+	}
+	ghRelease := func(tag string, draft bool) map[string]any {
+		return map[string]any{
+			"tag_name":     tag,
+			"draft":        draft,
+			"html_url":     "https://github.com/o/shed/releases/tag/" + tag,
+			"body":         " notes \n",
+			"published_at": "2026-10-01T12:00:00Z",
+			"assets":       []any{asset(archiveName(tag)), asset(checksumsAsset), asset(signatureAsset)},
+		}
+	}
 	switch r.URL.Path {
 	case "/repos/o/shed/releases/latest":
 		if rel.status != 0 {
 			w.WriteHeader(rel.status)
 			return
 		}
-		asset := func(name string) map[string]string {
-			return map[string]string{"name": name, "browser_download_url": f.srv.URL + "/dl/" + name}
+		json.NewEncoder(w).Encode(ghRelease(rel.tag, false))
+	case "/repos/o/shed/releases":
+		if r.URL.Query().Get("per_page") != "30" {
+			http.Error(w, "unexpected query", http.StatusBadRequest)
+			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{
-			"tag_name":     rel.tag,
-			"html_url":     "https://github.com/o/shed/releases/tag/" + rel.tag,
-			"body":         " notes \n",
-			"published_at": "2026-10-01T12:00:00Z",
-			"assets":       []any{asset(archiveName(rel.tag)), asset(checksumsAsset), asset(signatureAsset)},
-		})
+		out := []any{}
+		for _, l := range list {
+			out = append(out, ghRelease(l.tag, l.draft))
+		}
+		json.NewEncoder(w).Encode(out)
 	case "/dl/" + archiveName(rel.tag):
 		w.Write(archive)
 	case "/dl/" + checksumsAsset:
@@ -225,7 +252,7 @@ func TestCheck(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.set(tt.rel)
-			u := f.updater(tt.version, nil)
+			u := f.updater(tt.version, &memSettings{m: map[string]string{channelKey: string(Stable)}})
 			_, err := u.Check(t.Context())
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Check() error = %v, want error %v", err, tt.wantErr)
@@ -244,6 +271,96 @@ func TestCheck(t *testing.T) {
 				t.Errorf("State = %q, Staged = %q; want idle with nothing staged", st.State, st.Staged)
 			}
 		})
+	}
+}
+
+func TestCheckChannels(t *testing.T) {
+	list := []listed{
+		{tag: "v1.2.0-nightly.10"},
+		{tag: "v1.3.0-nightly.1", draft: true},
+		{tag: "nightly"},
+		{tag: "v1.2.0-nightly.9"},
+		{tag: "v1.1.0"},
+	}
+	tests := []struct {
+		name    string
+		channel Channel
+		list    []listed
+		latest  string
+	}{
+		{name: "stable ignores the list", channel: Stable, list: list, latest: "v1.1.0"},
+		{name: "nightly picks the highest version", channel: Nightly, list: list, latest: "v1.2.0-nightly.10"},
+		{name: "nightly picks a newer stable release", channel: Nightly, list: append(list, listed{tag: "v1.2.0"}), latest: "v1.2.0"},
+		{name: "nightly with no releases", channel: Nightly},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.set(release{tag: "v1.1.0"})
+			f.setList(tt.list...)
+			u := f.updater("v1.0.0", &memSettings{m: map[string]string{channelKey: string(tt.channel)}})
+			st, err := u.Check(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := latestVersion(st); got != tt.latest || st.Channel != tt.channel {
+				t.Errorf("Latest = %q, Channel = %q; want %q, %q", got, st.Channel, tt.latest, tt.channel)
+			}
+		})
+	}
+}
+
+func TestDefaultChannel(t *testing.T) {
+	tests := []struct {
+		version string
+		want    Channel
+	}{
+		{"v1.0.0", Stable},
+		{"v1.1.0-nightly.3", Nightly},
+		{"dev-abc1234", Stable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			u := newFixture(t).updater(tt.version, nil)
+			st, err := u.Status(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Channel != tt.want {
+				t.Errorf("Channel = %q, want %q", st.Channel, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetChannel(t *testing.T) {
+	f := newFixture(t)
+	f.set(release{tag: "v1.1.0"})
+	f.setList(listed{tag: "v1.2.0-nightly.1"}, listed{tag: "v1.1.0"})
+	settings := &memSettings{}
+	u := f.updater("v1.0.0", settings)
+	if _, err := u.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.Download(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if st := waitIdle(t, u); st.Staged != "v1.1.0" {
+		t.Fatalf("Staged = %q, want v1.1.0", st.Staged)
+	}
+
+	st, err := u.SetChannel(t.Context(), Nightly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Channel != Nightly || st.Staged != "" || latestVersion(st) != "v1.2.0-nightly.1" {
+		t.Errorf("after switching: Channel = %q, Staged = %q, Latest = %q", st.Channel, st.Staged, latestVersion(st))
+	}
+	if settings.m[channelKey] != "nightly" {
+		t.Errorf("saved channel = %q, want nightly", settings.m[channelKey])
+	}
+	if _, err := u.Install(t.Context()); !errors.Is(err, ErrNotStaged) {
+		t.Errorf("Install() error = %v, want ErrNotStaged", err)
 	}
 }
 

@@ -8,22 +8,11 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// secretKeys returns the keys of a service's own variables that resolve to a
-// non-empty value in env. Their values are masked in logs; ordinary injected
+// secretKeys returns the keys of a service's own variables that resolve to
+// a non-empty value in r. Their values are masked in logs; ordinary injected
 // metadata such as ports and service names is not.
-func (d *Deployer) secretKeys(ctx context.Context, svc store.Service, env map[string]string) ([]string, error) {
-	own, err := d.store.Variables(ctx, svc.ID)
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]string, 0, len(own))
-	for key := range own {
-		if env[key] != "" {
-			keys = append(keys, key)
-		}
-	}
-	slices.Sort(keys)
-	return keys, nil
+func secretKeys(r Resolved) []string {
+	return slices.DeleteFunc(slices.Clone(r.Own), func(key string) bool { return r.Env[key] == "" })
 }
 
 // maskedValues returns the values to mask in a deployment's build log when
@@ -60,8 +49,8 @@ func (d *Deployer) maskedValues(ctx context.Context, dep store.Deployment) ([]st
 	if err != nil {
 		return nil, err
 	}
-	if env, err := d.environment(ctx, svc, project, dep.CommitSHA); err == nil {
-		values = append(values, secretValues(env, slices.Sorted(maps.Keys(own)))...)
+	if r, err := d.environment(ctx, svc, project, dep.CommitSHA, d.saved); err == nil {
+		values = append(values, secretValues(r.Env, slices.Sorted(maps.Keys(own)))...)
 	}
 	return values, nil
 }

@@ -112,6 +112,9 @@ const (
 	TriggerManual   Trigger = "manual"
 	TriggerRedeploy Trigger = "redeploy"
 	TriggerCreate   Trigger = "create"
+	// TriggerTelemetry marks the one redeploy that gives a database the
+	// arguments telemetry reads query statistics with.
+	TriggerTelemetry Trigger = "telemetry"
 )
 
 // Deployment is one attempt to build and run a service.
@@ -139,6 +142,9 @@ type Deployment struct {
 	// is nil for deployments that are not active and for ones activated
 	// before it was recorded.
 	Runtime *DeploymentRuntime
+	// TraceID is the trace of the deployment's deploy span, empty if
+	// telemetry was off when it ran.
+	TraceID string
 }
 
 // DeploymentRuntime is the container configuration a deployment was started

@@ -22,8 +22,10 @@ import { Route as AppDocsIndexRouteImport } from './routes/_app/docs/index'
 import { Route as AppDocsSlugRouteImport } from './routes/_app/docs/$slug'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
+import { Route as AppServerAuditRouteImport } from './routes/_app/server/audit'
 import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
 import { Route as AppServerLogsRouteImport } from './routes/_app/server/logs'
+import { Route as AppServerTelemetryRouteImport } from './routes/_app/server/telemetry'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdServicesServiceIdRouteImport } from './routes/_app/projects/$projectId/services/$serviceId'
@@ -98,6 +100,11 @@ const AppServerIndexRoute = AppServerIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppServerRoute,
 } as any)
+const AppServerAuditRoute = AppServerAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppServerRoute,
+} as any)
 const AppServerBackupsRoute = AppServerBackupsRouteImport.update({
   id: '/backups',
   path: '/backups',
@@ -106,6 +113,11 @@ const AppServerBackupsRoute = AppServerBackupsRouteImport.update({
 const AppServerLogsRoute = AppServerLogsRouteImport.update({
   id: '/logs',
   path: '/logs',
+  getParentRoute: () => AppServerRoute,
+} as any)
+const AppServerTelemetryRoute = AppServerTelemetryRouteImport.update({
+  id: '/telemetry',
+  path: '/telemetry',
   getParentRoute: () => AppServerRoute,
 } as any)
 const AppProjectsProjectIdIndexRoute =
@@ -174,8 +186,10 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/docs/$slug': typeof AppDocsSlugRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/server/telemetry': typeof AppServerTelemetryRoute
   '/docs/': typeof AppDocsIndexRoute
   '/server/': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -196,8 +210,10 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
   '/docs/$slug': typeof AppDocsSlugRoute
+  '/server/audit': typeof AppServerAuditRoute
   '/server/backups': typeof AppServerBackupsRoute
   '/server/logs': typeof AppServerLogsRoute
+  '/server/telemetry': typeof AppServerTelemetryRoute
   '/docs': typeof AppDocsIndexRoute
   '/server': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -222,8 +238,10 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/docs/$slug': typeof AppDocsSlugRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
+  '/_app/server/audit': typeof AppServerAuditRoute
   '/_app/server/backups': typeof AppServerBackupsRoute
   '/_app/server/logs': typeof AppServerLogsRoute
+  '/_app/server/telemetry': typeof AppServerTelemetryRoute
   '/_app/docs/': typeof AppDocsIndexRoute
   '/_app/server/': typeof AppServerIndexRoute
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -249,8 +267,10 @@ export interface FileRouteTypes {
     | '/settings'
     | '/docs/$slug'
     | '/projects/$projectId'
+    | '/server/audit'
     | '/server/backups'
     | '/server/logs'
+    | '/server/telemetry'
     | '/docs/'
     | '/server/'
     | '/projects/$projectId/settings'
@@ -271,8 +291,10 @@ export interface FileRouteTypes {
     | '/settings'
     | '/'
     | '/docs/$slug'
+    | '/server/audit'
     | '/server/backups'
     | '/server/logs'
+    | '/server/telemetry'
     | '/docs'
     | '/server'
     | '/projects/$projectId/settings'
@@ -296,8 +318,10 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/docs/$slug'
     | '/_app/projects/$projectId'
+    | '/_app/server/audit'
     | '/_app/server/backups'
     | '/_app/server/logs'
+    | '/_app/server/telemetry'
     | '/_app/docs/'
     | '/_app/server/'
     | '/_app/projects/$projectId/settings'
@@ -412,6 +436,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppServerIndexRouteImport
       parentRoute: typeof AppServerRoute
     }
+    '/_app/server/audit': {
+      id: '/_app/server/audit'
+      path: '/audit'
+      fullPath: '/server/audit'
+      preLoaderRoute: typeof AppServerAuditRouteImport
+      parentRoute: typeof AppServerRoute
+    }
     '/_app/server/backups': {
       id: '/_app/server/backups'
       path: '/backups'
@@ -424,6 +455,13 @@ declare module '@tanstack/react-router' {
       path: '/logs'
       fullPath: '/server/logs'
       preLoaderRoute: typeof AppServerLogsRouteImport
+      parentRoute: typeof AppServerRoute
+    }
+    '/_app/server/telemetry': {
+      id: '/_app/server/telemetry'
+      path: '/telemetry'
+      fullPath: '/server/telemetry'
+      preLoaderRoute: typeof AppServerTelemetryRouteImport
       parentRoute: typeof AppServerRoute
     }
     '/_app/projects/$projectId/': {
@@ -506,14 +544,18 @@ const AppDocsRouteWithChildren =
   AppDocsRoute._addFileChildren(AppDocsRouteChildren)
 
 interface AppServerRouteChildren {
+  AppServerAuditRoute: typeof AppServerAuditRoute
   AppServerBackupsRoute: typeof AppServerBackupsRoute
   AppServerLogsRoute: typeof AppServerLogsRoute
+  AppServerTelemetryRoute: typeof AppServerTelemetryRoute
   AppServerIndexRoute: typeof AppServerIndexRoute
 }
 
 const AppServerRouteChildren: AppServerRouteChildren = {
+  AppServerAuditRoute: AppServerAuditRoute,
   AppServerBackupsRoute: AppServerBackupsRoute,
   AppServerLogsRoute: AppServerLogsRoute,
+  AppServerTelemetryRoute: AppServerTelemetryRoute,
   AppServerIndexRoute: AppServerIndexRoute,
 }
 

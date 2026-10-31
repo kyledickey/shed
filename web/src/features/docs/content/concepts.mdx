@@ -76,6 +76,7 @@ Settings are saved immediately, but a running container was created from the set
 | `autoDeploy`, `branch`, `repo`                          | Immediately for the next push: the webhook reads them from the database.                                 |
 | `waitForCi`                                             | At the start of the next deployment.                                                                     |
 | Variables                                               | Next deployment. A container's environment is fixed when it is created.                                  |
+| Variables edited in the 1Password app                   | Next deployment. 1Password is read when a deployment starts.                                             |
 | `port`, `publicPort`, `startCommand`, `healthcheckPath` | Next deployment. Until then routes and a recreated container keep the active deployment's recorded port. |
 | `cpuLimit`, `memoryLimit`                               | Next deployment, when the container is created.                                                          |
 | Volumes                                                 | Next deployment. A new mount is added to the next container.                                             |

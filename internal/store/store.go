@@ -38,10 +38,10 @@ type Store struct {
 }
 
 // Open opens the database at path, creating it and applying any pending
-// migrations. Settings values, service variables, and backup destination
-// secret keys are encrypted at rest with key, which must be [KeySize] bytes;
-// Open encrypts them in a database that predates encryption. It returns
-// ErrWrongKey if the database was encrypted with a different key.
+// migrations. Settings values, service variables, backup destination secret
+// keys, and deployment runtimes are encrypted at rest with key, which must be
+// [KeySize] bytes; Open encrypts them in a database that predates encryption.
+// It returns ErrWrongKey if the database was encrypted with a different key.
 func Open(path string, key []byte) (*Store, error) {
 	c, err := newCrypter(key)
 	if err != nil {
@@ -49,10 +49,11 @@ func Open(path string, key []byte) (*Store, error) {
 	}
 	dsn := "file:" + path +
 		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
+	conn, err := newConnector(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("store: open %s: %w", path, err)
+		return nil, err
 	}
+	db := sql.OpenDB(conn)
 	// A single connection serializes access and rules out SQLITE_BUSY between
 	// our own goroutines. The load is far too small for this to matter.
 	db.SetMaxOpenConns(1)

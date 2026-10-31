@@ -21,13 +21,22 @@ internal/
   github/          GitHub App: manifest, tokens, repos, CI status, OAuth, webhooks
   vars/            ${{ KEY }} / ${{ service.KEY }} reference resolution
   catalog/         database templates
+  onepassword/     1Password vault and item operations (service account)
+  variables/       where variables live: shed.db or a 1Password vault
+  netns/           TCP listeners inside other processes' network namespaces
+  telemetry/       shed's own OpenTelemetry providers and the event type
+  otlp/            OTLP/HTTP receiver: decode, attribution, masking, caps
+  victoria/        VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients
+  grafana/         Grafana config, provisioning, HTTP API, dashboard templates
   deploy/          deployment pipeline, per-service workers, reconcile on boot
   host/            host resource usage from procfs, sysfs, and statfs
   logtail/         in-memory tail of shed's own log
   metrics/         container and host resource sampling, time series
   s3/              S3-compatible object storage client
   backup/          backups and restores of service data and shed.db
+  audit/           audit log: actor in context, recording, retention
   update/          release checks, verified downloads, replacing the binary
+  observability/   telemetry stack, ingest, shipping, exporters, dashboards
   auth/            sessions, GitHub sign-in, middleware, OAuth server for agents
   control/         operations and rules behind every interface
   mcp/             read-only MCP server for agents, mounted at /mcp
@@ -45,28 +54,37 @@ docs/design.md     data model, deploy pipeline, HTTP API contract
 
 The last column is the real import graph, taken from `go list`. Leaf packages import nothing from `internal/`.
 
-| Package    | Responsibility                                                                     | Imports from internal/                                                  |
-| ---------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `cmd/shed` | Flags, config, logging, wiring, signals, shutdown.                                 | everything                                                              |
-| `config`   | Loads TOML and `SHED_*` env into a Config with defaults and validation.            | none                                                                    |
-| `store`    | SQLite (modernc), embedded migrations, CRUD on plain structs.                      | none                                                                    |
-| `docker`   | Docker Engine operations through the moby client.                                  | none                                                                    |
-| `build`    | Clones a commit and builds an image from a Dockerfile or with Railpack.            | none                                                                    |
-| `proxy`    | Embedded Caddy. Apply(routes) swaps the active route table.                        | none                                                                    |
-| `github`   | GitHub App: manifest, JWT, installation tokens, repos, CI status, OAuth, webhooks. | none                                                                    |
-| `vars`     | Resolves `${{ KEY }}` and `${{ service.KEY }}` references.                         | none                                                                    |
-| `catalog`  | Database templates: image, port, volume path, default variables.                   | none                                                                    |
-| `host`     | Host CPU, memory, network, disk I/O, and filesystem usage.                         | none                                                                    |
-| `logtail`  | In-memory tail of shed's own log, followed over SSE.                               | none                                                                    |
-| `s3`       | S3-compatible object storage client for off-site backups.                          | none                                                                    |
-| `update`   | Release checks, verified downloads, replacing the shed binary.                     | none                                                                    |
-| `deploy`   | Deployment pipeline, per-service workers, reconcile on boot.                       | build, catalog, docker, github, proxy, store, vars                      |
-| `metrics`  | Container and host sampling, per-service and host time series.                     | docker, host, store                                                     |
-| `backup`   | Dumps, archives, zstd, age, schedule, retention, upload, restore.                  | docker, store                                                           |
-| `auth`     | Sessions, GitHub sign-in, middleware, OAuth 2.1 server and bearer middleware.      | github                                                                  |
-| `control`  | Operations on projects, services, deployments, backups; their validation rules.    | backup, build, catalog, deploy, github, logtail, metrics, store, update |
-| `mcp`      | Read-only MCP server for agents: tools, compact results, instructions.             | control, github, metrics, update                                        |
-| `api`      | JSON API, SSE logs, webhook endpoint, SPA serving, `/mcp` mount. Calls `control`.  | auth, backup, control, deploy, github, metrics, store, update           |
+| Package         | Responsibility                                                                           | Imports from internal/                                                                                                                   |
+| --------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd/shed`      | Flags, config, logging, wiring, signals, shutdown.                                       | everything                                                                                                                               |
+| `config`        | Loads TOML and `SHED_*` env into a Config with defaults and validation.                  | none                                                                                                                                     |
+| `store`         | SQLite (modernc), embedded migrations, CRUD on plain structs.                            | none                                                                                                                                     |
+| `docker`        | Docker Engine operations through the moby client.                                        | none                                                                                                                                     |
+| `build`         | Clones a commit and builds an image from a Dockerfile or with Railpack.                  | none                                                                                                                                     |
+| `proxy`         | Embedded Caddy. Apply(routes) swaps the active route table.                              | none                                                                                                                                     |
+| `github`        | GitHub App: manifest, JWT, installation tokens, repos, CI status, OAuth, webhooks.       | none                                                                                                                                     |
+| `vars`          | Resolves `${{ KEY }}` and `${{ service.KEY }}` references.                               | none                                                                                                                                     |
+| `catalog`       | Database templates: image, port, volume path, default variables.                         | none                                                                                                                                     |
+| `host`          | Host CPU, memory, network, disk I/O, and filesystem usage.                               | none                                                                                                                                     |
+| `logtail`       | In-memory tail of shed's own log, followed over SSE.                                     | none                                                                                                                                     |
+| `s3`            | S3-compatible object storage client for off-site backups.                                | none                                                                                                                                     |
+| `update`        | Release checks, verified downloads, replacing the shed binary.                           | none                                                                                                                                     |
+| `netns`         | TCP listeners inside a container's network namespace, for the telemetry gateway.         | none                                                                                                                                     |
+| `telemetry`     | shed's own OpenTelemetry providers, the slog bridge, and the event type for annotations. | none                                                                                                                                     |
+| `otlp`          | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps.         | none                                                                                                                                     |
+| `victoria`      | VictoriaMetrics, VictoriaLogs, and VictoriaTraces clients.                               | none                                                                                                                                     |
+| `grafana`       | Grafana config, provisioning files, HTTP API, dashboard templates.                       | none                                                                                                                                     |
+| `onepassword`   | 1Password vault and item operations with a service account token.                        | none                                                                                                                                     |
+| `deploy`        | Deployment pipeline, per-service workers, reconcile on boot.                             | build, catalog, docker, github, proxy, store, telemetry, vars                                                                            |
+| `metrics`       | Container and host sampling, per-service and host time series.                           | docker, host, store, victoria                                                                                                            |
+| `variables`     | Where services' variables live: shed.db, or a 1Password item per service.                | onepassword, store                                                                                                                       |
+| `backup`        | Dumps, archives, zstd, age, schedule, retention, upload, restore.                        | docker, store, telemetry                                                                                                                 |
+| `audit`         | Audit log: actor and client IP in context, recording, coalescing, retention.             | store                                                                                                                                    |
+| `auth`          | Sessions, GitHub sign-in, middleware, OAuth 2.1 server and bearer middleware.            | audit, github                                                                                                                            |
+| `observability` | Telemetry stack, ingest, log and edge shipping, exporters, dashboards.                   | catalog, docker, grafana, host, otlp, proxy, store, telemetry, victoria                                                                  |
+| `control`       | Operations on projects, services, deployments, backups; their validation rules.          | audit, backup, build, catalog, deploy, github, grafana, logtail, metrics, observability, onepassword, store, update, variables, victoria |
+| `mcp`           | Read-only MCP server for agents: tools, compact results, instructions.                   | audit, control, github, metrics, observability, store, update, victoria                                                                  |
+| `api`           | JSON API, SSE logs, webhook endpoint, SPA serving, `/mcp` mount. Calls `control`.        | audit, auth, backup, control, deploy, github, metrics, observability, onepassword, store, update, variables                              |
 
 `web` is a Go package too, but only to embed the built dashboard. Its `Dist()` returns the files as an `fs.FS`.
 

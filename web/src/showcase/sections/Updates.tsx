@@ -13,8 +13,20 @@ const base: UpdateStatus = {
   latest: {
     version: "v1.4.0",
     url: "https://github.com/example/shed/releases/tag/v1.4.0",
-    notes:
-      "## Highlights\n\n- Self-update from the dashboard\n- Faster build log streaming\n\n## Fixes\n\n- Backups no longer stall on large volumes",
+    notes: [
+      "Self-update from the dashboard and faster build logs.",
+      "",
+      "### Features",
+      "",
+      "#### Updates",
+      "",
+      "- **update:** install new releases from the dashboard ([#12](https://github.com/example/shed/pull/12))",
+      "- **logs:** stream build logs with less delay",
+      "",
+      "### Bug Fixes",
+      "",
+      "- **backup:** no longer stall on large volumes with `zstd` ([#15](https://github.com/example/shed/pull/15))",
+    ].join("\n"),
     publishedAt: hoursAgo(30),
   },
   available: true,
@@ -23,6 +35,7 @@ const base: UpdateStatus = {
   staged: "",
   error: "",
   autoDownload: false,
+  channel: "stable",
   unsupported: "",
 };
 
@@ -33,6 +46,20 @@ const states: { label: string; status: UpdateStatus }[] = [
   {
     label: "Up to date",
     status: { ...base, current: "v1.4.0", available: false, autoDownload: true },
+  },
+  {
+    label: "Nightly",
+    status: {
+      ...base,
+      current: "v1.4.1-nightly.3",
+      latest: {
+        version: "v1.4.1-nightly.4",
+        url: "https://github.com/example/shed/releases/tag/v1.4.1-nightly.4",
+        notes: "",
+        publishedAt: hoursAgo(5),
+      },
+      channel: "nightly",
+    },
   },
   {
     label: "Check failed",
@@ -83,6 +110,7 @@ export function Updates() {
             onCheck={noop}
             onDownload={noop}
             onAutoDownload={noop}
+            onChannel={noop}
             onInstall={noop}
             onCloseInstall={noop}
           />

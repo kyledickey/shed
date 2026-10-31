@@ -15,6 +15,8 @@
 #   SHED_BASE_DOMAIN     base domain for generated app domains (optional)
 #   SHED_ACME_EMAIL      Let's Encrypt contact email (optional)
 #   SHED_VERSION         release to install, e.g. v1.2.3 (default: latest)
+#   SHED_CHANNEL         stable (default) or nightly, the newest release
+#                        including nightly pre-releases; SHED_VERSION wins
 #   SHED_YES=1           never prompt, even when a terminal is available
 #
 # bash reads this script from stdin when piped, so everything lives in
@@ -267,9 +269,17 @@ header() {
 # --- release --------------------------------------------------------------
 
 resolve_version() {
-  local url
+  local url json
+  case ${SHED_CHANNEL:=stable} in
+    stable | nightly) ;;
+    *) die "SHED_CHANNEL must be stable or nightly (got '$SHED_CHANNEL')." ;;
+  esac
   if [ -n "${SHED_VERSION:-}" ]; then
     TAG="v${SHED_VERSION#v}"
+  elif [ "$SHED_CHANNEL" = nightly ]; then
+    json=$(curl -fsSL -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPO/releases?per_page=1") ||
+      die "Could not list the releases of github.com/$REPO. Check your network, or set SHED_VERSION."
+    [[ $json =~ \"tag_name\":[[:space:]]*\"([^\"]*)\" ]] && TAG=${BASH_REMATCH[1]}
   else
     url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest") ||
       die "Could not find the latest release at github.com/$REPO. Check your network, or set SHED_VERSION."

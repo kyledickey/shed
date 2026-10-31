@@ -18,6 +18,7 @@ type fakeUpdates struct {
 	st   update.Status
 	err  error
 	auto []bool
+	ch   []update.Channel
 }
 
 func (f *fakeUpdates) Status(context.Context) (update.Status, error) { return f.st, nil }
@@ -36,6 +37,12 @@ func (f *fakeUpdates) Install(context.Context) (update.Status, error)  { return 
 func (f *fakeUpdates) SetAutoDownload(_ context.Context, on bool) (update.Status, error) {
 	f.auto = append(f.auto, on)
 	f.st.AutoDownload = on
+	return f.result()
+}
+
+func (f *fakeUpdates) SetChannel(_ context.Context, ch update.Channel) (update.Status, error) {
+	f.ch = append(f.ch, ch)
+	f.st.Channel = ch
 	return f.result()
 }
 
@@ -82,7 +89,10 @@ func TestUpdateActions(t *testing.T) {
 		{name: "install before download", method: "POST", path: "/api/update/install", err: update.ErrNotStaged, want: http.StatusConflict},
 		{name: "install fails", method: "POST", path: "/api/update/install", err: errFake, want: http.StatusInternalServerError},
 		{name: "settings", method: "PUT", path: "/api/update/settings", body: `{"autoDownload":true}`, want: http.StatusOK},
-		{name: "settings without autoDownload", method: "PUT", path: "/api/update/settings", body: `{}`, want: http.StatusBadRequest},
+		{name: "settings channel", method: "PUT", path: "/api/update/settings", body: `{"channel":"nightly"}`, want: http.StatusOK},
+		{name: "settings both", method: "PUT", path: "/api/update/settings", body: `{"autoDownload":false,"channel":"stable"}`, want: http.StatusOK},
+		{name: "settings bad channel", method: "PUT", path: "/api/update/settings", body: `{"channel":"beta"}`, want: http.StatusBadRequest},
+		{name: "settings without fields", method: "PUT", path: "/api/update/settings", body: `{}`, want: http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

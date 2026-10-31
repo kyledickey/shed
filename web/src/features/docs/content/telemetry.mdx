@@ -1,0 +1,221 @@
+---
+title: Telemetry
+group: Running
+order: 105
+description: "Telemetry is optional. Turned on, shed runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana on the server, and serves Grafana to signed-in users at /grafana/."
+---
+
+## What it runs
+
+Telemetry is off until you turn it on under **Server, Telemetry**. Then shed runs four containers, each on the host network, listening on loopback only, with a pinned image and a named volume for its data:
+
+| Component       | Container                | Listens on (config key)                   | Volume                   |
+| --------------- | ------------------------ | ----------------------------------------- | ------------------------ |
+| VictoriaMetrics | `shed-telemetry-metrics` | `telemetry.metrics_addr` (127.0.0.1:8428) | `shed-telemetry-metrics` |
+| VictoriaLogs    | `shed-telemetry-logs`    | `telemetry.logs_addr` (127.0.0.1:9428)    | `shed-telemetry-logs`    |
+| VictoriaTraces  | `shed-telemetry-traces`  | `telemetry.traces_addr` (127.0.0.1:10428) | `shed-telemetry-traces`  |
+| Grafana         | `shed-telemetry-grafana` | `telemetry.grafana_addr` (127.0.0.1:3001) | `shed-telemetry-grafana` |
+
+Loopback keeps them unreachable from the internet and from your services' containers. Change the addresses under [`[telemetry]`](/docs/configuration#telemetry-addresses) only if a port is taken. Grafana's provisioning files live in `<data.dir>/telemetry/grafana/provisioning`, and VictoriaMetrics' scrape config in `<data.dir>/telemetry/scrape/scrape.yaml`. Both are mounted read-only.
+
+Every container carries the label `shed.telemetry=<component>`, and `shed.spec` holds a hash of its configuration. shed compares that hash on boot and after every settings change, and recreates a container only when its configuration changed. The volume stays.
+
+## Turning it on
+
+Flip **Collect telemetry**. The switch saves at once and shed brings the stack up in the background:
+
+1. Pull each image the first time.
+2. Start the three stores and wait for each one's `/health`.
+3. Write Grafana's data sources, start Grafana, and wait for it. The first start installs the VictoriaMetrics and VictoriaLogs data source plugins, which needs network access to grafana.com.
+4. Create the `shed` folder in Grafana and load the default alert rules into it.
+5. Create the folders and default dashboards (see [Folders and dashboards](#folders-and-dashboards)).
+
+Components show **Starting** until they answer their health check, then **Running**. A step that fails shows **Failed** with the error, and shed tries again a minute later. **Restart** on a component restarts its container.
+
+Turning telemetry off stops the four containers and keeps their volumes, so turning it on again resumes with all history and anything edited in Grafana. Both are recorded in the [audit log](/docs/audit) as `telemetry.enable` and `telemetry.disable`.
+
+## Signing in to Grafana
+
+Grafana is at `<server.url>/grafana/`, behind the dashboard's sign-in. Use **Open Grafana** on the Telemetry page or in the top bar. There is no separate Grafana login:
+
+- A signed-out page load goes through GitHub sign-in and comes back to the Grafana page. Other signed-out requests get a 401.
+- shed tells Grafana who you are. Grafana creates a user for your GitHub login the first time, with the Admin role. Every allowed user can do everything in shed, so every one is a Grafana admin too.
+- Requests that change something must come from the dashboard's own origin, like the API's. Grafana Live's WebSocket must too.
+- shed's session cookie never reaches Grafana.
+
+Data sources are provisioned from files: `shed-metrics`, `shed-logs`, and `shed-traces`. Grafana puts them back on every start, so edits to them don't last. Provisioned alert rules can't be edited either; copy one to change it. shed's own API calls sign in as the `shed` admin, whose random password is kept encrypted in `shed.db`.
+
+## Folders and dashboards
+
+While telemetry is on, shed keeps a folder in Grafana for itself, each project, and each service, and fills them with default dashboards. Each has one **Overview** that groups its panels into rows:
+
+| Folder                    | Holds                                                                                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| shed                      | Overview (host usage, then rows for Deploys, API & MCP, Proxy, Host & Docker, Backups, Runtime, Telemetry, and shed's log); Security; the alert rules |
+| `<project>`               | Overview: a table of the project's services, each linking to its Overview, and usage by service                                                       |
+| `<project>` / `<service>` | Overview: rows for Resources, then HTTP and Traces for apps, or Postgres, MySQL, MongoDB, or Redis for databases, then Logs                           |
+| Archived                  | folders of deleted services and projects                                                                                                              |
+
+A service's Overview links back to its project's, and shed's Overview and Security link to each other. Links keep the time range you're looking at.
+
+shed reconciles them when telemetry turns on, at boot, when a project or service is created, renamed, or deleted, and every 10 minutes. Folder titles follow renames; dashboard titles never carry a name, so links stay put. A deleted service's folder moves under **Archived** as `<project> / <service> (deleted <date>)`, a deleted project's as `<project> (deleted <date>)`, with its dashboards. Their data ages out with retention.
+
+The project page links to its folder with **Open in Grafana**. A service's **Metrics** tab lists its dashboards and links to its folder, and each deployment links to the service's Overview around the time it ran.
+
+### Editing dashboards
+
+Edit and save any dashboard in Grafana. shed remembers the version it last wrote; once a user saves a dashboard it is **customized**, and shed never overwrites it again. A shed upgrade that changes a default updates only the dashboards nobody customized. On customized ones the service page shows **Newer default available**, and **Reset to default** replaces your version with the current default (recorded as `telemetry.dashboard.reset`).
+
+A dashboard you delete stays deleted. **Restore default dashboards** on the Telemetry page brings back every default that is missing, and leaves the others alone (recorded as `telemetry.dashboards.restore`). New dashboards you create in shed's folders are yours; shed doesn't touch them. When an upgrade retires a default dashboard (earlier versions had separate Logs, HTTP, Traces, and database dashboards per service, and eight more for shed), shed deletes it unless you customized it; a customized one stays as yours.
+
+### Annotations
+
+Deploys starting (or a redeploy), going active, and failing, restarts, stops, crashes (a service container that exits non-zero or is killed for running out of memory without shed stopping it), backups, and restores are marked on the dashboards as annotations. Each is tagged `shed`, its kind (`deploy.started`, `redeploy`, `deploy.active`, `deploy.failed`, `restart`, `stop`, `crash`, `backup`, `backup.failed`, `restore`, `restore.failed`), `service:<service ID>`, and `project:<project ID>`. Service dashboards show their service's, project dashboards their project's, and shed's own dashboards all of them. To show them on a dashboard of your own, add a Grafana annotation query filtered by those tags. Annotations are written only while telemetry is on, and one that Grafana refuses is dropped.
+
+### Alerts
+
+The default alert rules live in the shed folder: a service restarted more than 3 times in 10 minutes, an OOM kill, host disk above 85%, host memory above 90% for 10 minutes, a 5xx ratio above 5% for 5 minutes at more than 1 request a second, p95 latency above 2 seconds for 10 minutes, database connections above 80% of the maximum, a failed deploy or backup, and telemetry dropping records. No contact point is configured; add one in Grafana to get notified. Firing alerts show on the Telemetry page, and alerts about a service (by its `shed_service_id` label) also on that service's Metrics tab.
+
+## Requests at the edge
+
+While telemetry is on, every request the proxy serves is measured, with no change to your apps. shed looks up the request's host in your domains: a service's domain counts for that service, the dashboard's host counts for shed, and any other host counts as `unrouted` under shed.
+
+Metrics, labeled with the service's `shed_*` labels and `shed_source="edge"`:
+
+| Metric                               | Labels                       |
+| ------------------------------------ | ---------------------------- |
+| `shed_http_requests_total`           | `host`, `method`, `code`     |
+| `shed_http_request_duration_seconds` | `host`, `code` (a histogram) |
+| `shed_http_response_bytes_total`     | `host`                       |
+
+The path is never a label. A method other than the standard ones is counted as `other`.
+
+Each request is also an access record in VictoriaLogs, with `shed.source=edge`: `client_ip` (the visitor's address with [`proxy.cloudflare`](/docs/networking#cloudflare) on), `method`, `host`, `path`, `query`, `status`, `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`, `tls_version`, and `trace_id`. The path, query, referer, and user agent have every variable value masked, like shed's own log. No other request header is recorded, so cookies and `Authorization` never are, and neither are bodies. Records wait in a queue of 4096 and ship once a second. When the store falls behind and the queue is full, new records are dropped and counted in `shed_telemetry_dropped_total{reason="edge_queue_full"}`; the metrics still count every request.
+
+Each routed request also gets a trace. The proxy starts a server span named after the method, or continues the `traceparent` the client sent. It passes its own `traceparent` to your app, so spans your app's OpenTelemetry SDK records join the same trace. Requests for unrouted hosts get no span.
+
+## Databases
+
+While telemetry is on, shed runs a small exporter container next to every database that has an active deployment, and VictoriaMetrics scrapes it every 15 seconds. Nothing in your database image changes.
+
+| Database | Exporter                                | Metrics                                                                                 |
+| -------- | --------------------------------------- | --------------------------------------------------------------------------------------- |
+| Postgres | `prometheuscommunity/postgres-exporter` | connections, commits and rollbacks, cache hits, locks, size, WAL, per-statement timings |
+| MySQL    | `prom/mysqld-exporter`                  | connections, queries by command, InnoDB, row operations, per-digest timings             |
+| MongoDB  | `percona/mongodb_exporter`              | operations, connections, WiredTiger cache, latencies, slow operations                   |
+| Redis    | `oliver006/redis_exporter`              | commands, hit ratio, memory, evictions, clients, keys, slowlog                          |
+
+The exporter is named `shed-exp-<service ID>`, has the label `shed.exporter=<service ID>`, joins the project's network without a hostname, and is capped at 0.1 CPU and 64 MiB. It connects to the database by its private hostname and port with the credentials the database runs with, which it gets as environment variables. shed recreates it when its image, target, or credentials change. It is removed when you delete or stop the database or its project, when the database has no active deployment, and when you turn telemetry off. Every series carries the `shed_*` labels of its database, so the service's Postgres, MySQL, MongoDB, or Redis dashboard in Grafana fills in without setup.
+
+### Query statistics
+
+Every database template starts with arguments that expose slow queries:
+
+| Database | Arguments                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------- |
+| Postgres | `pg_stat_statements` preloaded, `pg_stat_statements.track=all`, `log_min_duration_statement=250`              |
+| MySQL    | `performance_schema` on, the slow query log on with `long_query_time=0.25`, written to the container's output |
+| MongoDB  | `--profile=1 --slowms=250`                                                                                    |
+| Redis    | `--slowlog-log-slower-than 250000`                                                                            |
+
+Queries slower than 250 ms are written to the container's log, which telemetry ships to VictoriaLogs for the slow-query panels. For Postgres, shed also runs `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` in `POSTGRES_DB` whenever its container is created, including after a restore, which is what the top-statements panel reads. MySQL cannot write its slow log to a pipe, so its start command writes a file under `/tmp` that a `tail` copies to the container's output; the file is emptied once it passes 10 MiB.
+
+### The one-time restart
+
+A database deployed before this existed was started without these arguments. When telemetry turns on, shed redeploys each such database once, one at a time, with the same image and variables. The deployment's trigger is **Telemetry**, and the database is unavailable for the few seconds a restart takes. Databases that are stopped, or that have a start command of their own, are left alone. Databases deployed later already start with the arguments.
+
+## Docker events
+
+shed follows Docker's event stream for containers it started (those labeled `shed.service`, `shed.exporter`, or `shed.telemetry`). The audit part runs whether telemetry is on or off, and is described under [audit](/docs/audit): a `docker exec` into one of them is `container.exec` with the command, and a kernel OOM kill is `container.oom`. Execs shed starts itself, such as backups, dumps, and database setup, are not recorded, and neither are runs of a container's own health check.
+
+While telemetry is on, `start`, `die` (with the exit code), `kill`, `restart`, `oom`, and image pulls are also log records with `shed.source=docker` in VictoriaLogs, and two counters go to VictoriaMetrics, labeled with the service:
+
+- `shed_container_restarts_total`, every start of a container that had run before: a restart policy, `docker restart`, or a start after a stop.
+- `shed_container_oom_kills_total`, every OOM kill.
+
+If the stream breaks, shed reconnects with a growing delay and resumes after the last event it saw. Events that happened while shed was not running are not recorded.
+
+## Egress
+
+While telemetry is on, shed reads the kernel's connection tracking table over netlink every 10 seconds. It keeps the connections that a service container opened to an address outside the Docker networks and loopback, adds up their traffic since the previous reading, and records, per service, destination address, port, and protocol:
+
+- a log record with `shed.source=egress`: `dst`, `dst_port`, `proto`, `packets` and `bytes` sent, `packets_in` and `bytes_in` received, and `flows`, the connections that were active;
+- the counter `shed_egress_bytes_total`, bytes sent, labeled with the service and `proto`;
+- when a service reaches a destination address and port it has not reached in the last 7 days, an `egress.first_seen` record at level `warn`. The set of known destinations is rebuilt from VictoriaLogs when telemetry is turned on, so a restart doesn't report everything again. The first time telemetry is on, every destination is new.
+
+Destinations are addresses. Containers resolve names through Docker's DNS, which forwards from the host, so lookups are not attributed to a service, and shed records no names. The **Security** dashboard in Grafana lists destinations seen for the first time.
+
+Bytes need connection accounting. Turning telemetry on sets the kernel setting `net.netfilter.nf_conntrack_acct` to 1 (the file `/proc/sys/net/netfilter/nf_conntrack_acct`). It is a host-wide setting and shed does not set it back. It applies to connections that begin afterwards: older ones keep showing no bytes. It takes about 16 bytes more memory per tracked connection. Without it, records still appear for new connections but with zero bytes.
+
+Egress needs `CAP_NET_ADMIN` (the systemd unit shipped with shed runs as root) and the `nf_conntrack` kernel module, which Docker's NAT loads. If either is missing, shed logs a warning once and keeps trying; nothing else is affected.
+
+## Retention and disk
+
+| Setting                  | Default | Range          |
+| ------------------------ | ------- | -------------- |
+| Keep metrics for         | 30 days | 1 to 3650 days |
+| Keep logs for            | 14 days | 1 to 3650 days |
+| Keep traces for          | 14 days | 1 to 3650 days |
+| Disk for logs and traces | 20 GB   | at least 1 GB  |
+
+The disk limit is split 60% for logs and 40% for traces; when either share is full, its oldest data is deleted first. Metrics have no disk limit of their own. They are bounded by retention, and VictoriaMetrics stops accepting writes rather than let the disk fall below [`build.min_free_mb`](/docs/configuration#build-limits).
+
+Changing a retention or the disk limit recreates that store's container on the same volume. Its data is kept. The Telemetry page shows each store's disk use, as the store reports it.
+
+The default per-service limits are saved with the other settings; see [Caps](#caps).
+
+## Sending telemetry from your app
+
+While telemetry is on, shed is an OpenTelemetry gateway for your services. Each app's next deployment gets these variables:
+
+| Variable                      | Value                                   |
+| ----------------------------- | --------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318`                 |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf`                         |
+| `OTEL_SERVICE_NAME`           | the service name                        |
+| `OTEL_RESOURCE_ATTRIBUTES`    | `service.version=<commit SHA or image>` |
+
+Any OpenTelemetry SDK reads them, so instrumenting the code is the only change. A variable you set yourself with the same name wins. They are listed as injected on the Variables tab. `localhost:4318` is also the SDKs' default, so an app that ignores the variables still finds the gateway.
+
+The gateway listens inside each running app's container, on `127.0.0.1` and, where the container has IPv6 loopback, `::1`, on port [`telemetry.otlp_port`](/docs/configuration#telemetry-addresses) (4318). shed opens the listener when the container starts, closes it when the container stops, and opens it again after a restart. Nothing leaves the container's network, so a host firewall never sees this traffic and needs no rules. Databases get no listener.
+
+It takes OTLP over HTTP: `POST /v1/traces`, `/v1/metrics`, and `/v1/logs`, protobuf or JSON, optionally gzip, up to 8 MiB a request. There is no gRPC endpoint, and it is not reachable from the internet or from other containers. Each listener belongs to one container, so the gateway labels every record with that container's service, project, and deployment, whatever the SDK claims. Attributes in shed's namespace (`shed.*`, `shed_*`) on data points, log records, and scopes, and at the top level of a map-shaped log body, are removed, so an app cannot label its records as another service's. String attributes, span status messages, and log bodies are masked with the values of every variable in the project and those the container started with. Traces go to VictoriaTraces, metrics to VictoriaMetrics, and logs to VictoriaLogs.
+
+The variables are part of a container's configuration, so turning telemetry on or off reaches a service with its next deployment. The listeners follow at once: turning telemetry off closes all of them.
+
+### When the app uses port 4318
+
+If the app itself listens on port 4318, for example because it is an OpenTelemetry Collector, shed cannot open its listener in that container. The app keeps running, shed logs a warning once, and the service's Telemetry card on its Settings tab says it is not receiving OTLP. shed tries again every few seconds, so the listener opens as soon as the port is free. To keep the app on 4318, set `telemetry.otlp_port` to a free port instead; the injected endpoint follows with each app's next deployment.
+
+## Container logs
+
+While telemetry is on, shed also ships the output of every service container to VictoriaLogs, with no change to the app. Each line keeps Docker's timestamp and its stream (`stdout` or `stderr`). A line that is a JSON object keeps its top-level fields (up to 64); `msg` or `message` becomes the message, `level`, `severity`, or `lvl` the level, and `trace_id` links to the trace. Other lines take their level from a leading `ERROR`, `WARN`, `INFO`, or `DEBUG`. Lines are cut at 16 KiB and masked like the runtime logs on the Logs tab.
+
+shed remembers how far it shipped each container, so after a restart of shed it carries on where it stopped. Lines that Docker rotated away meanwhile (10 MB times 3 files per container) are lost.
+
+## Caps
+
+Each service may send at most so many spans and log records a second, and so many distinct metric series an hour:
+
+| Cap         | Default | Counts                                                   |
+| ----------- | ------- | -------------------------------------------------------- |
+| Spans       | 5000/s  | trace spans sent to the gateway                          |
+| Log records | 2000/s  | OTLP log records and lines of container output, together |
+| Series      | 50000   | distinct metric name and attribute sets in the last hour |
+
+Records over a cap are dropped. The SDK is told how many with an OTLP partial success, so it doesn't retry them. Change the defaults on the Telemetry page, or give one service its own caps in its **Settings, Telemetry** card; either applies within seconds, and a service's own caps are recorded as `telemetry.caps.update`. The same card shows **Dropping telemetry** while records of the service were dropped in the last five minutes. The Telemetry page counts drops by reason over the last hour.
+
+## Resource use
+
+| Component       | Memory  | CPUs |
+| --------------- | ------- | ---- |
+| VictoriaMetrics | 512 MiB | 1    |
+| VictoriaLogs    | 512 MiB | 1    |
+| VictoriaTraces  | 384 MiB | 1    |
+| Grafana         | 1 GiB   | 0.5  |
+
+These are caps, not reservations. An idle stack uses far less, apart from Grafana, which sits near 300 MiB. Plan for up to about 2 GB of memory with telemetry on. The Telemetry page shows each container's CPU and memory against its cap.
+
+## Deleting data
+
+**Delete telemetry data** is only available while telemetry is off. It removes the four containers, their volumes, and `<data.dir>/telemetry`: every stored metric, log record, and trace, and Grafana's users, dashboards, and settings, along with shed's record of which dashboards were customized. It can't be undone, and it is recorded as `telemetry.data.delete`. Turning telemetry on afterwards starts from empty.

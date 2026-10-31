@@ -1,0 +1,32 @@
+description = "Lots of data: services flooding logs, traces, and metrics"
+cpus = 8
+memory_gb = 16
+disk_gb = 150
+telemetry = true
+
+[[project]]
+name = "firehose"
+
+[[project.service]]
+name = "logs"
+generate = "logs"
+rate = 2000
+count = 6
+
+[[project.service]]
+name = "otel-logs"
+generate = "otel-logs"
+rate = 500
+count = 4
+
+[[project.service]]
+name = "traces"
+generate = "traces"
+rate = 1000
+count = 6
+
+[[project.service]]
+name = "metrics"
+generate = "metrics"
+rate = 1000
+count = 4
