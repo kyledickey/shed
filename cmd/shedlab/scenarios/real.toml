@@ -1,0 +1,37 @@
+description = "Real software: Gitea on Postgres, Redis, and a small web app"
+cpus = 4
+memory_gb = 8
+disk_gb = 60
+telemetry = true
+
+[[project]]
+name = "forge"
+
+[[project.service]]
+name = "db"
+kind = "postgres"
+
+[[project.service]]
+name = "gitea"
+image = "gitea/gitea:1.24"
+port = 3000
+domain = true
+[project.service.vars]
+GITEA__database__DB_TYPE = "postgres"
+GITEA__database__HOST = "${{ db.SHED_PRIVATE_DOMAIN }}:5432"
+GITEA__database__NAME = "${{ db.POSTGRES_DB }}"
+GITEA__database__USER = "${{ db.POSTGRES_USER }}"
+GITEA__database__PASSWD = "${{ db.POSTGRES_PASSWORD }}"
+
+[[project]]
+name = "web"
+
+[[project.service]]
+name = "cache"
+kind = "redis"
+
+[[project.service]]
+name = "whoami"
+image = "traefik/whoami:v1.11"
+port = 80
+domain = true

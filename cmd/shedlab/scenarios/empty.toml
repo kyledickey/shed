@@ -1,0 +1,4 @@
+description = "A fresh install with nothing deployed"
+cpus = 4
+memory_gb = 8
+disk_gb = 40
