@@ -410,3 +410,32 @@ func TestOAuth(t *testing.T) {
 		t.Error("ExchangeUser(bad code) succeeded")
 	}
 }
+
+func TestSetWebhookURL(t *testing.T) {
+	var got map[string]string
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /app/hook/config", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Error("request wasn't signed as the App")
+		}
+		json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, `{}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(App{ID: 1, PrivateKey: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})}, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.apiURL = srv.URL + "/"
+	if err := c.SetWebhookURL(t.Context(), "https://lab1.shed.land/api/github/webhook"); err != nil {
+		t.Fatal(err)
+	}
+	if got["url"] != "https://lab1.shed.land/api/github/webhook" {
+		t.Errorf("sent %v", got)
+	}
+}

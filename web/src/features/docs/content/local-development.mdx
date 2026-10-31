@@ -84,6 +84,30 @@ Open `http://localhost:5173` (or whatever origin you put in `server.url`). Edits
 
 `web/dist` is gitignored apart from a `.gitkeep`, which is why `go run` compiles on a fresh clone.
 
+## Test instances
+
+`shedlab` runs real shed installs in local KVM VMs: Ubuntu, Docker, systemd, and `deploy/install.sh`, with the binary built from your checkout. It needs `qemu-base` on Arch, and read and write access to `/dev/kvm`.
+
+```sh
+go install ./cmd/shedlab
+shedlab up firehose --no-auth
+shedlab push
+```
+
+The first `up` builds a base image, and later labs clone it in seconds. `push` builds your checkout and restarts the lab on it.
+
+| Scenario   | Contents                                                     |
+| ---------- | ------------------------------------------------------------ |
+| `empty`    | A fresh install with nothing deployed                        |
+| `real`     | Gitea on Postgres, Redis, a small web app, and telemetry     |
+| `firehose` | 20 generators sending logs, traces, and metrics to telemetry |
+
+Scenarios are TOML files in `cmd/shedlab/scenarios/`. `shedlab save` snapshots a lab with its data, and `shedlab up --from` starts a new lab from the snapshot.
+
+With `--no-auth`, or before you've saved credentials, `shedlab open` signs you in without GitHub by adding a session to the lab's database and giving the browser its cookie. `shedlab auth` creates one GitHub App for all labs, and saves it so that each new lab imports it. It can also put labs on `lab1.shed.land` to `lab5.shed.land` through a Cloudflare tunnel, so that GitHub webhooks reach them.
+
+Labs can't test Let's Encrypt, ports 80 and 443, or real client IPs. Apps use `https://<service>-<project>.lab1.localhost:18143` with Caddy's internal CA.
+
 ## The public site
 
 `web/site/` is a second Vite app: a home page plus these docs, built from the same MDX files and components as the dashboard. It is not embedded in the binary.

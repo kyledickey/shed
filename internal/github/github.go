@@ -95,6 +95,18 @@ func (c *Client) Lookup(ctx context.Context) (slug, clientID string, err error) 
 	return app.GetSlug(), app.GetClientID(), nil
 }
 
+// SetWebhookURL points the App's webhook at url.
+func (c *Client) SetWebhookURL(ctx context.Context, url string) error {
+	client, err := c.appClient()
+	if err != nil {
+		return err
+	}
+	if _, _, err := client.Apps.UpdateHookConfig(ctx, gh.HookConfig{URL: &url}); err != nil {
+		return fmt.Errorf("github: set webhook url: %w", err)
+	}
+	return nil
+}
+
 func orDefault(hc *http.Client) *http.Client {
 	if hc == nil {
 		return &http.Client{Timeout: 30 * time.Second, Transport: tracedTransport(http.DefaultTransport)}

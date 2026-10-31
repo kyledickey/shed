@@ -19,6 +19,7 @@ same change whenever you change any of these.
 
 ```
 cmd/shed/          entry point: flags, config, logging, wiring, shutdown
+cmd/shedlab/       throwaway shed instances in local VMs, for development
 internal/config    koanf → Config
 internal/store     SQLite, embedded migrations, CRUD on plain structs
 internal/docker    Docker Engine wrapper (moby client)
@@ -135,7 +136,11 @@ cd web && bun run dev           # dashboard dev server, proxies /api to :3000
 cd web && bun run site:dev      # public site dev server
 make site                       # prerender the public site to web/site-dist/client
 cd web && bunx vp check          # format, lint, typecheck
+shedlab up firehose --no-auth    # real install in a local VM (go install ./cmd/shedlab)
 ```
+
+Test anything that needs root, Docker, or firewall changes in a lab. The
+`shedlab` skill in `.agents/skills/` has the details.
 
 Runtime requirements: Linux, Docker with buildx, `git`, and `railpack`.
 
