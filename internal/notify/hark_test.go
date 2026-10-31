@@ -77,7 +77,7 @@ func TestOpenHark(t *testing.T) {
 }
 
 func TestValidateHarkTargetNotLeaked(t *testing.T) {
-	n := New(&fakeStore{}, nil, Hark(nil))
+	n := New(&fakeStore{}, "", nil, Hark(nil))
 	target := "http://hark.example/hooks/tok_s3cret"
 	err := n.Validate(Channel{Name: "phone", Provider: "hark", Target: target})
 	if err == nil {
@@ -327,7 +327,7 @@ func TestHarkRateLimitReachable(t *testing.T) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer ts.Close()
-	n := New(&fakeStore{}, nil, Hark(ts.Client()))
+	n := New(&fakeStore{}, "", nil, Hark(ts.Client()))
 
 	err := n.Test(context.Background(), Channel{Name: "phone", Provider: "hark", Target: ts.URL + "/hooks/tok_1"})
 	if err == nil || !strings.Contains(err.Error(), "rate limited") {

@@ -408,3 +408,12 @@ type NotificationDelivery struct {
 	CreatedAt     time.Time
 	SentAt        *time.Time
 }
+
+// NotificationRule is the stored override of a notification rule's defaults.
+// A nil Threshold or ForSeconds means the default.
+type NotificationRule struct {
+	ID         string
+	Enabled    bool
+	Threshold  *float64
+	ForSeconds *int
+}

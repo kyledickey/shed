@@ -220,6 +220,12 @@ func run() error {
 	})
 
 	gh := &api.GitHubHolder{}
+	notifier := notify.New(notifyStore{st}, cfg.Server.URL, log, notify.Hark(nil))
+	// Annotate drops events while telemetry is off; notifications don't depend on it.
+	events := func(e telemetry.Event) {
+		dashboards.Annotate(e)
+		notifier.Event(e)
+	}
 	deployer := deploy.New(deploy.Config{
 		Store:  st,
 		Docker: dc,
@@ -247,7 +253,7 @@ func run() error {
 			return s.Enabled, err
 		},
 		OTLPEndpoint: otlpEndpoint,
-		Events:       dashboards.Annotate,
+		Events:       events,
 		Attached:     stackExporters{&stack},
 		Log:          log,
 	})
@@ -288,11 +294,12 @@ func run() error {
 				if d.OOM {
 					text = "killed for running out of memory"
 				}
-				dashboards.Annotate(telemetry.Event{
+				events(telemetry.Event{
 					Kind:    telemetry.EventCrash,
 					Service: telemetry.Service{ProjectID: svc.ProjectID, ID: svc.ID, Name: svc.Name, Kind: svc.Kind},
 					Start:   time.Now(),
 					Text:    text,
+					OOM:     d.OOM,
 				})
 			},
 		},
@@ -308,7 +315,7 @@ func run() error {
 			return s3.New(s3.Config(c))
 		},
 		Dir:    backupDir,
-		Events: dashboards.Annotate,
+		Events: events,
 		Log:    log,
 	})
 
@@ -354,8 +361,6 @@ func run() error {
 		})
 	}
 	stack.OnEnabled(collector.SetRemote)
-
-	notifier := notify.New(notifyStore{st}, log, notify.Hark(nil))
 
 	// The gateway masks with the plane, which reports its listener errors.
 	var gateway *observability.Gateway
@@ -582,6 +587,20 @@ func (s notifyStore) DeliveryRetry(ctx context.Context, id string, next time.Tim
 
 func (s notifyStore) DeliveryFailed(ctx context.Context, id, lastError string) error {
 	return s.NotificationFailed(ctx, id, lastError)
+}
+
+func (s notifyStore) Rules(ctx context.Context) ([]notify.RuleOverride, error) {
+	rs, err := s.NotificationRules(ctx)
+	out := make([]notify.RuleOverride, len(rs))
+	for i, r := range rs {
+		out[i] = notify.RuleOverride(r)
+	}
+	return out, err
+}
+
+func (s notifyStore) ProjectName(ctx context.Context, id string) (string, error) {
+	p, err := s.Project(ctx, id)
+	return p.Name, err
 }
 
 func (s notifyStore) PruneDeliveries(ctx context.Context, t time.Time) error {

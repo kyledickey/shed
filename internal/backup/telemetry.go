@@ -48,9 +48,9 @@ func (m *Manager) service(ctx context.Context, serviceID string) (telemetry.Serv
 }
 
 // finish ends span, the span of a job of kind backup or restore for
-// serviceID that started at start, and records the job's outcome. size is
-// the archive size of a successful backup.
-func (m *Manager) finish(ctx context.Context, span trace.Span, kind, serviceID string, start time.Time, err error, size int64) {
+// serviceID, with the ID id, that started at start, and records the job's
+// outcome. size is the archive size of a successful backup.
+func (m *Manager) finish(ctx context.Context, span trace.Span, kind, id, serviceID string, start time.Time, err error, size int64) {
 	defer span.End()
 	ctx = context.WithoutCancel(ctx)
 	var labels []attribute.KeyValue
@@ -64,7 +64,7 @@ func (m *Manager) finish(ctx context.Context, span trace.Span, kind, serviceID s
 		outcome = "failed"
 		span.SetStatus(codes.Error, err.Error())
 	}
-	m.events(outcomeEvent(kind, svc, start, err))
+	m.events(outcomeEvent(kind, id, svc, start, err))
 	kindAttr := attribute.String("kind", kind)
 	m.runs.Add(ctx, 1, metric.WithAttributes(append(labels, kindAttr, attribute.String("outcome", outcome))...))
 	m.duration.Record(ctx, time.Since(start).Seconds(), metric.WithAttributes(append(labels, kindAttr)...))
@@ -73,14 +73,14 @@ func (m *Manager) finish(ctx context.Context, span trace.Span, kind, serviceID s
 	}
 }
 
-// outcomeEvent is the event of a job of kind backup or restore of svc that
+// outcomeEvent is the event of a job of kind backup or restore, with the ID id, of svc that
 // started at start and ended now with err.
-func outcomeEvent(kind string, svc telemetry.Service, start time.Time, err error) telemetry.Event {
+func outcomeEvent(kind, id string, svc telemetry.Service, start time.Time, err error) telemetry.Event {
 	target := "shed.db"
 	if svc.ID != "" {
 		target = svc.Name
 	}
-	e := telemetry.Event{Service: svc, Start: start, End: time.Now()}
+	e := telemetry.Event{ID: id, Service: svc, Start: start, End: time.Now()}
 	switch {
 	case kind == "restore" && err != nil:
 		e.Kind, e.Text = telemetry.EventRestoreFailed, "Restore of "+target+" failed: "+err.Error()

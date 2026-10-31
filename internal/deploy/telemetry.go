@@ -102,7 +102,7 @@ func (j *job) finish(ctx context.Context, span trace.Span) {
 	if j.dep.StartedAt == nil || j.dep.FinishedAt == nil {
 		return
 	}
-	ev := telemetry.Event{Service: svc, Start: *j.dep.StartedAt, End: *j.dep.FinishedAt}
+	ev := telemetry.Event{ID: j.dep.ID, Service: svc, Start: *j.dep.StartedAt, End: *j.dep.FinishedAt}
 	switch j.dep.Status {
 	case store.StatusActive:
 		ev.Kind, ev.Text = telemetry.EventDeployActive, "Deployment "+j.dep.ID+" active"+j.revision()
@@ -121,7 +121,7 @@ func (j *job) started() {
 		kind = telemetry.EventRedeploy
 	}
 	j.events(telemetry.Event{
-		Kind: kind, Service: j.service(), Start: *j.dep.StartedAt,
+		Kind: kind, ID: j.dep.ID, Service: j.service(), Start: *j.dep.StartedAt,
 		Text: "Deployment " + j.dep.ID + " started (" + string(j.dep.Trigger) + ")" + j.revision(),
 	})
 }

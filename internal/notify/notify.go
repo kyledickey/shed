@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -103,6 +104,10 @@ type Store interface {
 	DeliveryFailed(ctx context.Context, id, lastError string) error
 	// PruneDeliveries deletes sent and failed deliveries created before t.
 	PruneDeliveries(ctx context.Context, t time.Time) error
+	// Rules returns the stored rule overrides.
+	Rules(ctx context.Context) ([]RuleOverride, error)
+	// ProjectName returns the name of a project, or "" if there is none.
+	ProjectName(ctx context.Context, id string) (string, error)
 }
 
 const (
@@ -120,16 +125,21 @@ var retryDelays = []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute
 // use.
 type Notifier struct {
 	store     Store
+	baseURL   string
 	providers map[string]Provider
 	log       *slog.Logger
 	wake      chan struct{}
 	now       func() time.Time
+
+	mu    sync.Mutex
+	loops map[string]*loop // crash loop state by service ID
 }
 
 // New returns a Notifier over the channels and outbox in store, delivering
-// through providers. It panics if two providers share a name, which is a
+// through providers. Links in messages are relative to baseURL, the URL of
+// the dashboard. It panics if two providers share a name, which is a
 // wiring bug.
-func New(store Store, log *slog.Logger, providers ...Provider) *Notifier {
+func New(store Store, baseURL string, log *slog.Logger, providers ...Provider) *Notifier {
 	m := make(map[string]Provider, len(providers))
 	for _, p := range providers {
 		if _, dup := m[p.Name]; dup {
@@ -137,7 +147,7 @@ func New(store Store, log *slog.Logger, providers ...Provider) *Notifier {
 		}
 		m[p.Name] = p
 	}
-	return &Notifier{store: store, providers: m, log: log, wake: make(chan struct{}, 1), now: time.Now}
+	return &Notifier{store: store, baseURL: strings.TrimSuffix(baseURL, "/"), providers: m, log: log, wake: make(chan struct{}, 1), now: time.Now}
 }
 
 // Providers returns the registered providers sorted by name.

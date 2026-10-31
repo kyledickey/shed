@@ -91,3 +91,32 @@ func TestNotificationChannelsAPI(t *testing.T) {
 		t.Errorf("second delete = %d, want 404", rec.Code)
 	}
 }
+
+func TestNotificationRulesAPI(t *testing.T) {
+	f := newFixture(t)
+
+	rec := f.do("GET", "/api/notifications/rules", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"id":"service-crash-loop"`) ||
+		!strings.Contains(rec.Body.String(), `"threshold":3`) || !strings.Contains(rec.Body.String(), `"needsTelemetry":false`) {
+		t.Errorf("list = %d %s", rec.Code, rec.Body)
+	}
+
+	r := f.decode(f.do("PATCH", "/api/notifications/rules/service-crash-loop", `{"enabled":false,"threshold":4}`), http.StatusOK)
+	if r["enabled"] != false || r["threshold"] != 4.0 || r["available"] != true {
+		t.Errorf("patched = %v", r)
+	}
+	for _, tt := range []struct {
+		id, body string
+		code     int
+	}{
+		{"nope", `{"enabled":true}`, http.StatusNotFound},
+		{"service-crash-loop", `{"threshold":0}`, http.StatusBadRequest},
+		{"service-crash-loop", `{"threshold":1.5}`, http.StatusBadRequest},
+		{"deploy-failed", `{"threshold":1}`, http.StatusBadRequest},
+		{"deploy-failed", `{"forSeconds":-1}`, http.StatusBadRequest},
+	} {
+		if rec := f.do("PATCH", "/api/notifications/rules/"+tt.id, tt.body); rec.Code != tt.code {
+			t.Errorf("PATCH %s %s = %d %s, want %d", tt.id, tt.body, rec.Code, rec.Body, tt.code)
+		}
+	}
+}

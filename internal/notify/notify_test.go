@@ -17,7 +17,15 @@ var t0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 type fakeStore struct {
 	channels   []Channel
 	deliveries []*fakeDelivery
+	rules      []RuleOverride
+	projects   map[string]string
 	err        error
+}
+
+func (s *fakeStore) Rules(context.Context) ([]RuleOverride, error) { return s.rules, nil }
+
+func (s *fakeStore) ProjectName(_ context.Context, id string) (string, error) {
+	return s.projects[id], nil
 }
 
 type fakeDelivery struct {
@@ -108,7 +116,7 @@ type senderFunc func(context.Context, Message) error
 func (f senderFunc) Send(ctx context.Context, m Message) error { return f(ctx, m) }
 
 func newNotifier(st *fakeStore, f *fakeProvider) (*Notifier, *time.Time) {
-	n := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), f.provider("fake"))
+	n := New(st, "", slog.New(slog.NewTextHandler(io.Discard, nil)), f.provider("fake"))
 	clock := t0
 	n.now = func() time.Time { return clock }
 	return n, &clock
@@ -254,7 +262,7 @@ func TestRestartPicksUpPending(t *testing.T) {
 
 	// A new Notifier over the same store, as after a restart.
 	sent := make(chan struct{})
-	second := New(st, slog.New(slog.NewTextHandler(io.Discard, nil)), Provider{Name: "fake",
+	second := New(st, "", slog.New(slog.NewTextHandler(io.Discard, nil)), Provider{Name: "fake",
 		Open: func(string) (Sender, error) {
 			return senderFunc(func(context.Context, Message) error { close(sent); return nil }), nil
 		}})
@@ -320,7 +328,7 @@ func TestTest(t *testing.T) {
 
 func TestProvidersSorted(t *testing.T) {
 	f := &fakeProvider{}
-	n := New(&fakeStore{}, nil, f.provider("zeta"), f.provider("alpha"), Hark(nil))
+	n := New(&fakeStore{}, "", nil, f.provider("zeta"), f.provider("alpha"), Hark(nil))
 	var names []string
 	for _, p := range n.Providers() {
 		names = append(names, p.Name)
@@ -336,5 +344,5 @@ func TestNewDuplicatePanics(t *testing.T) {
 			t.Error("New did not panic on duplicate provider names")
 		}
 	}()
-	New(&fakeStore{}, nil, Hark(nil), Hark(nil))
+	New(&fakeStore{}, "", nil, Hark(nil), Hark(nil))
 }

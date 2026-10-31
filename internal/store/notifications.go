@@ -166,3 +166,26 @@ func (s *Store) PruneNotifications(ctx context.Context, t time.Time) error {
 	}
 	return nil
 }
+
+// NotificationRules returns the stored notification rule overrides.
+func (s *Store) NotificationRules(ctx context.Context) ([]NotificationRule, error) {
+	rs, err := queryAll(ctx, s, func(r scanner) (NotificationRule, error) {
+		var o NotificationRule
+		return o, r.Scan(&o.ID, &o.Enabled, &o.Threshold, &o.ForSeconds)
+	}, `SELECT id, enabled, threshold, for_seconds FROM notification_rules ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: notification rules: %w", err)
+	}
+	return rs, nil
+}
+
+// SetNotificationRule stores r, replacing any override of the same rule.
+func (s *Store) SetNotificationRule(ctx context.Context, r NotificationRule) error {
+	err := s.exec(ctx, `INSERT INTO notification_rules (id, enabled, threshold, for_seconds) VALUES (?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled, threshold = excluded.threshold,
+		for_seconds = excluded.for_seconds`, r.ID, r.Enabled, r.Threshold, r.ForSeconds)
+	if err != nil {
+		return fmt.Errorf("store: set notification rule %s: %w", r.ID, err)
+	}
+	return nil
+}

@@ -237,7 +237,7 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      auditLog,
 		Telemetry:  f.telemetry,
 		Dashboards: f.dashboards,
-		Notifier:   notify.New(nil, nil, fakeNotifyProvider()),
+		Notifier:   notify.New(nil, "", nil, fakeNotifyProvider()),
 		Stores:     control.TelemetryStores{Logs: f.logStore},
 		GitHub: func() (control.GitHub, bool) {
 			if c := gh.Get(); c != nil {

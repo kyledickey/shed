@@ -103,6 +103,8 @@ type Control interface {
 	DeleteNotificationChannel(ctx context.Context, id string) error
 	TestNotificationChannel(ctx context.Context, id string) error
 	NotificationDeliveries(ctx context.Context, limit int) ([]store.NotificationDelivery, error)
+	NotificationRules(ctx context.Context) ([]control.NotificationRule, error)
+	UpdateNotificationRule(ctx context.Context, id string, patch control.NotificationRulePatch) (control.NotificationRule, error)
 
 	UpdateStatus(ctx context.Context) (update.Status, error)
 	CheckUpdate(ctx context.Context) (update.Status, error)
@@ -321,6 +323,8 @@ func (s *Server) Handler() http.Handler {
 	authed("PATCH /api/notifications/channels/{id}", s.patchNotificationChannel)
 	authed("DELETE /api/notifications/channels/{id}", s.deleteNotificationChannel)
 	authed("POST /api/notifications/channels/{id}/test", s.testNotificationChannel)
+	authed("GET /api/notifications/rules", s.listNotificationRules)
+	authed("PATCH /api/notifications/rules/{id}", s.patchNotificationRule)
 	authed("GET /api/notifications/deliveries", s.listNotificationDeliveries)
 
 	authed("GET /api/update", s.getUpdate)

@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 
 	"github.com/kyledickey/shed/internal/audit"
@@ -141,4 +143,93 @@ func (p *Plane) validateChannel(c store.NotificationChannel) error {
 
 func toNotifyChannel(c store.NotificationChannel) notify.Channel {
 	return notify.Channel{ID: c.ID, Name: c.Name, Provider: c.Provider, Target: c.Target, Enabled: c.Enabled}
+}
+
+// NotificationRule is a notification rule with its overrides applied.
+type NotificationRule struct {
+	notify.Rule
+	// Available is false for a rule that cannot fire now, such as one that
+	// needs telemetry while it is off.
+	Available bool
+}
+
+// NotificationRulePatch changes a notification rule. A nil field stays as it
+// is.
+type NotificationRulePatch struct {
+	Enabled    *bool
+	Threshold  *float64
+	ForSeconds *int
+}
+
+// NotificationRules returns every notification rule with its settings.
+func (p *Plane) NotificationRules(ctx context.Context) ([]NotificationRule, error) {
+	rs, err := p.notificationRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NotificationRule, len(rs))
+	for i, r := range rs {
+		out[i] = NotificationRule{Rule: r, Available: !r.NeedsTelemetry}
+	}
+	return out, nil
+}
+
+func (p *Plane) notificationRules(ctx context.Context) ([]notify.Rule, error) {
+	os, err := p.store.NotificationRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	overrides := make([]notify.RuleOverride, len(os))
+	for i, o := range os {
+		overrides[i] = notify.RuleOverride(o)
+	}
+	return notify.MergeRules(overrides), nil
+}
+
+// UpdateNotificationRule applies patch to a rule and returns it.
+func (p *Plane) UpdateNotificationRule(ctx context.Context, id string, patch NotificationRulePatch) (NotificationRule, error) {
+	r, err := p.updateNotificationRule(ctx, id, patch)
+	p.record(ctx, err, audit.Event{Action: "notification.rule.update", Target: id, Detail: map[string]any{
+		"fields": changed([]field{
+			{"enabled", patch.Enabled != nil},
+			{"threshold", patch.Threshold != nil},
+			{"forSeconds", patch.ForSeconds != nil},
+		}),
+	}})
+	return r, err
+}
+
+func (p *Plane) updateNotificationRule(ctx context.Context, id string, patch NotificationRulePatch) (NotificationRule, error) {
+	if err := notify.ValidateRule(id, patch.Threshold, patch.ForSeconds); err != nil {
+		if errors.Is(err, notify.ErrUnknownRule) {
+			return NotificationRule{}, errorf(ErrNotFound, "%v", err)
+		}
+		return NotificationRule{}, errorf(ErrInvalid, "%v", err)
+	}
+	os, err := p.store.NotificationRules(ctx)
+	if err != nil {
+		return NotificationRule{}, err
+	}
+	// Start from the stored override, so a patch keeps the other overrides.
+	o := store.NotificationRule{ID: id, Enabled: true}
+	if i := slices.IndexFunc(os, func(o store.NotificationRule) bool { return o.ID == id }); i >= 0 {
+		o = os[i]
+	}
+	if patch.Enabled != nil {
+		o.Enabled = *patch.Enabled
+	}
+	if patch.Threshold != nil {
+		o.Threshold = patch.Threshold
+	}
+	if patch.ForSeconds != nil {
+		o.ForSeconds = patch.ForSeconds
+	}
+	if err := p.store.SetNotificationRule(ctx, o); err != nil {
+		return NotificationRule{}, err
+	}
+	rs, err := p.NotificationRules(ctx)
+	if err != nil {
+		return NotificationRule{}, err
+	}
+	return rs[slices.IndexFunc(rs, func(r NotificationRule) bool { return r.ID == id })], nil
 }

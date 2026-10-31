@@ -106,3 +106,64 @@ func TestNotificationChannels(t *testing.T) {
 		t.Errorf("audit actions:\n got %s\nwant %s", got, want)
 	}
 }
+
+func TestNotificationRules(t *testing.T) {
+	f := newFixture(t)
+	user := audit.Actor{Kind: audit.User, Name: "octocat", IP: "203.0.113.9"}
+	ctx := audit.WithActor(context.Background(), user)
+	find := func(id string) NotificationRule {
+		t.Helper()
+		rs, err := f.plane.NotificationRules(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rs {
+			if r.ID == id {
+				return r
+			}
+		}
+		t.Fatalf("no rule %s", id)
+		return NotificationRule{}
+	}
+
+	if r := find("service-crash-loop"); !r.Enabled || !r.Available || *r.Threshold != 3 || r.Unit != "crashes" {
+		t.Errorf("default crash loop = %+v", r)
+	}
+
+	off, five, bad, secs := false, 5.0, 2.5, 10
+	if _, err := f.plane.UpdateNotificationRule(ctx, "service-crash-loop", NotificationRulePatch{Threshold: &five}); err != nil {
+		t.Fatal(err)
+	}
+	// A later patch keeps the earlier threshold.
+	if _, err := f.plane.UpdateNotificationRule(ctx, "service-crash-loop", NotificationRulePatch{Enabled: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if r := find("service-crash-loop"); r.Enabled || *r.Threshold != 5 {
+		t.Errorf("crash loop = %+v, want disabled with threshold 5", r)
+	}
+	f.audit.take()
+
+	for _, tt := range []struct {
+		id    string
+		patch NotificationRulePatch
+		want  error
+	}{
+		{"nope", NotificationRulePatch{Enabled: &off}, ErrNotFound},
+		{"service-crash-loop", NotificationRulePatch{Threshold: &bad}, ErrInvalid},
+		{"deploy-failed", NotificationRulePatch{Threshold: &five}, ErrInvalid},
+		{"service-crash-loop", NotificationRulePatch{ForSeconds: &secs}, ErrInvalid},
+	} {
+		_, err := f.plane.UpdateNotificationRule(ctx, tt.id, tt.patch)
+		if !errors.Is(err, tt.want) {
+			t.Errorf("Update(%s, %+v) = %v, want %v", tt.id, tt.patch, err, tt.want)
+		}
+	}
+	if r := find("deploy-failed"); !r.Enabled {
+		t.Errorf("a rejected patch changed deploy-failed: %+v", r)
+	}
+	for _, e := range f.audit.take() {
+		if e.Action != "notification.rule.update" || e.Outcome == audit.OK {
+			t.Errorf("audit = %s %s, want failed notification.rule.update", e.Action, e.Outcome)
+		}
+	}
+}

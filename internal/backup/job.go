@@ -57,7 +57,7 @@ func (m *Manager) runBackup(ctx context.Context, b store.Backup) (err error) {
 	ctx, span := otel.Tracer(scope).Start(ctx, "backup", trace.WithAttributes(
 		attribute.String("shed.backup.id", b.ID), attribute.String("shed.backup.trigger", string(b.Trigger))))
 	start := time.Now()
-	defer func() { m.finish(ctx, span, "backup", b.ServiceID, start, err, b.Size) }()
+	defer func() { m.finish(ctx, span, "backup", b.ID, b.ServiceID, start, err, b.Size) }()
 	started := m.now()
 	b.Status, b.StartedAt = store.BackupRunning, &started
 	err = m.store.UpdateBackup(ctx, b)
@@ -509,7 +509,7 @@ func (m *Manager) runRestore(ctx context.Context, r store.Restore, b store.Backu
 		attribute.String("shed.restore.id", r.ID), attribute.String("shed.backup.id", b.ID)))
 	start := time.Now()
 	err := m.restore(ctx, r, b)
-	m.finish(ctx, span, "restore", r.ServiceID, start, err, 0)
+	m.finish(ctx, span, "restore", r.ID, r.ServiceID, start, err, 0)
 	finished := m.now()
 	r.FinishedAt = &finished
 	if err != nil {

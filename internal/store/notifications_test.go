@@ -106,3 +106,31 @@ func TestNotificationDeliveries(t *testing.T) {
 		t.Errorf("after prune: %+v, want only b", left)
 	}
 }
+
+func TestNotificationRules(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	if rs, err := s.NotificationRules(ctx); err != nil || len(rs) != 0 {
+		t.Fatalf("NotificationRules = %v, %v, want none", rs, err)
+	}
+	th, secs := 5.0, 30
+	for _, r := range []NotificationRule{
+		{ID: "a", Enabled: false},
+		{ID: "b", Enabled: true, Threshold: &th, ForSeconds: &secs},
+		{ID: "a", Enabled: true, Threshold: &th}, // replaces the first
+	} {
+		if err := s.SetNotificationRule(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs, err := s.NotificationRules(ctx)
+	if err != nil || len(rs) != 2 {
+		t.Fatalf("NotificationRules = %v, %v", rs, err)
+	}
+	if a := rs[0]; a.ID != "a" || !a.Enabled || a.Threshold == nil || *a.Threshold != 5 || a.ForSeconds != nil {
+		t.Errorf("a = %+v", a)
+	}
+	if b := rs[1]; b.ID != "b" || b.ForSeconds == nil || *b.ForSeconds != 30 {
+		t.Errorf("b = %+v", b)
+	}
+}

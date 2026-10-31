@@ -136,3 +136,51 @@ func (s *Server) listNotificationDeliveries(w http.ResponseWriter, r *http.Reque
 	}
 	return writeJSON(w, http.StatusOK, out)
 }
+
+type notificationRuleJSON struct {
+	ID             string   `json:"id"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	Enabled        bool     `json:"enabled"`
+	Threshold      *float64 `json:"threshold"`
+	Unit           string   `json:"unit"`
+	ForSeconds     *int     `json:"forSeconds"`
+	NeedsTelemetry bool     `json:"needsTelemetry"`
+	Available      bool     `json:"available"`
+}
+
+func toNotificationRule(r control.NotificationRule) notificationRuleJSON {
+	return notificationRuleJSON{ID: r.ID, Title: r.Title, Description: r.Description, Enabled: r.Enabled,
+		Threshold: r.Threshold, Unit: r.Unit, ForSeconds: r.ForSeconds,
+		NeedsTelemetry: r.NeedsTelemetry, Available: r.Available}
+}
+
+func (s *Server) listNotificationRules(w http.ResponseWriter, r *http.Request) error {
+	rs, err := s.control.NotificationRules(r.Context())
+	if err != nil {
+		return err
+	}
+	out := make([]notificationRuleJSON, len(rs))
+	for i, r := range rs {
+		out[i] = toNotificationRule(r)
+	}
+	return writeJSON(w, http.StatusOK, out)
+}
+
+type notificationRulePatch struct {
+	Enabled    *bool    `json:"enabled"`
+	Threshold  *float64 `json:"threshold"`
+	ForSeconds *int     `json:"forSeconds"`
+}
+
+func (s *Server) patchNotificationRule(w http.ResponseWriter, r *http.Request) error {
+	var req notificationRulePatch
+	if err := decodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	rule, err := s.control.UpdateNotificationRule(r.Context(), r.PathValue("id"), control.NotificationRulePatch(req))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, toNotificationRule(rule))
+}

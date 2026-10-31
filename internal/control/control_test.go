@@ -307,7 +307,7 @@ func newFixture(t *testing.T) *fixture {
 		Audit:      f.audit,
 		Telemetry:  f.tel,
 		Dashboards: f.dash,
-		Notifier:   notify.New(nil, nil, fakeNotifyProvider()),
+		Notifier:   notify.New(nil, "", nil, fakeNotifyProvider()),
 		ListenerError: func(serviceID string) string {
 			return f.listenerErrs[serviceID]
 		},

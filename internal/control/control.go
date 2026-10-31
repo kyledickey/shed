@@ -83,6 +83,8 @@ type Store interface {
 	UpdateNotificationChannel(ctx context.Context, c store.NotificationChannel) error
 	DeleteNotificationChannel(ctx context.Context, id string) error
 	NotificationDeliveries(ctx context.Context, limit int) ([]store.NotificationDelivery, error)
+	NotificationRules(ctx context.Context) ([]store.NotificationRule, error)
+	SetNotificationRule(ctx context.Context, r store.NotificationRule) error
 }
 
 var _ Store = (*store.Store)(nil)
