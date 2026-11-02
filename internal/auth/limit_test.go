@@ -45,6 +45,7 @@ func TestClientAddr(t *testing.T) {
 		{"behind proxy, last entry", "127.0.0.1:5000", []string{"10.0.0.1, 198.51.100.1"}, "198.51.100.1"},
 		{"behind proxy, last header", "[::1]:5000", []string{"10.0.0.1", "198.51.100.1"}, "198.51.100.1"},
 		{"behind proxy, garbage", "127.0.0.1:5000", []string{"nope"}, "127.0.0.1"},
+		{"behind proxy, no header", "127.0.0.1:5000", nil, "127.0.0.1"},
 		{"ipv6 by /64", "[2001:db8:1:2:3:4:5:6]:5000", nil, "2001:db8:1:2::"},
 		{"forwarded ipv6 by /64", "127.0.0.1:5000", []string{"2001:db8:1:2::9"}, "2001:db8:1:2::"},
 	}

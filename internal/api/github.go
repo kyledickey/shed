@@ -340,7 +340,7 @@ func (s *Server) receiveWebhook(w http.ResponseWriter, r *http.Request, d *deliv
 		return errorf(http.StatusUnauthorized, "invalid signature")
 	}
 	d.event = r.Header.Get("X-GitHub-Event")
-	r = r.WithContext(audit.WithActor(r.Context(), audit.Actor{Kind: audit.GitHub, IP: audit.ClientIP(r)}))
+	r = r.WithContext(audit.WithActor(r.Context(), audit.Actor{Kind: audit.GitHub}))
 	if d.event != "push" {
 		d.ignored = true
 		w.WriteHeader(http.StatusAccepted)

@@ -90,9 +90,20 @@ Metrics, labeled with the service's `shed_*` labels and `shed_source="edge"`:
 
 The path is never a label. A method other than the standard ones is counted as `other`.
 
-Each request is also an access record in VictoriaLogs, with `shed.source=edge`: `client_ip` (the visitor's address with [`proxy.cloudflare`](/docs/networking#cloudflare) on), `method`, `host`, `path`, `query`, `status`, `duration` in seconds, `bytes_in`, `bytes_out`, `user_agent`, `referer`, `tls_version`, and `trace_id`. The path, query, referer, and user agent have every variable value masked, like shed's own log. No other request header is recorded, so cookies and `Authorization` never are, and neither are bodies. Records wait in a queue of 4096 and ship once a second. When the store falls behind and the queue is full, new records are dropped and counted in `shed_telemetry_dropped_total{reason="edge_queue_full"}`; the metrics still count every request.
+Each request is also an access record in VictoriaLogs, with `shed.source=edge`: `method`, `host`, `path`, `status`, `duration` in seconds, `bytes_in`, `bytes_out`, `tls_version`, and `trace_id`. The path has every variable value masked, like shed's own log. [Client addresses](#client-addresses), query strings, request headers (so cookies and `Authorization` too), and bodies are never recorded. Records wait in a queue of 4096 and ship once a second. When the store falls behind and the queue is full, new records are dropped and counted in `shed_telemetry_dropped_total{reason="edge_queue_full"}`; the metrics still count every request.
 
 Each routed request also gets a trace. The proxy starts a server span named after the method, or continues the `traceparent` the client sent. It passes its own `traceparent` to your app, so spans your app's OpenTelemetry SDK records join the same trace. Requests for unrouted hosts get no span.
+
+## Client addresses
+
+shed never writes a client's IP address to disk, a visitor's or yours, and no setting turns this off.
+
+- **Not stored.** The client's address, port, and user agent, the referer, and the query string are left out of access records and audit events. Caddy's log, `caddy.log`, also leaves out the request's headers and URI. Spans lose their client address and user agent attributes when shed receives them, except outbound spans, whose peer is the server being called.
+- **Still recorded.** URL paths, in access records and spans. Don't put anything in a path you wouldn't want kept, beyond the variable values shed masks.
+- **Your apps.** Each app receives the visitor's address in `X-Forwarded-For`. What an app logs, or sets in attributes of its own, is its own: shed stores container output and OTLP records as sent.
+- **Rate limits.** The limit on [registering OAuth clients](/docs/mcp) holds the address in memory only.
+
+Upgrading removes addresses from the audit log and from the free space in `shed.db`. Backups of `shed.db` taken before the upgrade keep them until [backup retention](/docs/backups) removes them. Access records and spans from an older version stay until [retention](#retention-and-disk) removes them or you [delete telemetry data](#deleting-data), and older lines in `caddy.log` stay until Caddy rotates them out.
 
 ## Databases
 

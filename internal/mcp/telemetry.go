@@ -106,7 +106,7 @@ func (s *Server) addTelemetryTools() {
 		"Returns a service's error-level log records (container output and OTLP) since a time as text, one JSON object per line, newest first, with variable values masked as ***.",
 		s.errorLogs)
 	add(s, "slow_requests", "Slow requests",
-		"Returns the p50, p95, and p99 request duration of an app since a time, and its slowest requests, from the edge access records: time, method, host, path, status, duration, client IP, and trace ID.",
+		"Returns the p50, p95, and p99 request duration of an app since a time, and its slowest requests, from the edge access records: time, method, host, path, status, duration, and trace ID.",
 		s.slowRequests)
 	add(s, "top_queries", "Top queries",
 		"Lists the statements of a Postgres or MySQL service that took the most time in total, with calls, total and mean milliseconds, and rows, from the statistics its exporter reports since the database started.",
@@ -452,7 +452,6 @@ type slowRequestOut struct {
 	Path       string    `json:"path"`
 	Status     int       `json:"status"`
 	DurationMs float64   `json:"durationMs"`
-	ClientIP   string    `json:"clientIp,omitempty"`
 	TraceID    string    `json:"traceId,omitempty"`
 }
 
@@ -469,7 +468,7 @@ func (s *Server) slowRequests(ctx context.Context, _ *sdk.CallToolRequest, in sl
 	for _, r := range res.Requests {
 		out.Requests = append(out.Requests, slowRequestOut{
 			Time: r.Time, Method: r.Method, Host: r.Host, Path: cutRunes(r.Path, maxAttributeLen), Status: r.Status,
-			DurationMs: round2(r.DurationMs), ClientIP: r.ClientIP, TraceID: r.TraceID,
+			DurationMs: round2(r.DurationMs), TraceID: r.TraceID,
 		})
 	}
 	return nil, out, nil
@@ -556,6 +555,6 @@ const telemetryInstructions = `
 
 Telemetry: when it is on (telemetry_status), these tools read what shed collects. Every record carries the same labels. VictoriaMetrics: shed_project_id, shed_project_name, shed_service_id, shed_service_name, shed_service_kind, shed_deployment_id, shed_source (otlp, container, edge, exporter, sampler, docker, egress, audit, shed). VictoriaLogs has the same as fields with dots (shed.service.id, shed.project.id, shed.source, shed.deployment.id) and stream fields shed.project.id, shed.service.id, shed.source; container records also have stream (stdout or stderr), level, and trace_id. shed itself is service ID "shed". Filter by IDs, which survive renames.
 - query_metrics samples: sum(shed_container_memory_bytes{shed_service_id="ID"}); avg_over_time(shed_container_cpu_percent{shed_service_id="ID"}[5m]); sum by (code) (rate(shed_http_requests_total{shed_service_id="ID"}[5m])); histogram_quantile(0.95, sum by (le) (rate(shed_http_request_duration_seconds_bucket{shed_service_id="ID"}[5m]))); increase(shed_container_restarts_total{shed_service_id="ID"}[1h]); shed_telemetry_dropped_total. Container series: shed_container_{cpu_percent,memory_bytes,network_{rx,tx}_bytes_per_second,disk_{read,write}_bytes_per_second,cpu_limit_percent,memory_limit_bytes}; host series: shed_host_*. NaN and infinite values come back as null.
-- query_logs samples: _stream:{"shed.service.id"="ID"} error; _stream:{"shed.service.id"="ID","shed.source"="edge"} status:>=500 | limit 20; _stream:{"shed.source"="audit"} | limit 50. Edge records have client_ip, method, host, path, status, duration (seconds), and trace_id.
+- query_logs samples: _stream:{"shed.service.id"="ID"} error; _stream:{"shed.service.id"="ID","shed.source"="edge"} status:>=500 | limit 20; _stream:{"shed.source"="audit"} | limit 50. Edge records have method, host, path, status, duration (seconds), and trace_id.
 - A trace_id on a log record, a slow request, or a deployment opens in get_trace. error_logs, slow_requests, and top_queries answer common questions directly.
 - Telemetry tools fail with "telemetry is off" while it is off; the operator turns it on under Server > Telemetry.`

@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	stdlog "log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -613,6 +615,27 @@ func dashboardRoute(cfg config.Server) proxy.Route {
 	return proxy.Route{Host: u.Hostname(), Upstream: net.JoinHostPort(host, port)}
 }
 
+// panicAddr matches the client's address in net/http's panic message.
+var panicAddr = regexp.MustCompile(`panic serving \S+: `)
+
+// addrScrubber removes the client's address from what it writes.
+type addrScrubber struct{ io.Writer }
+
+func (w addrScrubber) Write(p []byte) (int, error) {
+	if _, err := w.Writer.Write(panicAddr.ReplaceAll(p, []byte("panic serving: "))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// serverErrorLog returns the logger for net/http's messages, without the
+// client address that a panic's message holds: shed never stores one.
+func serverErrorLog(h slog.Handler) *stdlog.Logger {
+	l := slog.NewLogLogger(h, slog.LevelWarn)
+	l.SetOutput(addrScrubber{l.Writer()})
+	return l
+}
+
 // serve runs the HTTP server until ctx is done, then shuts it down. Open
 // event streams are ended at shutdown rather than waited for.
 func serve(ctx context.Context, addr string, h http.Handler, log *slog.Logger) error {
@@ -624,7 +647,7 @@ func serve(ctx context.Context, addr string, h http.Handler, log *slog.Logger) e
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		BaseContext:       func(net.Listener) context.Context { return base },
-		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+		ErrorLog:          serverErrorLog(log.Handler()),
 	}
 	srv.RegisterOnShutdown(cancelBase)
 

@@ -13,6 +13,9 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// auditNoIPVersion is the migration that drops audit_events.actor_ip.
+const auditNoIPVersion = 23
+
 // migrate applies, in order, every embedded migration newer than the
 // database's PRAGMA user_version. Migration files are named NNN_name.sql, and
 // each runs in its own transaction. A database migrated past the newest
@@ -50,6 +53,22 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		}
 		if err := applyMigration(ctx, db, version, string(body)); err != nil {
 			return fmt.Errorf("store: apply %s: %w", file, err)
+		}
+	}
+	if current > 0 && current < auditNoIPVersion {
+		return purgeFreedPages(ctx, db)
+	}
+	return nil
+}
+
+// purgeFreedPages rewrites the database and empties the WAL. Dropping a column
+// leaves its values in freed space and the WAL, and those values were client
+// addresses, which shed doesn't keep. VACUUM can't run inside a migration's
+// transaction.
+func purgeFreedPages(ctx context.Context, db *sql.DB) error {
+	for _, q := range []string{"VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("store: %s: %w", q, err)
 		}
 	}
 	return nil

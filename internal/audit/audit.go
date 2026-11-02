@@ -1,6 +1,6 @@
 // Package audit keeps shed's audit log: one event per mutation, sign-in,
-// denial, and security-relevant read, saying who acted, from where, on what,
-// and whether it worked.
+// denial, and security-relevant read, saying who acted, on what, and whether
+// it worked. It never holds a client's address.
 //
 // The actor travels in the request context: the HTTP layer and auth set it
 // with [WithActor], and [Log.Record] reads it, so the code that records an
@@ -15,9 +15,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"net"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -37,15 +34,13 @@ const (
 	Anonymous Kind = "anonymous" // an unauthenticated request
 )
 
-// Actor is who acted and from where.
+// Actor is who acted.
 type Actor struct {
 	Kind Kind
 	// Name is the GitHub login of a user or agent.
 	Name string
 	// Client is the OAuth client of an agent: its ID and name.
 	ClientID, ClientName string
-	// IP is the client address of a request.
-	IP string
 }
 
 type actorKey struct{}
@@ -61,31 +56,6 @@ func ActorFrom(ctx context.Context) Actor {
 		return a
 	}
 	return Actor{Kind: System}
-}
-
-// ClientIP returns the address r came from. Behind the embedded proxy the
-// connection is from loopback and the proxy sets X-Forwarded-For,
-// overwriting what the client sent (or, behind Cloudflare, from
-// CF-Connecting-IP), so its last entry is trusted then.
-func ClientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip != nil && ip.IsLoopback() {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			last := xff[len(xff)-1]
-			last = strings.TrimSpace(last[strings.LastIndexByte(last, ',')+1:])
-			if fwd := net.ParseIP(last); fwd != nil {
-				ip = fwd
-			}
-		}
-	}
-	if ip == nil {
-		return host
-	}
-	return ip.String()
 }
 
 // Outcome is how an action ended.
@@ -148,9 +118,9 @@ func New(st Store, log *slog.Logger) *Log {
 }
 
 // Record appends e, done by the actor of ctx, to the log. Denials by
-// anonymous actors are coalesced into one row per action and IP per minute,
-// counted in detail.count. A failure to record is logged, not returned: the
-// action has already happened.
+// anonymous actors are coalesced into one row per action per minute, counted
+// in detail.count. A failure to record is logged, not returned: the action has
+// already happened.
 func (l *Log) Record(ctx context.Context, e Event) {
 	actor := ActorFrom(ctx)
 	detail := make(map[string]any, len(e.Detail)+2)
@@ -171,7 +141,6 @@ func (l *Log) Record(ctx context.Context, e Event) {
 		Time:      l.now(),
 		ActorKind: string(actor.Kind),
 		Actor:     actor.Name,
-		ActorIP:   actor.IP,
 		Action:    e.Action,
 		Outcome:   string(e.Outcome),
 		ProjectID: e.ProjectID,

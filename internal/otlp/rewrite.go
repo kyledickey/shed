@@ -26,6 +26,23 @@ var shedKeys = map[string]bool{
 	"shed.source":        true,
 }
 
+// clientAttrs are the span attributes that describe a request's client, which
+// shed never stores. On an outbound span the peer is the server, not a client,
+// so spans of kind client keep them.
+var clientAttrs = map[string]bool{
+	"client.address":       true,
+	"client.port":          true,
+	"network.peer.address": true,
+	"network.peer.port":    true,
+	"user_agent.original":  true,
+	"http.client_ip":       true,
+	"http.user_agent":      true,
+	"net.peer.ip":          true,
+	"net.peer.port":        true,
+	"net.sock.peer.addr":   true,
+	"net.sock.peer.port":   true,
+}
+
 // stamp masks res's attributes and sets the shed.* attributes from src,
 // keeping a non-empty service.name the sender set. It returns res, or a new
 // resource if res is nil.
@@ -85,6 +102,11 @@ func reserved(key string) bool {
 // dropReserved removes the attributes whose keys are reserved from kvs.
 func dropReserved(kvs []*commonpb.KeyValue) []*commonpb.KeyValue {
 	return slices.DeleteFunc(kvs, func(kv *commonpb.KeyValue) bool { return reserved(kv.GetKey()) })
+}
+
+// dropClientAttrs removes the attributes in clientAttrs from kvs.
+func dropClientAttrs(kvs []*commonpb.KeyValue) []*commonpb.KeyValue {
+	return slices.DeleteFunc(kvs, func(kv *commonpb.KeyValue) bool { return clientAttrs[kv.GetKey()] })
 }
 
 func str(key, value string) *commonpb.KeyValue {

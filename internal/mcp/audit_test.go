@@ -20,7 +20,7 @@ func TestAuditEventsTool(t *testing.T) {
 		t.Fatal(text)
 	}
 	for _, want := range []string{
-		`"action":"service.variables.update"`, `"actorIp":"203.0.113.9"`, `"detail":{"added":["API_TOKEN"],"service":"web"}`,
+		`"action":"service.variables.update"`, `"detail":{"added":["API_TOKEN"],"service":"web"}`,
 		`"actorKind":"system","id":6,`, `"outcome":"failed"`,
 	} {
 		if !strings.Contains(text, want) {
@@ -60,7 +60,7 @@ func TestParseSince(t *testing.T) {
 
 func TestToolCallsAudited(t *testing.T) {
 	f := &fakeBackend{}
-	agent := audit.Actor{Kind: audit.Agent, Name: "octocat", ClientID: "c1", ClientName: "Claude", IP: "203.0.113.9"}
+	agent := audit.Actor{Kind: audit.Agent, Name: "octocat", ClientID: "c1", ClientName: "Claude"}
 	cs := connectWith(t, f, func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h.ServeHTTP(w, r.WithContext(audit.WithActor(r.Context(), agent)))

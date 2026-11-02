@@ -388,7 +388,6 @@ export type AuditEvent = {
   actorKind: AuditActorKind;
   /** GitHub login of a user or agent, "" otherwise. */
   actor: string;
-  actorIp: string;
   /** Dotted, e.g. service.variables.update. */
   action: string;
   outcome: AuditOutcome;

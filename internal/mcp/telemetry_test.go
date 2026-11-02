@@ -146,7 +146,7 @@ func (f *fakeBackend) SlowRequests(_ context.Context, id string, since time.Time
 	}
 	f.tel.since, f.tel.limit = since, limit
 	return control.SlowRequests{P50Ms: 10.123, P95Ms: 250, P99Ms: 1500, Requests: []control.SlowRequest{
-		{Time: created, Method: "GET", Host: "web.example.com", Path: "/slow", Status: 200, DurationMs: 1250.456, ClientIP: "203.0.113.9", TraceID: "t1"},
+		{Time: created, Method: "GET", Host: "web.example.com", Path: "/slow", Status: 200, DurationMs: 1250.456, TraceID: "t1"},
 	}}, nil
 }
 
@@ -196,7 +196,7 @@ func TestTelemetryTools(t *testing.T) {
 			[]string{`"traceId":"t1"`, `"durationMs":1.5`, `"spans":3`, `"errors":1`}},
 		{"get_trace", map[string]any{"trace_id": strings.Repeat("a", 32)}, []string{`"spanId":"s1"`, `"parentId":"s1"`, `"status":"error"`, `"http.method":"GET"`, `"durationMs":2`}},
 		{"error_logs", map[string]any{"service_id": "svc1", "since": "2h", "limit": 5}, []string{`"_msg":"boom"`}},
-		{"slow_requests", map[string]any{"service_id": "svc1"}, []string{`"p50Ms":10.12`, `"p99Ms":1500`, `"durationMs":1250.46`, `"clientIp":"203.0.113.9"`, `"traceId":"t1"`}},
+		{"slow_requests", map[string]any{"service_id": "svc1"}, []string{`"p50Ms":10.12`, `"p99Ms":1500`, `"durationMs":1250.46`, `"traceId":"t1"`}},
 		{"top_queries", map[string]any{"service_id": "db1"}, []string{`"query":"SELECT $1"`, `"calls":10`, `"totalMs":3000`, `"meanMs":300`}},
 		{"list_dashboards", map[string]any{"folder_uid": "s-svc1"}, []string{`"uid":"svc-overview-svc1"`, `"folder":"web"`, `"url":"https://shed.example.com/grafana/d/svc-overview-svc1"`, `"customized":true`}},
 	}

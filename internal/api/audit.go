@@ -15,7 +15,6 @@ type auditEventJSON struct {
 	Time      time.Time       `json:"ts"`
 	ActorKind string          `json:"actorKind"`
 	Actor     string          `json:"actor"`
-	ActorIP   string          `json:"actorIp"`
 	Action    string          `json:"action"`
 	Outcome   string          `json:"outcome"`
 	ProjectID string          `json:"projectId"`
@@ -53,7 +52,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) error {
 	out := auditPageJSON{Events: make([]auditEventJSON, 0, len(page.Events))}
 	for _, e := range page.Events {
 		out.Events = append(out.Events, auditEventJSON{
-			ID: e.ID, Time: e.Time, ActorKind: e.ActorKind, Actor: e.Actor, ActorIP: e.ActorIP,
+			ID: e.ID, Time: e.Time, ActorKind: e.ActorKind, Actor: e.Actor,
 			Action: e.Action, Outcome: e.Outcome, ProjectID: e.ProjectID, ServiceID: e.ServiceID,
 			Target: e.Target, Detail: json.RawMessage(e.Detail),
 		})
@@ -96,11 +95,11 @@ func positiveInt(v, name string) (int64, error) {
 	return n, nil
 }
 
-// withAnonymous makes every request's audit actor anonymous, at the client
-// address, until authentication names someone.
+// withAnonymous makes every request's audit actor anonymous until
+// authentication names someone.
 func withAnonymous(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous, IP: audit.ClientIP(r)})
+		ctx := audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

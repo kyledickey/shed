@@ -232,9 +232,9 @@ func TestEdgeIntegration(t *testing.T) {
 			return false, fmt.Sprintf("%d records, %v", len(recs), err)
 		}
 		for _, r := range recs {
-			if r["host"] != "edge.localhost" || r["path"] != "/hello" || r["query"] != "token=***&page=2" ||
+			if r["host"] != "edge.localhost" || r["path"] != "/hello" || r["query"] != "" ||
 				r["status"] != "200" || r["method"] != "GET" || r["trace_id"] != traceID ||
-				r["client_ip"] != "127.0.0.1" || r["tls_version"] != "TLS 1.3" ||
+				r["client_ip"] != "" || r["tls_version"] != "TLS 1.3" ||
 				r["shed.service.name"] != "web" || r["shed.project.id"] != project.ID {
 				return false, fmt.Sprint(r)
 			}

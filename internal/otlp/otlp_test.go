@@ -666,6 +666,49 @@ func TestMasking(t *testing.T) {
 	}
 }
 
+func TestSpanClientAttributes(t *testing.T) {
+	keys := []string{
+		"client.address", "client.port", "network.peer.address", "network.peer.port", "user_agent.original",
+		"http.client_ip", "http.user_agent", "net.peer.ip", "net.peer.port", "net.sock.peer.addr", "net.sock.peer.port",
+	}
+	tests := []struct {
+		name string
+		kind tracepb.Span_SpanKind
+		keep bool
+	}{
+		{"unspecified", tracepb.Span_SPAN_KIND_UNSPECIFIED, false},
+		{"internal", tracepb.Span_SPAN_KIND_INTERNAL, false},
+		{"server", tracepb.Span_SPAN_KIND_SERVER, false},
+		{"producer", tracepb.Span_SPAN_KIND_PRODUCER, false},
+		{"consumer", tracepb.Span_SPAN_KIND_CONSUMER, false},
+		{"client", tracepb.Span_SPAN_KIND_CLIENT, true}, // the peer of an outbound span is the server
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t, nil)
+			req := spans("span")
+			span := req.ResourceSpans[0].ScopeSpans[0].Spans[0]
+			span.Kind = tt.kind
+			span.Attributes = []*commonpb.KeyValue{str("server.address", "web.example.com")}
+			for _, k := range keys {
+				span.Attributes = append(span.Attributes, str(k, "203.0.113.9"))
+			}
+			if w := f.post("/v1/traces", req); w.Code != http.StatusOK {
+				t.Fatalf("status = %d", w.Code)
+			}
+			got := attrMap(t, lastTraces(t, f).ResourceSpans[0].ScopeSpans[0].Spans[0].Attributes)
+			if got["server.address"] != "web.example.com" {
+				t.Errorf("server.address = %q, want it kept", got["server.address"])
+			}
+			for _, k := range keys {
+				if _, ok := got[k]; ok != tt.keep {
+					t.Errorf("%s kept = %t, want %t", k, ok, tt.keep)
+				}
+			}
+		})
+	}
+}
+
 func TestRateCaps(t *testing.T) {
 	type step struct {
 		advance      time.Duration

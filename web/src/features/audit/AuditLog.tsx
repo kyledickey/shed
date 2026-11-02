@@ -192,7 +192,6 @@ function AuditRow({ event: e, service }: { event: AuditEvent; service?: string }
           </Badge>
           {e.actor && <span className={styles.who}>{e.actor}</span>}
           {client && <span>via {client}</span>}
-          {e.actorIp && <span className={styles.mono}>{e.actorIp}</span>}
         </span>
         <Detail event={e} />
       </div>

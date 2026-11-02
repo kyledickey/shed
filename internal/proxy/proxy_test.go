@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -67,11 +68,16 @@ func TestApply(t *testing.T) {
 		HTTPPort: freePort(t), HTTPSPort: freePort(t), StorageDir: t.TempDir(), Cloudflare: true,
 		Access:    func(e AccessEntry) { entries <- e },
 		TracesURL: otlp.URL + "/v1/traces",
+		LogFile:   filepath.Join(t.TempDir(), "caddy.log"),
 	}
 	p := New(cfg)
 	t.Cleanup(func() { p.Stop() })
 
-	routes := []Route{{Host: "localhost", Upstream: strings.TrimPrefix(upstream.URL, "http://")}}
+	routes := []Route{
+		{Host: "localhost", Upstream: strings.TrimPrefix(upstream.URL, "http://")},
+		// Not 127.0.0.1, which the log must not mention: the error names the upstream.
+		{Host: "dead.localhost", Upstream: fmt.Sprintf("127.0.0.2:%d", freePort(t))},
+	}
 	if err := p.Apply(routes); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
@@ -131,6 +137,55 @@ func TestApply(t *testing.T) {
 		t.Errorf("got %d access entries while telemetry is off", len(entries))
 	}
 
+	const queryValue = "query-sentinel"
+	failUpstream := func() {
+		t.Helper()
+		req, _ := http.NewRequest("GET", fmt.Sprintf("https://localhost:%d/fail?token=%s", cfg.HTTPSPort, queryValue), nil)
+		req.Host = "dead.localhost"
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Errorf("dead upstream status = %d, want 502", resp.StatusCode)
+		}
+	}
+	// checkLog waits for the nth upstream error in caddy.log, then checks that
+	// the file holds nothing that identifies the client.
+	checkLog := func(n int) {
+		t.Helper()
+		var log string
+		for range 50 {
+			b, err := os.ReadFile(cfg.LogFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			log = string(b)
+			if strings.Count(log, "dial tcp 127.0.0.2") >= n && strings.Contains(log, "tls-alpn challenge") {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if strings.Count(log, "dial tcp 127.0.0.2") < n || !strings.Contains(log, "tls-alpn challenge") {
+			t.Fatalf("caddy.log lacks %d upstream errors and the ALPN error:\n%s", n, log)
+		}
+		for _, leak := range []string{"198.51.100.1", "198.51.100.2", "127.0.0.1", "::1", queryValue} {
+			if strings.Contains(log, leak) {
+				t.Errorf("caddy.log contains %q:\n%s", leak, log)
+			}
+		}
+	}
+	failUpstream()
+	// Any client can make certmagic log its address this way: no challenge is pending.
+	conn, err := tls.Dial("tcp", fmt.Sprintf("localhost:%d", cfg.HTTPSPort), &tls.Config{
+		InsecureSkipVerify: true, ServerName: "localhost", NextProtos: []string{"acme-tls/1"},
+	})
+	if err == nil {
+		conn.Close()
+	}
+	checkLog(1)
+
 	t.Run("telemetry", func(t *testing.T) {
 		if err := p.SetTelemetry(true); err != nil {
 			t.Fatalf("SetTelemetry(true) error = %v", err)
@@ -141,8 +196,6 @@ func TestApply(t *testing.T) {
 		const traceID, parentID = "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7"
 		req, _ := http.NewRequest("GET", fmt.Sprintf("https://localhost:%d/edge?token=abc", cfg.HTTPSPort), nil)
 		req.Header.Set("Traceparent", "00-"+traceID+"-"+parentID+"-01")
-		req.Header.Set("User-Agent", "edge-test")
-		req.Header.Set("Referer", "https://example.com/from")
 		req.Header.Set("Authorization", "Bearer secret-token")
 		req.Header.Set("Cookie", "session=secret-cookie")
 		resp, err := client.Do(req)
@@ -161,14 +214,10 @@ func TestApply(t *testing.T) {
 		}
 
 		e := receive(t, entries)
-		if e.Method != "GET" || e.Host != "localhost" || e.Path != "/edge" || e.Query != "token=abc" ||
+		if e.Method != "GET" || e.Host != "localhost" || e.Path != "/edge" ||
 			e.Status != 200 || e.BytesOut != int64(len(body)) || e.Duration <= 0 ||
-			e.UserAgent != "edge-test" || e.Referer != "https://example.com/from" ||
 			e.TLSVersion != "TLS 1.3" || e.TraceID != traceID || time.Since(e.Time) > time.Minute {
 			t.Errorf("access entry = %+v", e)
-		}
-		if ip, err := netip.ParseAddr(e.ClientIP); err != nil || !ip.IsLoopback() {
-			t.Errorf("access entry client IP = %q, want the loopback client", e.ClientIP)
 		}
 
 		// Requests for hosts without a route are logged too.
@@ -180,6 +229,12 @@ func TestApply(t *testing.T) {
 		if e := receive(t, entries); e.Host != "unknown.example" || e.Status != 404 || e.TraceID != "" {
 			t.Errorf("unrouted access entry = %+v", e)
 		}
+
+		failUpstream()
+		if e := receive(t, entries); e.Host != "dead.localhost" || e.Path != "/fail" || e.Status != http.StatusBadGateway {
+			t.Errorf("failed access entry = %+v", e)
+		}
+		checkLog(2)
 
 		// Turning telemetry off removes the tracing handlers, which flushes
 		// Caddy's spans.

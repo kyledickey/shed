@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -45,44 +44,15 @@ func TestActorFrom(t *testing.T) {
 	if got := ActorFrom(context.Background()); got != (Actor{Kind: System}) {
 		t.Errorf("ActorFrom(empty) = %+v, want system", got)
 	}
-	a := Actor{Kind: User, Name: "octocat", IP: "203.0.113.9"}
+	a := Actor{Kind: User, Name: "octocat"}
 	if got := ActorFrom(WithActor(context.Background(), a)); got != a {
 		t.Errorf("ActorFrom() = %+v, want %+v", got, a)
 	}
 }
 
-func TestClientIP(t *testing.T) {
-	tests := []struct {
-		name   string
-		remote string
-		xff    []string
-		want   string
-	}{
-		{"direct", "203.0.113.9:5000", nil, "203.0.113.9"},
-		{"direct ignores forwarded", "203.0.113.9:5000", []string{"198.51.100.1"}, "203.0.113.9"},
-		{"proxied", "127.0.0.1:5000", []string{"198.51.100.1"}, "198.51.100.1"},
-		{"proxied last entry", "127.0.0.1:5000", []string{"10.0.0.1, 198.51.100.1"}, "198.51.100.1"},
-		{"proxied last header", "[::1]:5000", []string{"10.0.0.1", "2001:db8::1"}, "2001:db8::1"},
-		{"proxied without header", "127.0.0.1:5000", nil, "127.0.0.1"},
-		{"proxied bad header", "127.0.0.1:5000", []string{"nonsense"}, "127.0.0.1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", "/", nil)
-			r.RemoteAddr = tt.remote
-			for _, v := range tt.xff {
-				r.Header.Add("X-Forwarded-For", v)
-			}
-			if got := ClientIP(r); got != tt.want {
-				t.Errorf("ClientIP() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestRecord(t *testing.T) {
 	l, st := newLog(t)
-	ctx := WithActor(context.Background(), Actor{Kind: Agent, Name: "octocat", ClientID: "c1", ClientName: "Claude", IP: "203.0.113.9"})
+	ctx := WithActor(context.Background(), Actor{Kind: Agent, Name: "octocat", ClientID: "c1", ClientName: "Claude"})
 	l.Record(ctx, Event{Action: "mcp.call", Outcome: OK, ServiceID: "s1", Detail: map[string]any{"tool": "get_service"}})
 	l.Record(context.Background(), Event{Action: "deployment.create", Outcome: Failed, Target: "d1"})
 
@@ -91,7 +61,7 @@ func TestRecord(t *testing.T) {
 		t.Fatalf("got %d events, want 2", len(got))
 	}
 	sys, agent := got[0], got[1]
-	if agent.ActorKind != "agent" || agent.Actor != "octocat" || agent.ActorIP != "203.0.113.9" ||
+	if agent.ActorKind != "agent" || agent.Actor != "octocat" ||
 		agent.Action != "mcp.call" || agent.Outcome != "ok" || agent.ServiceID != "s1" {
 		t.Errorf("agent event = %+v", agent)
 	}
@@ -107,38 +77,36 @@ func TestRecordCoalescesAnonymousDenials(t *testing.T) {
 	l, st := newLog(t)
 	now := time.Date(2026, 3, 1, 12, 0, 10, 0, time.UTC)
 	l.now = func() time.Time { return now }
-	from := func(kind Kind, ip string) context.Context {
-		return WithActor(context.Background(), Actor{Kind: kind, IP: ip})
+	from := func(kind Kind) context.Context {
+		return WithActor(context.Background(), Actor{Kind: kind})
 	}
 	deny := func(ctx context.Context, action string) {
 		l.Record(ctx, Event{Action: action, Outcome: Denied})
 	}
 
 	for range 3 {
-		deny(from(Anonymous, "203.0.113.9"), "webhook.signature.invalid")
+		deny(from(Anonymous), "webhook.signature.invalid")
 	}
-	deny(from(Anonymous, "198.51.100.1"), "webhook.signature.invalid")
-	deny(from(Anonymous, "203.0.113.9"), "setup.token.invalid")
-	deny(from(User, "203.0.113.9"), "oauth.denied")
-	deny(from(User, "203.0.113.9"), "oauth.denied")
+	deny(from(Anonymous), "setup.token.invalid")
+	deny(from(User), "oauth.denied")
+	deny(from(User), "oauth.denied")
 	now = now.Add(time.Minute)
-	deny(from(Anonymous, "203.0.113.9"), "webhook.signature.invalid")
+	deny(from(Anonymous), "webhook.signature.invalid")
 
 	type row struct {
-		action, ip string
-		count      any
+		action string
+		count  any
 	}
 	var got []row
 	for _, e := range events(t, st) {
-		got = append(got, row{e.Action, e.ActorIP, detail(t, e)["count"]})
+		got = append(got, row{e.Action, detail(t, e)["count"]})
 	}
 	want := []row{
-		{"webhook.signature.invalid", "203.0.113.9", 1.0}, // the next minute
-		{"oauth.denied", "203.0.113.9", nil},              // signed-in denials are not coalesced
-		{"oauth.denied", "203.0.113.9", nil},
-		{"setup.token.invalid", "203.0.113.9", 1.0},
-		{"webhook.signature.invalid", "198.51.100.1", 1.0},
-		{"webhook.signature.invalid", "203.0.113.9", 3.0},
+		{"webhook.signature.invalid", 1.0}, // the next minute
+		{"oauth.denied", nil},              // signed-in denials are not coalesced
+		{"oauth.denied", nil},
+		{"setup.token.invalid", 1.0},
+		{"webhook.signature.invalid", 3.0},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %v, want %v", got, want)

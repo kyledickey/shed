@@ -32,7 +32,7 @@ func (f sender) Send(ctx context.Context, m notify.Message) error { return f(ctx
 
 func TestNotificationChannels(t *testing.T) {
 	f := newFixture(t)
-	user := audit.Actor{Kind: audit.User, Name: "octocat", IP: "203.0.113.9"}
+	user := audit.Actor{Kind: audit.User, Name: "octocat"}
 	ctx := audit.WithActor(context.Background(), user)
 
 	if got := f.plane.NotificationProviders(); len(got) != 1 || got[0] != "fake" {
@@ -109,7 +109,7 @@ func TestNotificationChannels(t *testing.T) {
 
 func TestNotificationRules(t *testing.T) {
 	f := newFixture(t)
-	user := audit.Actor{Kind: audit.User, Name: "octocat", IP: "203.0.113.9"}
+	user := audit.Actor{Kind: audit.User, Name: "octocat"}
 	ctx := audit.WithActor(context.Background(), user)
 	find := func(id string) NotificationRule {
 		t.Helper()

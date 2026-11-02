@@ -171,10 +171,10 @@ func find(points []map[string]any, want map[string]any) map[string]any {
 	return nil
 }
 
-func entry(host, method, path, query string, status int) proxy.AccessEntry {
+func entry(host, method, path string, status int) proxy.AccessEntry {
 	return proxy.AccessEntry{
-		Time: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC), ClientIP: "203.0.113.7",
-		Method: method, Host: host, Path: path, Query: query, Status: status,
+		Time:   time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC),
+		Method: method, Host: host, Path: path, Status: status,
 		Duration: 150 * time.Millisecond, BytesIn: 10, BytesOut: 2048,
 	}
 }
@@ -182,10 +182,10 @@ func entry(host, method, path, query string, status int) proxy.AccessEntry {
 func TestEdgeAttributesRequestsToServices(t *testing.T) {
 	f := newEdgeFixture(t, nil)
 	f.run(t)
-	f.edge.Handle(entry("web.example.com", "GET", "/", "", 200))
-	f.edge.Handle(entry("web.example.com", "BREW", "/", "", 405))
-	f.edge.Handle(entry("shed.example.com", "POST", "/api/x", "", 500))
-	f.edge.Handle(entry("scanner.example.net", "GET", "/.env", "", 404))
+	f.edge.Handle(entry("web.example.com", "GET", "/", 200))
+	f.edge.Handle(entry("web.example.com", "BREW", "/", 405))
+	f.edge.Handle(entry("shed.example.com", "POST", "/api/x", 500))
+	f.edge.Handle(entry("scanner.example.net", "GET", "/.env", 404))
 
 	reqs := f.points(t, "shed_http_requests_total")
 	for _, want := range []map[string]any{
@@ -216,7 +216,7 @@ func TestEdgeAttributesRequestsToServices(t *testing.T) {
 	web := byPath["/"]
 	if web["shed.service.id"] != "s1" || web["shed.project.name"] != "shop" || web["shed.source"] != "edge" ||
 		web["status"] != "200" || web["duration"] != "0.15" || web["bytes_out"] != "2048" ||
-		web["client_ip"] != "203.0.113.7" || web["_time"] != "2026-10-27T12:00:00Z" {
+		web["_time"] != "2026-10-27T12:00:00Z" {
 		t.Errorf("record for web.example.com = %v", web)
 	}
 	if r := byPath["/.env"]; r["shed.service.id"] != "" || r["host"] != "scanner.example.net" {
@@ -240,7 +240,7 @@ func TestEdgeRefreshPicksUpNewDomains(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("api.example.com was not attributed to s2 after Refresh")
 		}
-		f.edge.Handle(entry("api.example.com", "GET", "/", "", 200))
+		f.edge.Handle(entry("api.example.com", "GET", "/", 200))
 		time.Sleep(10 * time.Millisecond)
 	}
 }
@@ -250,21 +250,25 @@ func TestEdgeMasksRecords(t *testing.T) {
 	f := newEdgeFixture(t, func(s string) string { return strings.ReplaceAll(s, secret, "***") })
 	f.run(t)
 	tests := []struct {
-		path, query, wantPath, wantQuery string
+		path, wantPath string
 	}{
-		{"/", "key=" + secret + "&page=2", "/", "key=***&page=2"},
-		{"/", "key=s3cr3t%2Dapi%2Dkey", "/", "key=***"},
-		{"/hooks/" + secret, "", "/hooks/***", ""},
-		{"/plain", "q=hello%20world", "/plain", "q=hello%20world"},
+		{"/hooks/" + secret, "/hooks/***"},
+		{"/hooks/s3cr3t%2Dapi%2Dkey", "/hooks/***"},
+		{"/plain%20path", "/plain%20path"},
 	}
 	for _, tt := range tests {
-		f.edge.Handle(entry("web.example.com", "GET", tt.path, tt.query, 200))
+		f.edge.Handle(entry("web.example.com", "GET", tt.path, 200))
 	}
 	recs := f.logs.wait(t, len(tests))
 	for i, tt := range tests {
 		r := recs[i]
-		if r["path"] != tt.wantPath || r["query"] != tt.wantQuery || strings.Contains(r["_msg"], secret) {
-			t.Errorf("record for %s?%s: path %q, query %q, msg %q; want %q, %q", tt.path, tt.query, r["path"], r["query"], r["_msg"], tt.wantPath, tt.wantQuery)
+		if r["path"] != tt.wantPath || strings.Contains(r["_msg"], secret) {
+			t.Errorf("record for %s: path %q, msg %q; want %q", tt.path, r["path"], r["_msg"], tt.wantPath)
+		}
+		for _, field := range []string{"client_ip", "query", "user_agent", "referer"} {
+			if _, ok := r[field]; ok {
+				t.Errorf("record for %s has %s: %v", tt.path, field, r)
+			}
 		}
 	}
 }
@@ -275,7 +279,7 @@ func TestEdgeDropsWhenQueueIsFull(t *testing.T) {
 	f.edge.hosts.Store(&map[string]telemetry.Service{"web.example.com": {ID: "s1", Name: "web", Kind: "app"}})
 	f.edge.running.Store(true)
 	for range edgeQueue + 3 {
-		f.edge.Handle(entry("web.example.com", "GET", "/", "", 200))
+		f.edge.Handle(entry("web.example.com", "GET", "/", 200))
 	}
 	p := find(f.points(t, "shed_telemetry_dropped_total"), map[string]any{"shed_service_id": "s1", "signal": "logs", "reason": "edge_queue_full"})
 	if p == nil || p["value"] != int64(3) {
@@ -288,7 +292,7 @@ func TestEdgeDropsWhenQueueIsFull(t *testing.T) {
 
 func TestEdgeIgnoresEntriesWhileStopped(t *testing.T) {
 	f := newEdgeFixture(t, nil)
-	f.edge.Handle(entry("web.example.com", "GET", "/", "", 200))
+	f.edge.Handle(entry("web.example.com", "GET", "/", 200))
 	if p := f.points(t, "shed_http_requests_total"); len(p) != 0 {
 		t.Errorf("recorded %v before Run", p)
 	}

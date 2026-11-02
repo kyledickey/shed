@@ -455,7 +455,6 @@ type auditEventOut struct {
 	Time      time.Time      `json:"ts"`
 	ActorKind string         `json:"actorKind" jsonschema:"user, agent, github, system, docker, or anonymous"`
 	Actor     string         `json:"actor,omitempty" jsonschema:"GitHub login of a user or agent"`
-	ActorIP   string         `json:"actorIp,omitempty"`
 	Action    string         `json:"action"`
 	Outcome   string         `json:"outcome" jsonschema:"ok, failed, or denied"`
 	ProjectID string         `json:"projectId,omitempty"`
@@ -468,7 +467,7 @@ func toAudit(p audit.Page) auditOut {
 	out := auditOut{Events: make([]auditEventOut, 0, len(p.Events))}
 	for _, e := range p.Events {
 		ev := auditEventOut{
-			ID: e.ID, Time: e.Time, ActorKind: e.ActorKind, Actor: e.Actor, ActorIP: e.ActorIP,
+			ID: e.ID, Time: e.Time, ActorKind: e.ActorKind, Actor: e.Actor,
 			Action: e.Action, Outcome: e.Outcome, ProjectID: e.ProjectID, ServiceID: e.ServiceID, Target: e.Target,
 		}
 		// A detail that does not decode is left out; the store only keeps

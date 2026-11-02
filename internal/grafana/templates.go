@@ -58,7 +58,7 @@ func ServiceDashboards(projectID, serviceID, kind string) []Dashboard {
 		b.row("Logs")
 		serviceLogs(b, id)
 	}
-	ts := []template{{"svc-overview", "Overview", 2, build}}
+	ts := []template{{"svc-overview", "Overview", 3, build}}
 	return render(ts, serviceID, []string{"shed", "service:" + serviceID})
 }
 
@@ -75,7 +75,7 @@ func projectOverviewUID(projectID string) string { return "proj-overview-" + pro
 func ShedDashboards() []Dashboard {
 	ts := []template{
 		{"shed-overview", "Overview", 2, shedOverview},
-		{"shed-security", "Security", 2, shedSecurity},
+		{"shed-security", "Security", 3, shedSecurity},
 	}
 	return render(ts, "", []string{"shed"})
 }
@@ -198,10 +198,8 @@ func appHTTP(b *board, id string) {
 	))
 	b.add(12, 8, timeseries("Response bytes/s", "Bps",
 		metric(fmt.Sprintf("sum(%s)", rate(sel("shed_http_response_bytes_total", s, host))), "sent")))
-	b.add(12, 10, top("Top paths", "short",
+	b.add(24, 10, top("Top paths", "short",
 		logTotals(edge+" | stats by (path) count() requests | sort by (requests desc) | limit 10", "{{path}}")))
-	b.add(12, 10, top("Top client IPs", "short",
-		logTotals(edge+" | stats by (client_ip) count() requests | sort by (requests desc) | limit 10", "{{client_ip}}")))
 }
 
 func appTraces(b *board, id string) {
@@ -511,20 +509,16 @@ func shedSecurity(b *board, _ string) {
 	audit := stream(eq("shed.source", "audit"))
 	edge := stream(eq("shed.source", "edge"))
 	b.add(24, 10, logsPanel("Audit timeline", logLines(audit)))
-	b.add(12, 8, bars("Sign-ins by outcome", "short",
+	b.add(8, 8, bars("Sign-ins by outcome", "short",
 		metric(fmt.Sprintf("sum by (outcome) (%s)", increase(sel("shed_signins_total", shedSelf), "$__rate_interval")), "{{outcome}}")))
-	b.add(12, 8, top("Sign-ins by IP", "short",
-		logTotals(audit+` action:in("auth.signin", "auth.signin.denied") | stats by (actor_ip, action) count() signins | sort by (signins desc) | limit 10`, "{{actor_ip}} {{action}}")))
-	b.add(12, 8, bars("Webhook signature failures", "short",
+	b.add(8, 8, bars("Webhook signature failures", "short",
 		logSeries(audit+` action:="webhook.signature.invalid" | stats count() failures`, "failures")))
-	b.add(12, 8, top("MCP calls per agent", "short",
+	b.add(8, 8, top("MCP calls per agent", "short",
 		metricNow(fmt.Sprintf("sum by (client) (%s)", increase(sel("shed_mcp_tool_calls_total", shedSelf), "$__range")), "{{client}}")))
 	b.add(12, 10, logsPanel("Container exec and OOM", logLines(audit+` action:in("container.exec", "container.oom")`)))
 	b.add(12, 10, logsPanel("Egress to new destinations", logLines(stream(eq("shed.source", "egress"))+` "egress.first_seen"`)))
-	b.add(8, 10, top("Edge top client IPs", "short",
-		logTotals(edge+" | stats by (client_ip) count() requests | sort by (requests desc) | limit 10", "{{client_ip}}")))
-	b.add(8, 10, timeseries("4xx/s by host", "reqps",
+	b.add(12, 10, timeseries("4xx/s by host", "reqps",
 		metric(fmt.Sprintf("topk(10, sum by (host) (%s))", rate(`shed_http_requests_total{code=~"4.."}`)), "{{host}}")))
-	b.add(8, 10, top("404 paths (scanners)", "short",
+	b.add(12, 10, top("404 paths (scanners)", "short",
 		logTotals(edge+" status:=404 | stats by (path) count() hits | sort by (hits desc) | limit 15", "{{path}}")))
 }

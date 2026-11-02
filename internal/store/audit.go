@@ -13,7 +13,6 @@ type AuditEvent struct {
 	Time      time.Time
 	ActorKind string
 	Actor     string
-	ActorIP   string
 	Action    string
 	Outcome   string
 	ProjectID string
@@ -40,11 +39,11 @@ type AuditFilter struct {
 	Limit int
 }
 
-const auditCols = `id, ts, actor_kind, actor, actor_ip, action, outcome, project_id, service_id, target, detail`
+const auditCols = `id, ts, actor_kind, actor, action, outcome, project_id, service_id, target, detail`
 
 func scanAuditEvent(r scanner) (AuditEvent, error) {
 	var e AuditEvent
-	err := r.Scan(&e.ID, (*timestamp)(&e.Time), &e.ActorKind, &e.Actor, &e.ActorIP, &e.Action,
+	err := r.Scan(&e.ID, (*timestamp)(&e.Time), &e.ActorKind, &e.Actor, &e.Action,
 		&e.Outcome, &e.ProjectID, &e.ServiceID, &e.Target, &e.Detail)
 	return e, err
 }
@@ -59,9 +58,9 @@ func (s *Store) InsertAuditEvent(ctx context.Context, e AuditEvent) (AuditEvent,
 		e.Detail = "{}"
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO audit_events
-		(ts, actor_kind, actor, actor_ip, action, outcome, project_id, service_id, target, detail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(e.Time), e.ActorKind, e.Actor, e.ActorIP, e.Action, e.Outcome,
+		(ts, actor_kind, actor, action, outcome, project_id, service_id, target, detail)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		formatTime(e.Time), e.ActorKind, e.Actor, e.Action, e.Outcome,
 		e.ProjectID, e.ServiceID, e.Target, e.Detail)
 	if err != nil {
 		return AuditEvent{}, fmt.Errorf("store: insert audit event %s: %w", e.Action, err)
@@ -74,15 +73,15 @@ func (s *Store) InsertAuditEvent(ctx context.Context, e AuditEvent) (AuditEvent,
 }
 
 // CountAuditEvent adds one to detail.count of the newest event at or after
-// since with the action, actor kind, actor IP, and outcome of e, and reports
-// whether there was one.
+// since with the action, actor kind, and outcome of e, and reports whether
+// there was one.
 func (s *Store) CountAuditEvent(ctx context.Context, e AuditEvent, since time.Time) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE audit_events
 		SET detail = json_set(detail, '$.count', coalesce(json_extract(detail, '$.count'), 1) + 1)
 		WHERE id = (SELECT id FROM audit_events
-			WHERE ts >= ? AND action = ? AND actor_kind = ? AND actor_ip = ? AND outcome = ?
+			WHERE ts >= ? AND action = ? AND actor_kind = ? AND outcome = ?
 			ORDER BY id DESC LIMIT 1)`,
-		formatTime(since), e.Action, e.ActorKind, e.ActorIP, e.Outcome)
+		formatTime(since), e.Action, e.ActorKind, e.Outcome)
 	if err != nil {
 		return false, fmt.Errorf("store: count audit event %s: %w", e.Action, err)
 	}

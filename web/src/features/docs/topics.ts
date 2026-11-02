@@ -152,7 +152,7 @@ export const docTopics = {
     page: "audit",
     section: "what-is-recorded",
     summary:
-      "Every change, sign-in, denial, secret read, and agent call: who, from where, and the outcome.",
+      "Every change, sign-in, denial, secret read, and agent call: who, on what, and the outcome.",
   },
   backupMethods: {
     page: "backups",

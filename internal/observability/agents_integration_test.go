@@ -439,7 +439,7 @@ func TestIntegrationAgents(t *testing.T) {
 	rec(svc.ID, "container", "A leak "+secretValue+" here", "error", 3*time.Second, nil)
 	for i, d := range []string{"0.010", "0.020", "0.500", "2.250"} {
 		rec(svc.ID, "edge", "GET /p"+d, "", time.Duration(i+1)*time.Second, map[string]string{
-			"method": "GET", "host": "web.example.com", "path": "/p" + d, "status": "200", "duration": d, "client_ip": "203.0.113.7", "trace_id": strings.Repeat("ab", 16),
+			"method": "GET", "host": "web.example.com", "path": "/p" + d, "status": "200", "duration": d, "trace_id": strings.Repeat("ab", 16),
 		})
 	}
 	if err := vl.InsertJSONLines(ctx, recs, victoria.InsertOptions{
