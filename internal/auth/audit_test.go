@@ -62,8 +62,8 @@ func TestSignInAudit(t *testing.T) {
 	if got, want := recorderOf(a).actions(), []string{"auth.signin ok user", "auth.logout ok user"}; !slices.Equal(got, want) {
 		t.Errorf("events = %q, want %q", got, want)
 	}
-	if e := recorderOf(a).last(); e.Actor.Name != "alice" || e.Actor.IP != "192.0.2.1" {
-		t.Errorf("logout actor = %+v, want alice at the request's address", e.Actor)
+	if e := recorderOf(a).last(); e.Actor.Name != "alice" {
+		t.Errorf("logout actor = %+v, want alice", e.Actor)
 	}
 	e := recorderOf(denied).last()
 	if e.Action != "auth.signin.denied" || e.Outcome != audit.Denied || e.Actor.Kind != audit.Anonymous ||
@@ -79,11 +79,9 @@ func TestRequireSetsActor(t *testing.T) {
 	var got audit.Actor
 	h := a.Require(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = audit.ActorFrom(r.Context()) }))
 	req := httptest.NewRequest("GET", "/api/me", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set("X-Forwarded-For", "203.0.113.9")
 	req.AddCookie(sess)
 	h.ServeHTTP(httptest.NewRecorder(), req)
-	if want := (audit.Actor{Kind: audit.User, Name: "alice", IP: "203.0.113.9"}); got != want {
+	if want := (audit.Actor{Kind: audit.User, Name: "alice"}); got != want {
 		t.Errorf("actor = %+v, want %+v", got, want)
 	}
 }

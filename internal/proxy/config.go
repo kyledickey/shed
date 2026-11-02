@@ -86,10 +86,26 @@ func buildConfig(cfg Config, routes []Route, edge bool) ([]byte, error) {
 		server["client_ip_headers"] = []string{"CF-Connecting-IP"}
 	}
 
-	logs := obj{"default": obj{"writer": logWriter(cfg.LogFile)}}
+	// Caddy's loggers add the client's address, and its error logger the whole
+	// request, to entries in this file; shed never writes a client IP to disk.
+	dropped := obj{}
+	for _, f := range []string{
+		"request>remote_ip", "request>remote_port", "request>client_ip", "request>headers", "request>uri",
+		"remote_ip", "remote_port", "client_ip", "remote", "remote_addr",
+	} {
+		dropped[f] = obj{"filter": "delete"}
+	}
+	// http.stdlib has the client's address in its message, which no field filter
+	// reaches: net/http's "panic serving <addr>". Debug is the only other level it
+	// logs at, which this file doesn't keep.
+	logs := obj{"default": obj{
+		"writer":  logWriter(cfg.LogFile),
+		"encoder": obj{"format": "filter", "wrap": obj{"format": "json"}, "fields": dropped},
+		"exclude": []string{"http.stdlib"},
+	}}
 	if edge {
 		server["logs"] = obj{"default_logger_name": accessLoggerName}
-		logs["default"].(obj)["exclude"] = []string{accessLogger}
+		logs["default"].(obj)["exclude"] = []string{"http.stdlib", accessLogger}
 		logs[accessLoggerName] = obj{
 			"writer":  obj{"output": "shed_access"},
 			"encoder": obj{"format": "json"},

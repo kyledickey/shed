@@ -370,7 +370,7 @@ type SlowRequest struct {
 	Method, Host, Path string
 	Status             int
 	DurationMs         float64
-	ClientIP, TraceID  string
+	TraceID            string
 }
 
 // SlowRequests holds the latency percentiles of a service's requests and its
@@ -413,7 +413,7 @@ func (p *Plane) SlowRequests(ctx context.Context, serviceID string, since time.T
 		status, _ := strconv.Atoi(r["status"])
 		out.Requests = append(out.Requests, SlowRequest{
 			Time: t.UTC(), Method: r["method"], Host: r["host"], Path: r["path"], Status: status,
-			DurationMs: seconds(r["duration"]), ClientIP: r["client_ip"], TraceID: r["trace_id"],
+			DurationMs: seconds(r["duration"]), TraceID: r["trace_id"],
 		})
 	}
 	return out, nil

@@ -13,29 +13,22 @@ import (
 	"github.com/caddyserver/caddy/v2"
 )
 
-// AccessEntry is one request the proxy served. It never holds request
-// headers other than the user agent and referer, nor any body.
+// AccessEntry is one request the proxy served. It never holds the client's
+// address, a request header, the query string, or a body.
 type AccessEntry struct {
 	// Time is when the response finished.
-	Time time.Time
-	// ClientIP is the client's address. With Config.Cloudflare it is the
-	// visitor's address for requests from Cloudflare's edge.
-	ClientIP string
-	Method   string
+	Time   time.Time
+	Method string
 	// Host is the requested host name, lowercase and without a port.
 	Host string
 	// Path is the request path as sent, still percent-encoded.
-	Path string
-	// Query is the raw query string, without the "?".
-	Query    string
+	Path     string
 	Status   int
 	Duration time.Duration
 	// BytesIn is the size of the request body read.
 	BytesIn int64
 	// BytesOut is the size of the response body written.
-	BytesOut  int64
-	UserAgent string
-	Referer   string
+	BytesOut int64
 	// TLSVersion is the TLS version, such as "TLS 1.3", or empty for plain
 	// HTTP.
 	TLSVersion string
@@ -91,16 +84,10 @@ func (accessWriter) Close() error { return nil }
 type accessJSON struct {
 	TS      float64 `json:"ts"`
 	Request struct {
-		RemoteIP string `json:"remote_ip"`
-		ClientIP string `json:"client_ip"`
-		Method   string `json:"method"`
-		Host     string `json:"host"`
-		URI      string `json:"uri"`
-		Headers  struct {
-			UserAgent []string `json:"User-Agent"`
-			Referer   []string `json:"Referer"`
-		} `json:"headers"`
-		TLS *struct {
+		Method string `json:"method"`
+		Host   string `json:"host"`
+		URI    string `json:"uri"`
+		TLS    *struct {
 			Version uint16 `json:"version"`
 		} `json:"tls"`
 	} `json:"request"`
@@ -120,22 +107,16 @@ func parseAccess(b []byte) (AccessEntry, bool) {
 	r := j.Request
 	sec, frac := math.Modf(j.TS)
 	e := AccessEntry{
-		Time:      time.Unix(int64(sec), int64(frac*1e9)),
-		ClientIP:  r.ClientIP,
-		Method:    r.Method,
-		Host:      hostOnly(r.Host),
-		Status:    j.Status,
-		Duration:  time.Duration(j.Duration * float64(time.Second)),
-		BytesIn:   j.BytesRead,
-		BytesOut:  j.Size,
-		UserAgent: first(r.Headers.UserAgent),
-		Referer:   first(r.Headers.Referer),
-		TraceID:   j.TraceID,
+		Time:     time.Unix(int64(sec), int64(frac*1e9)),
+		Method:   r.Method,
+		Host:     hostOnly(r.Host),
+		Status:   j.Status,
+		Duration: time.Duration(j.Duration * float64(time.Second)),
+		BytesIn:  j.BytesRead,
+		BytesOut: j.Size,
+		TraceID:  j.TraceID,
 	}
-	if e.ClientIP == "" {
-		e.ClientIP = r.RemoteIP
-	}
-	e.Path, e.Query, _ = strings.Cut(r.URI, "?")
+	e.Path, _, _ = strings.Cut(r.URI, "?")
 	if r.TLS != nil {
 		e.TLSVersion = tls.VersionName(r.TLS.Version)
 	}
@@ -152,13 +133,6 @@ func hostOnly(host string) string {
 		host = h
 	}
 	return strings.TrimSuffix(strings.ToLower(host), ".")
-}
-
-func first(s []string) string {
-	if len(s) == 0 {
-		return ""
-	}
-	return s[0]
 }
 
 var _ caddy.WriterOpener = accessWriter{}

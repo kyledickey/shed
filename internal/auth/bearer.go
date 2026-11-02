@@ -45,7 +45,6 @@ func (a *Auth) RequireBearer(resource string) func(http.Handler) http.Handler {
 			}
 			ctx := audit.WithActor(r.Context(), audit.Actor{
 				Kind: audit.Agent, Name: user.Login, ClientID: grant.ClientID, ClientName: grant.ClientName,
-				IP: audit.ClientIP(r),
 			})
 			ctx = context.WithValue(ctx, userKey{}, user)
 			ctx = context.WithValue(ctx, scopesKey{}, strings.Fields(grant.Scope))

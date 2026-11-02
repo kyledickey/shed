@@ -272,24 +272,20 @@ func edgeRecord(en edgeEntry, mask func(string) string) victoria.Record {
 		"shed.service.name": en.svc.Name,
 		"shed.service.kind": en.svc.Kind,
 		"shed.source":       "edge",
-		"client_ip":         en.ClientIP,
 		"method":            en.Method,
 		"host":              en.Host,
 		"path":              path,
-		"query":             maskEncoded(en.Query, mask),
 		"status":            status,
 		"duration":          strconv.FormatFloat(en.Duration.Seconds(), 'f', -1, 64),
 		"bytes_in":          strconv.FormatInt(en.BytesIn, 10),
 		"bytes_out":         strconv.FormatInt(en.BytesOut, 10),
-		"user_agent":        mask(en.UserAgent),
-		"referer":           maskEncoded(en.Referer, mask),
 		"tls_version":       en.TLSVersion,
 		"trace_id":          en.TraceID,
 	}
 }
 
-// maskEncoded masks s, a percent-encoded path, query, or URL. A value that
-// only appears once s is decoded is masked in the decoded form.
+// maskEncoded masks s, a percent-encoded path. A value that only appears once
+// s is decoded is masked in the decoded form.
 func maskEncoded(s string, mask func(string) string) string {
 	if dec, err := url.QueryUnescape(s); err == nil && dec != s {
 		if m := mask(dec); m != dec {

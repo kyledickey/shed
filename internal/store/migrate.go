@@ -13,6 +13,10 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+// purgePendingKey is the settings row that migration 23 adds when it drops
+// audit_events.actor_ip, and that stays until [purgeFreedPages] has finished.
+const purgePendingKey = "store.purge_pending"
+
 // migrate applies, in order, every embedded migration newer than the
 // database's PRAGMA user_version. Migration files are named NNN_name.sql, and
 // each runs in its own transaction. A database migrated past the newest
@@ -51,6 +55,30 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		if err := applyMigration(ctx, db, version, string(body)); err != nil {
 			return fmt.Errorf("store: apply %s: %w", file, err)
 		}
+	}
+	return purgeFreedPages(ctx, db)
+}
+
+// purgeFreedPages rewrites the database and empties the WAL if a migration asked
+// for it. Dropping a column leaves its values in freed space and the WAL, and
+// those values were client addresses, which shed doesn't keep. VACUUM can't run
+// inside a migration's transaction, so the row retries it after an interruption.
+func purgeFreedPages(ctx context.Context, db *sql.DB) error {
+	var pending bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM settings WHERE key = ?)`, purgePendingKey).Scan(&pending)
+	if err != nil {
+		return fmt.Errorf("store: read purge state: %w", err)
+	}
+	if !pending {
+		return nil
+	}
+	for _, q := range []string{"VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("store: %s: %w", q, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, purgePendingKey); err != nil {
+		return fmt.Errorf("store: clear purge state: %w", err)
 	}
 	return nil
 }

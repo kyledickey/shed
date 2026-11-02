@@ -250,7 +250,7 @@ func TestSlowRequestsAndErrorLogs(t *testing.T) {
 			return []victoria.Record{{"p50": "0.01", "p95": "0.25", "p99": "1.5"}}
 		}
 		return []victoria.Record{{"_time": "2026-05-01T12:00:00Z", "method": "GET", "host": "a.example", "path": "/slow", "status": "200",
-			"duration": "1.25", "client_ip": "203.0.113.9", "trace_id": "t1"}}
+			"duration": "1.25", "trace_id": "t1"}}
 	}
 	got, err := f.plane.SlowRequests(ctx, f.svc.ID, time.Time{}, 5)
 	if err != nil {
@@ -260,7 +260,7 @@ func TestSlowRequestsAndErrorLogs(t *testing.T) {
 	if !strings.HasPrefix(f.logs.queries[0], edge+" | stats") || f.logs.queries[1] != edge+" | sort by (duration desc) | limit 5" {
 		t.Errorf("queries %q", f.logs.queries)
 	}
-	want := SlowRequest{Time: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Method: "GET", Host: "a.example", Path: "/slow", Status: 200, DurationMs: 1250, ClientIP: "203.0.113.9", TraceID: "t1"}
+	want := SlowRequest{Time: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC), Method: "GET", Host: "a.example", Path: "/slow", Status: 200, DurationMs: 1250, TraceID: "t1"}
 	if got.P50Ms != 10 || got.P95Ms != 250 || got.P99Ms != 1500 || len(got.Requests) != 1 || got.Requests[0] != want {
 		t.Errorf("got %+v", got)
 	}

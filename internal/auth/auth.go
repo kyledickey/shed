@@ -337,16 +337,14 @@ func localPath(p string) bool {
 
 type userKey struct{}
 
-// withUser returns the context of r with user, signed in from the client
-// address of r, as the audit actor.
+// withUser returns the context of r with user as the audit actor.
 func withUser(r *http.Request, user User) context.Context {
-	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.User, Name: user.Login, IP: audit.ClientIP(r)})
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.User, Name: user.Login})
 }
 
-// anonymous returns the context of r with an anonymous audit actor at the
-// client address of r.
+// anonymous returns the context of r with an anonymous audit actor.
 func anonymous(r *http.Request) context.Context {
-	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous, IP: audit.ClientIP(r)})
+	return audit.WithActor(r.Context(), audit.Actor{Kind: audit.Anonymous})
 }
 
 // UserFrom returns the user that [Auth.Require] attached to ctx.

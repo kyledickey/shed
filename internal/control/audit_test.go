@@ -54,7 +54,7 @@ func detailJSON(t *testing.T, e audit.Event) string {
 
 func TestAuditRecords(t *testing.T) {
 	f := newFixture(t)
-	user := audit.Actor{Kind: audit.User, Name: "octocat", IP: "203.0.113.9"}
+	user := audit.Actor{Kind: audit.User, Name: "octocat"}
 	ctx := audit.WithActor(context.Background(), user)
 	secrets := []string{"s3cr3t-alpha", "s3cr3t-beta", "s3cr3t-gamma", "op-token-123", "aws-secret-456"}
 
@@ -213,7 +213,7 @@ func TestAuditRecords(t *testing.T) {
 func TestAuditPushDeploymentIsGitHub(t *testing.T) {
 	f := newFixture(t)
 	svc := createApp(t, f.st)
-	ctx := audit.WithActor(context.Background(), audit.Actor{Kind: audit.GitHub, IP: "140.82.112.1"})
+	ctx := audit.WithActor(context.Background(), audit.Actor{Kind: audit.GitHub})
 	f.push(svc, "abc")
 	f.audit.take()
 	if err := f.plane.ReceivePush(ctx, store.PendingPush{

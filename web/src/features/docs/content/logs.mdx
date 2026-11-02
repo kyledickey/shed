@@ -60,7 +60,7 @@ The search box takes words, `"quoted phrases"`, and `field:value` (`user:42`, `l
 
 ## shed's own log
 
-shed's own log is structured text (`time=... level=INFO msg=...`), written to three places: standard error (so it is in `journalctl -u shed` under systemd), `shed.log` next to the config file, and an in-memory ring of the last **1000 lines**. The file is rotated by shed: `log.max_size_mb` 20, `log.max_backups` 5, `log.max_age_days` 30 by default, and `log.level` filters what is written at all. Caddy logs separately to `caddy.log` in the same directory, which Caddy rotates itself.
+shed's own log is structured text (`time=... level=INFO msg=...`), written to three places: standard error (so it is in `journalctl -u shed` under systemd), `shed.log` next to the config file, and an in-memory ring of the last **1000 lines**. The file is rotated by shed: `log.max_size_mb` 20, `log.max_backups` 5, `log.max_age_days` 30 by default, and `log.level` filters what is written at all. Caddy logs separately to `caddy.log` in the same directory, which Caddy rotates itself. Client addresses, request headers, and URIs are removed from it.
 
 `GET /api/logs` replays the ring and then follows. A follower may fall 256 lines behind; after that lines are dropped for it rather than slowing the logger. The stream never ends on its own. The same view is in the dashboard under Server, Logs. For how the ring and the fan-out work, see the [logging internals](/docs/internals#logs-and-redaction).
 

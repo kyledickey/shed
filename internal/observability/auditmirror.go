@@ -112,7 +112,6 @@ func auditRecord(e store.AuditEvent) victoria.Record {
 		"id":         strconv.FormatInt(e.ID, 10),
 		"actor_kind": e.ActorKind,
 		"actor":      e.Actor,
-		"actor_ip":   e.ActorIP,
 		"action":     e.Action,
 		"outcome":    e.Outcome,
 		"project_id": e.ProjectID,

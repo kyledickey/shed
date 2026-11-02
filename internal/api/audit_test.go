@@ -35,7 +35,7 @@ func TestAuditAPI(t *testing.T) {
 	}
 	e := events[1]
 	if e["action"] != "project.create" || e["outcome"] != "ok" || e["actorKind"] != "user" || e["actor"] != "octocat" ||
-		e["actorIp"] != "192.0.2.1" || e["projectId"] == "" || e["target"] != e["projectId"] || e["ts"] == nil ||
+		e["projectId"] == "" || e["target"] != e["projectId"] || e["ts"] == nil ||
 		fmt.Sprint(e["detail"]) != "map[name:c]" {
 		t.Errorf("event = %v", e)
 	}
@@ -123,19 +123,18 @@ func TestAuditDenials(t *testing.T) {
 	send("sha256=" + hex.EncodeToString(mac.Sum(nil)))
 
 	events := f.auditEvents("")
-	type row struct{ action, outcome, kind, ip, count string }
+	type row struct{ action, outcome, kind, count string }
 	var got []row
 	for _, e := range events {
 		d := e["detail"].(map[string]any)
 		got = append(got, row{
-			fmt.Sprint(e["action"]), fmt.Sprint(e["outcome"]), fmt.Sprint(e["actorKind"]), fmt.Sprint(e["actorIp"]),
-			fmt.Sprint(d["count"]),
+			fmt.Sprint(e["action"]), fmt.Sprint(e["outcome"]), fmt.Sprint(e["actorKind"]), fmt.Sprint(d["count"]),
 		})
 	}
 	want := []row{
-		{"deployment.create", "ok", "github", "203.0.113.9", "<nil>"},
-		{"webhook.signature.invalid", "denied", "anonymous", "203.0.113.9", "2"},
-		{"setup.token.invalid", "denied", "anonymous", "192.0.2.1", "1"},
+		{"deployment.create", "ok", "github", "<nil>"},
+		{"webhook.signature.invalid", "denied", "anonymous", "2"},
+		{"setup.token.invalid", "denied", "anonymous", "1"},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("events =\n%v\nwant\n%v", got, want)

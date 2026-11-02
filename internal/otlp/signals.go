@@ -116,6 +116,9 @@ func (h *Handler) traces(ctx context.Context, req *coltracepb.ExportTraceService
 			maskAttrs(ss.Scope.GetAttributes(), mask)
 			for _, span := range ss.Spans {
 				maskAttrs(span.Attributes, mask)
+				if span.Kind != tracepb.Span_SPAN_KIND_CLIENT {
+					span.Attributes = dropClientAttrs(span.Attributes)
+				}
 				if mask != nil && span.Status != nil {
 					span.Status.Message = mask(span.Status.Message)
 				}

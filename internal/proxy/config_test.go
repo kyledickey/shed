@@ -286,6 +286,9 @@ func TestBuildConfigEdge(t *testing.T) {
 		if w := at(t, logs, "default", "writer", "filename"); w != "/var/log/caddy.log" {
 			t.Errorf("edge=%v: Caddy's own log writes to %v", edge, w)
 		}
+		if exc := at(t, logs, "default", "exclude", 0); exc != "http.stdlib" {
+			t.Errorf("edge=%v: Caddy's own log excludes %v, want net/http's messages, which name the client", edge, exc)
+		}
 		handlers := at(t, srv, "routes", 0, "handle").([]any)
 		if !edge {
 			if _, ok := srv.(map[string]any)["logs"]; ok {
@@ -303,7 +306,7 @@ func TestBuildConfigEdge(t *testing.T) {
 		if inc := at(t, logs, name.(string), "include", 0); inc != "http.log.access."+name.(string) {
 			t.Errorf("access log includes %v", inc)
 		}
-		if exc := at(t, logs, "default", "exclude", 0); exc != "http.log.access."+name.(string) {
+		if exc := at(t, logs, "default", "exclude", 1); exc != "http.log.access."+name.(string) {
 			t.Errorf("Caddy's own log excludes %v, want the access logger", exc)
 		}
 		if h := at(t, handlers, 0, "handler"); h != "tracing" || at(t, handlers, 1, "handler") != "reverse_proxy" {

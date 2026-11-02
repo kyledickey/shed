@@ -135,7 +135,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/backup` | backup/restore of service data and shed.db: dumps, archives, zstd, age, schedule, retention, upload | interfaces only + store/docker/telemetry types |
 | `internal/deploy` | deployment pipeline, per-service queue, reconcile on boot | interfaces only + store/catalog/vars/telemetry types |
 | `internal/metrics` | container and host resource sampling, per-service and host time series | interfaces only + docker/host/store/victoria types |
-| `internal/audit` | the audit log: actor and client IP in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
+| `internal/audit` | the audit log: actor in the request context, recording with coalesced anonymous denials, listing, retention settings, hourly pruning | interfaces only + store types |
 | `internal/auth` | sessions, GitHub sign-in handlers, middleware that sets the audit actor, OAuth 2.1 authorization server and bearer middleware for agents | store and audit log via interface + audit types |
 | `internal/observability` | telemetry stack lifecycle, ingest listeners and attribution, container log and edge shipping, database exporters and scrape config, dashboard reconciliation, annotations, audit mirror, Docker events, egress | interfaces only + store/docker/catalog/grafana/victoria/otlp/firewall/proxy/telemetry types |
 | `internal/control` | operations behind every interface: validation, template application, service/project/domain/volume/variable changes, deployments and the push lock, pending pushes, route retries, backups, notification channels and rules, telemetry settings, views merging live status, masked log snapshots, audit events of every mutation and secret read | interfaces only + store/deploy/backup/metrics/update/github/catalog/build/logtail/notify/variables/onepassword/audit/observability/grafana/victoria types |
@@ -433,7 +433,6 @@ CREATE TABLE audit_events (
   ts TEXT NOT NULL,
   actor_kind TEXT NOT NULL,               -- user | agent | github | system | docker | anonymous
   actor TEXT NOT NULL DEFAULT '',         -- GitHub login, container ID, …
-  actor_ip TEXT NOT NULL DEFAULT '',
   action TEXT NOT NULL,                   -- dotted, e.g. service.variables.update
   outcome TEXT NOT NULL,                  -- ok | failed | denied
   project_id TEXT NOT NULL DEFAULT '',
@@ -1573,8 +1572,14 @@ While telemetry is on, `internal/proxy` enables Caddy's access log on its
 server and sends it to a log writer module registered in the proxy package
 (`caddy.logging.writers.shed_access`) instead of a file. The writer parses
 each JSON entry into an `AccessEntry` and hands it to a callback. Caddy's own
-log (`caddy.log`) excludes the access logger. Turning telemetry on or off
-reloads the proxy with the last applied routes.
+log (`caddy.log`) excludes the access logger and `http.stdlib`, whose panic
+messages name the client and so also leave Caddy's panic traces out of the
+file, and its filter encoder deletes
+`request>remote_ip`, `request>remote_port`, `request>client_ip`,
+`request>headers`, `request>uri`, and the top-level `remote_ip`, `remote_port`,
+`client_ip`, `remote`, and `remote_addr` from every entry, because Caddy's error
+logger writes the request whether telemetry is on or off. Turning telemetry on
+or off reloads the proxy with the last applied routes.
 
 For every entry, `internal/observability` resolves the host to a service
 through the domain table. The dashboard host maps to shed. Any other host is
@@ -1591,17 +1596,14 @@ The edge then:
   VictoriaMetrics drops empty labels, so it counts under shed's own
   resource labels (`shed_service_id="shed"`);
 - ships an access record (`shed.source=edge`, stream fields as in
-  [Label schema](#label-schema), `_msg` = `<method> <path> <status>`): client
-  IP (after `proxy.cloudflare` handling), method, host, path, query, status,
-  duration, bytes in and out, user agent, referer, TLS version, and trace ID
-  (fields `client_ip`, `method`, `host`, `path`, `query`, `status`,
-  `duration` in seconds, `bytes_in` (request body), `bytes_out` (response
-  body), `user_agent`, `referer`, `tls_version` such as `TLS 1.3`,
-  `trace_id`). Path, query, referer, and user agent are masked with every
-  project's values, like `ShedLog`. A value that appears only
-  percent-decoded is masked in decoded form. Unrouted records have empty
-  `shed.*` service fields. Request headers other than the user agent and
-  referer, and bodies, are not recorded.
+  [Label schema](#label-schema), `_msg` = `<method> <path> <status>`): method,
+  host, path, status, duration, bytes in and out, TLS version, and trace ID
+  (fields `method`, `host`, `path`, `status`, `duration` in seconds,
+  `bytes_in` (request body), `bytes_out` (response body), `tls_version` such
+  as `TLS 1.3`, `trace_id`). The path is masked with every project's values,
+  like `ShedLog`. A value that appears only percent-decoded is masked in
+  decoded form. Unrouted records have empty `shed.*` service fields. Client
+  addresses, query strings, request headers, and bodies are not recorded.
 
 Metrics are recorded on the request's goroutine. Records go through a queue
 of 4096 to a worker that ships batches of up to 1000 records or 1 s to
@@ -1627,6 +1629,27 @@ shuts it down when the last one is removed. `internal/proxy` therefore sets
 these variables only for the duration of a config load, then restores the
 previous values. Processes shed starts later, such as builds, never inherit
 them.
+
+### Client addresses
+
+shed never writes a client IP to disk, a visitor's or an operator's, in any
+store, and no setting brings them back. Access records and `caddy.log` leave
+them out as described in [Edge](#edge), and audit events have no address. The
+OTLP handler drops `client.address`, `client.port`, `network.peer.address`,
+`network.peer.port`, `user_agent.original`, `http.client_ip`,
+`http.user_agent`, `net.peer.ip`, `net.peer.port`, `net.sock.peer.addr`, and
+`net.sock.peer.port` from every span except those of kind client, whose peer is
+the server. Apps still receive the address in `X-Forwarded-For`; what they log
+or set in other attributes is theirs and is stored as sent. The rate limit on
+OAuth client registration keeps it in memory only. shed's server log and
+`caddy.log` also omit it from panics: the server's error logger removes it from
+net/http's message, and `caddy.log` excludes `http.stdlib`, so Caddy's panic
+traces are not kept there. Migration 23 drops `audit_events.actor_ip` and adds a
+`store.purge_pending` setting. While that row exists, `store.Open` runs `VACUUM`,
+truncates the WAL, and deletes the row, so the values do not stay in freed space
+and an interrupted purge runs again at the next start. A failed purge stops
+shed from starting, like a failed migration. Backups of shed.db from before it keep them until backup
+retention removes them.
 
 ### Databases
 
@@ -1793,7 +1816,7 @@ Service Overview rows, top to bottom:
 | Row | Services | Panels |
 |---|---|---|
 | Resources | all | status, deploy annotations, CPU and memory against limits, network, block I/O, restarts, OOM kills |
-| HTTP | apps | requests/s by status class, error ratio, p50/p95/p99 latency, bytes, top paths and client IPs (from edge records), per-domain variable |
+| HTTP | apps | requests/s by status class, error ratio, p50/p95/p99 latency, bytes, top paths (from edge records), per-domain variable |
 | Traces | apps | span rate, errors, and duration by span name, slowest traces |
 | Postgres | postgres | connections by state against `max_connections`, commits and rollbacks/s, cache hit ratio, row operations, locks, deadlocks, database size, WAL, top statements by total time, slow query log |
 | MySQL | mysql | connections against `max_connections`, queries/s by command, InnoDB buffer pool hit ratio, row operations, locks, top digests, slow query log |
@@ -1812,9 +1835,9 @@ deliveries); Proxy (edge totals, route applies); Host & Docker (host
 resources, container counts, Docker API latency); Backups (duration, size,
 failures, uploads); Runtime (goroutines, heap, GC, store query latency);
 Telemetry (ingest per signal, drops by reason, store disk); Log (shed's own
-log). Security is separate: audit timeline, sign-ins by outcome and IP,
+log). Security is separate: audit timeline, sign-ins by outcome,
 webhook signature failures, MCP calls per agent, container exec and OOM,
-egress first-seen destinations, edge top IPs, 4xx bursts, scanner paths.
+egress first-seen destinations, 4xx bursts, scanner paths.
 
 Annotations: deploy started, active, and failed, redeploys, restarts,
 crashes, stops, backups, and restores become Grafana annotations tagged
@@ -1999,8 +2022,8 @@ from the request context (`internal/audit`): every HTTP request starts
 `detail.client` and `detail.clientId`), and a webhook with a valid signature
 `github`. A context without an actor is shed itself (`system`, such as a push
 deployed on retry). Docker (`docker`) acts in the Docker events below.
-`actor_ip` is the client IP the proxy resolved, as for rate limits but
-without reducing IPv6 to its /64. `detail` holds names at the time of the
+Events hold no client address; see [Client addresses](#client-addresses).
+`detail` holds names at the time of the
 event (service, project, host, mount path, vault) and changed field names or
 variable keys (`added`, `changed`, `removed`), never values: an updated start
 command is recorded as `fields: ["startCommand"]`, a new S3 secret as
@@ -2026,8 +2049,8 @@ command is recorded as `fields: ["startCommand"]`, a new S3 secret as
 | `mcp.call` (tool; arguments except query, operation, tags) | every MCP tool call |
 | `container.exec` (command), `container.oom` | Docker events |
 
-Denied events from anonymous actors are coalesced to one row per action and
-IP per minute, with `detail.count`. Rows older than the audit retention
+Denied events from anonymous actors are coalesced to one row per action
+per minute, with `detail.count`. Rows older than the audit retention
 (setting `audit`, JSON `{retentionDays}`: default 365, 1 to 3650 days,
 `PUT /api/audit/settings`) are pruned at startup and hourly. Server → Audit
 lists them with filters. While telemetry is on, a shipper copies rows
@@ -2689,14 +2712,14 @@ found`); unexpected errors are logged and reported as `internal error`.
 | `update_status` | — | `{current, latest?: {version, url, publishedAt}, available, checkedAt?, state, staged?, error?, autoDownload, channel, unsupported?}` |
 | `list_repos` | — | `{repos: [{fullName, defaultBranch, private?}], omitted?}` (at most 500) |
 | `list_branches` | `owner`, `repo` | `{branches, omitted?}` (at most 500) |
-| `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, actorIp, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
+| `audit_events` | `actor?` (login or kind), `action?` (prefix), `service_id?`, `outcome?`, `since?`, `limit?` (default 100, at most 500) | `{events: [{id, ts, actorKind, actor, action, outcome, projectId, serviceId, target, detail}]}`, newest first |
 | `telemetry_status` | — | `{enabled, components: [{name, state, version, error?}], ingest: {spansPerSecond, logsPerSecond, pointsPerSecond}, dropped: [{reason, signal, count}]}`; works while telemetry is off |
 | `query_metrics` | `query` (MetricsQL), `time?` or `start?`/`end?`/`step?` | `{resultType, stepSeconds?, series: [{labels, values: [[t, v]]}], truncated?}`; `t` is Unix seconds, `v` a number or `null` (NaN, ±Inf); at most 500 series × the newest 500 points |
 | `query_logs` | `query` (LogsQL), `start?`, `end?`, `limit?` (default 200, at most 2000) | text: one JSON record per line, newest first, values masked, fields cut at 2000 characters, the oldest records dropped beyond 256 KiB with a `_note` line |
 | `search_traces` | `service_id?`, `operation?`, `min_duration?`, `max_duration?` (durations such as `250ms`), `tags?` (object), `start?`, `end?`, `limit?` (default 20, at most 100) | `{traces: [{traceId, service, name, start, durationMs, spans, errors}]}` |
 | `get_trace` | `trace_id` | `{spans: [{spanId, parentId, service, name, kind, start, durationMs, status, attributes}], omitted?}` (at most 1000 spans) |
 | `error_logs` | `service_id`, `since?` (default 1h), `limit?` (default 200, at most 2000) | text: error-level records of the service as `query_logs` returns them |
-| `slow_requests` | `service_id`, `since?` (default 1h), `limit?` (default 20, at most 100) | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, clientIp, traceId}]}` |
+| `slow_requests` | `service_id`, `since?` (default 1h), `limit?` (default 20, at most 100) | `{p50Ms, p95Ms, p99Ms, requests: [{time, method, host, path, status, durationMs, traceId}]}` |
 | `top_queries` | `service_id` (a database) | `{queries: [{query, calls, totalMs, meanMs, rows}]}` from the exporter's statement statistics |
 | `list_dashboards` | `folder_uid?` | `{dashboards: [{uid, title, folder, url, customized?, outdated?}]}`; `url` is absolute under `server.url`; `customized` marks a default dashboard a user saved, `outdated` one whose default changed since |
 
@@ -2966,7 +2989,7 @@ type LogPage = { records: LogRecord[]; next: string };   // next = before cursor
 type AuditEvent = {
   id: number; ts: string;
   actorKind: "user" | "agent" | "github" | "system" | "docker" | "anonymous";
-  actor: string; actorIp: string; action: string;
+  actor: string; action: string;
   outcome: "ok" | "failed" | "denied";
   projectId: string; serviceId: string; target: string;
   detail: Record<string, unknown>;

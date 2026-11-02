@@ -2,7 +2,7 @@
 title: Audit log
 group: Operating
 order: 145
-description: "shed records every change, sign-in, denial, read of a secret, and agent tool call in an audit log in shed.db: who did it, from which address, to what, and whether it worked. It is always on."
+description: "shed records every change, sign-in, denial, read of a secret, and agent tool call in an audit log in shed.db: who did it, to what, and whether it worked. It is always on."
 ---
 
 ## What is recorded
@@ -10,7 +10,7 @@ description: "shed records every change, sign-in, denial, read of a secret, and 
 The audit log is a table in `shed.db`, written whether or not anything else is turned on. Each event records:
 
 - **When.** The time, to the millisecond, in UTC.
-- **Who.** An actor kind, a GitHub login for people and agents, and the client IP.
+- **Who.** An actor kind, and a GitHub login for people and agents.
 - **What.** A dotted action such as `service.variables.update`, the project and service it belongs to, and the ID of the thing acted on.
 - **How it went.** `ok`, `failed` (shed refused or could not finish it, including invalid requests), or `denied` (an authentication or signature check failed).
 - **Detail.** Names as they were at the time, such as the service, host, or mount path, plus which fields or variable keys changed.
@@ -27,10 +27,10 @@ Open it in the dashboard under **Server, Audit**. Filter by actor (a login or a 
 | `agent`     | An [MCP client](/docs/mcp) acting for a user. The login is the user's; detail names the client. |
 | `github`    | A push webhook with a valid signature.                                                          |
 | `system`    | shed itself, such as a push deployed when it retries.                                           |
-| `docker`    | A container event: an exec into a container, or an OOM kill. No login or address.               |
+| `docker`    | A container event: an exec into a container, or an OOM kill. No login.                          |
 | `anonymous` | A request that has not signed in: denials, first-run setup, and OAuth token requests.           |
 
-The IP is the address the request came from. Behind the built-in proxy it is the client address the proxy put in `X-Forwarded-For`, or `CF-Connecting-IP` with [`proxy.cloudflare`](/docs/networking#cloudflare).
+Events don't say where a request came from: shed [does not store client addresses](/docs/telemetry#client-addresses).
 
 ## Actions
 
@@ -60,7 +60,7 @@ A push that has to wait, for a running backup or a fenced service, is recorded o
 
 ## Repeated denials
 
-Denials from anonymous requests are coalesced: a burst of bad webhook signatures, setup tokens, or OAuth tokens from one address becomes one event per action and IP per minute, with `detail.count` saying how many there were. The dashboard shows the count beside the action. Denials by signed-in users, such as declining an agent's consent, are recorded one by one.
+Denials from anonymous requests are coalesced: a burst of bad webhook signatures, setup tokens, or OAuth tokens becomes one event per action per minute, whichever addresses it came from, with `detail.count` saying how many there were. The dashboard shows the count beside the action. Denials by signed-in users, such as declining an agent's consent, are recorded one by one.
 
 ## Retention
 

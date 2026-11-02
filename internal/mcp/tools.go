@@ -138,7 +138,7 @@ func (s *Server) addTools() {
 		"Lists the branches of a GitHub repository the shed GitHub App is installed on.",
 		s.listBranches)
 	addWithSchema(s, "audit_events", "Audit events",
-		"Lists audit log events, newest first: who (actorKind, actor, actorIp) did what (action, target, detail) to which project and service, and whether it was ok, failed, or denied. Detail holds names and changed fields or keys, never values.",
+		"Lists audit log events, newest first: who (actorKind, actor) did what (action, target, detail) to which project and service, and whether it was ok, failed, or denied. Detail holds names and changed fields or keys, never values.",
 		s.auditEvents, outcomeEnum)
 	s.addTelemetryTools()
 }

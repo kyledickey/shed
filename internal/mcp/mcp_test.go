@@ -237,7 +237,7 @@ func (f *fakeBackend) AuditEvents(_ context.Context, filter store.AuditFilter) (
 	f.filter = filter
 	f.mu.Unlock()
 	return audit.Page{Events: []store.AuditEvent{
-		{ID: 7, Time: created, ActorKind: "user", Actor: "octocat", ActorIP: "203.0.113.9", Action: "service.variables.update",
+		{ID: 7, Time: created, ActorKind: "user", Actor: "octocat", Action: "service.variables.update",
 			Outcome: "ok", ProjectID: "prj1", ServiceID: "svc1", Target: "svc1", Detail: `{"added":["API_TOKEN"],"service":"web"}`},
 		{ID: 6, Time: created, ActorKind: "system", Action: "deployment.create", Outcome: "failed", Detail: "{}"},
 	}}, nil
