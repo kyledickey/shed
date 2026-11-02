@@ -2468,15 +2468,17 @@ The notes script runs an OpenCode agent (`opencode-ai`; model from the
 If it fails, the notes are the list of commits.
 
 `.github/workflows/ci.yml` runs on every pull request and push to `main`:
-gofmt, vet, `go test -race`, and govulncheck when Go files change; the
-dashboard checks, tests, and build (failing if `routeTree.gen.ts` is stale)
-when `web/` changes; a build of both release binaries with the real
-dashboard, uploaded as an artifact; shellcheck, actionlint, and zizmor. On
+gofmt, vet, golangci-lint, `go test -race`, and govulncheck when Go files
+change; the dashboard checks, tests, and build (failing if `routeTree.gen.ts`
+is stale) when `web/` changes; a build of both release binaries with the real
+dashboard, uploaded as an artifact, unless a pull request changes only
+Markdown and `docs/`; shellcheck, actionlint, and zizmor. On
 pull requests it comments the binary and dashboard sizes against the base.
-`ci-ok` fails if any job failed and is the check to require. Jobs run on Namespace runner profiles: `namespace-profile-shed-sm`
-(2 vCPU, 4 GB) for small jobs, `shed-md` (4 vCPU, 8 GB) for Go tests,
+`ci-ok` fails if any job failed and is the check to require. Jobs run on Namespace runner profiles, and fork pull requests on GitHub's free
+runners: `namespace-profile-nvmbr-sm`
+(2 vCPU, 4 GB) for small jobs, `nvmbr-md` (4 vCPU, 8 GB) for Go tests,
 builds, the dashboard checks (oxlint's allocator needs more than 4 GB), and
-the notes agent, and `shed-lg` (8 vCPU, 16 GB) for the
+the notes agent, and `nvmbr-lg` (8 vCPU, 16 GB) for the
 integration tests. Dependabot
 updates actions, Go modules, and dashboard packages weekly, waiting 7 days
 after a release, except `vite` and `vite-plus`, which `bunx vp migrate`

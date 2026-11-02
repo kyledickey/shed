@@ -13,9 +13,10 @@ concurrency:
 permissions:
   contents: read
 
+# Fork PRs run on GitHub's free runners, so strangers can't spend Namespace minutes.
 jobs:
   changes:
-    runs-on: namespace-profile-shed-sm
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-sm' }}
     timeout-minutes: 5
     outputs:
       go: ${{ steps.filter.outputs.go }}
@@ -37,22 +38,32 @@ jobs:
           fi
           files="$(git diff --name-only "$BASE"...HEAD)"
           go=false web=false
-          if grep -qv '^web/' <<<"$files" || grep -qx 'web/embed.go' <<<"$files"; then go=true; fi
+          if grep -qvE '^web/|^docs/|\.md$' <<<"$files" || grep -qx 'web/embed.go' <<<"$files"; then go=true; fi
           if grep -q '^web/' <<<"$files"; then web=true; fi
           printf 'go=%s\nweb=%s\n' "$go" "$web" >>"$GITHUB_OUTPUT"
 
   go:
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: namespace-profile-shed-md
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-md' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # go and build each keep their own cache, because they compile different things
+      # and setup-go's single key keeps whichever job saves first.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-test-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-test-${{ runner.os }}-
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
@@ -62,13 +73,16 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
       - run: go test -race ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   web:
     needs: changes
     if: needs.changes.outputs.web == 'true'
-    runs-on: namespace-profile-shed-md
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-md' }}
     timeout-minutes: 15
     defaults:
       run:
@@ -93,7 +107,8 @@ jobs:
   # either architecture or in the embed shows up before a release.
   build:
     needs: changes
-    runs-on: namespace-profile-shed-md
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-md' }}
     timeout-minutes: 20
     outputs:
       sizes: ${{ steps.sizes.outputs.table }}
@@ -105,6 +120,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-build-${{ runner.os }}-
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -153,7 +176,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
-    runs-on: namespace-profile-shed-sm
+    runs-on: namespace-profile-nvmbr-sm
     timeout-minutes: 5
     permissions:
       pull-requests: write
@@ -167,7 +190,7 @@ jobs:
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file body.md --edit-last --create-if-none
 
   lint:
-    runs-on: namespace-profile-shed-sm
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-sm' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -184,7 +207,7 @@ jobs:
   ci-ok:
     if: always()
     needs: [changes, go, web, build, size-comment, lint]
-    runs-on: namespace-profile-shed-sm
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'namespace-profile-nvmbr-sm' }}
     timeout-minutes: 5
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   version:
-    runs-on: namespace-profile-shed-sm
+    runs-on: namespace-profile-nvmbr-sm
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.version.outputs.tag }}
