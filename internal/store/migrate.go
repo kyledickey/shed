@@ -13,8 +13,9 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// auditNoIPVersion is the migration that drops audit_events.actor_ip.
-const auditNoIPVersion = 23
+// purgePendingKey is the settings row that migration 23 adds when it drops
+// audit_events.actor_ip, and that stays until [purgeFreedPages] has finished.
+const purgePendingKey = "store.purge_pending"
 
 // migrate applies, in order, every embedded migration newer than the
 // database's PRAGMA user_version. Migration files are named NNN_name.sql, and
@@ -55,21 +56,29 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("store: apply %s: %w", file, err)
 		}
 	}
-	if current > 0 && current < auditNoIPVersion {
-		return purgeFreedPages(ctx, db)
-	}
-	return nil
+	return purgeFreedPages(ctx, db)
 }
 
-// purgeFreedPages rewrites the database and empties the WAL. Dropping a column
-// leaves its values in freed space and the WAL, and those values were client
-// addresses, which shed doesn't keep. VACUUM can't run inside a migration's
-// transaction.
+// purgeFreedPages rewrites the database and empties the WAL if a migration asked
+// for it. Dropping a column leaves its values in freed space and the WAL, and
+// those values were client addresses, which shed doesn't keep. VACUUM can't run
+// inside a migration's transaction, so the row retries it after an interruption.
 func purgeFreedPages(ctx context.Context, db *sql.DB) error {
+	var pending bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM settings WHERE key = ?)`, purgePendingKey).Scan(&pending)
+	if err != nil {
+		return fmt.Errorf("store: read purge state: %w", err)
+	}
+	if !pending {
+		return nil
+	}
 	for _, q := range []string{"VACUUM", "PRAGMA wal_checkpoint(TRUNCATE)"} {
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			return fmt.Errorf("store: %s: %w", q, err)
 		}
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, purgePendingKey); err != nil {
+		return fmt.Errorf("store: clear purge state: %w", err)
 	}
 	return nil
 }

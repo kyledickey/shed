@@ -129,37 +129,63 @@ func TestCountAuditEvent(t *testing.T) {
 
 func TestMigrateAuditRemovesClientAddresses(t *testing.T) {
 	const addr = "198.51.100.77"
-	path := filepath.Join(t.TempDir(), "shed.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name string
+		// interrupted means a crash came after migration 23 committed and before
+		// the purge ran.
+		interrupted bool
+	}{
+		{"upgrade", false},
+		{"after an interrupted purge", true},
 	}
-	migrateTo(t, db, 22)
-	if _, err := db.Exec(`INSERT INTO audit_events (ts, actor_kind, actor_ip, action, outcome)
-		VALUES ('2026-10-04T03:00:00.000Z', 'anonymous', ?, 'oauth.denied', 'denied')`, addr); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "shed.db")
+			db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+			if err != nil {
+				t.Fatal(err)
+			}
+			migrateTo(t, db, 22)
+			if _, err := db.Exec(`INSERT INTO audit_events (ts, actor_kind, actor_ip, action, outcome)
+				VALUES ('2026-10-04T03:00:00.000Z', 'anonymous', ?, 'oauth.denied', 'denied')`, addr); err != nil {
+				t.Fatal(err)
+			}
+			if tt.interrupted {
+				body, err := migrationFS.ReadFile("migrations/023_audit_no_ip.sql")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := applyMigration(ctx, db, 23, string(body)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			db.Close()
 
-	s, err := Open(path, testKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	events, err := s.AuditEvents(context.Background(), AuditFilter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].Action != "oauth.denied" {
-		t.Errorf("events after migrating = %+v, want the one row", events)
-	}
-	for _, f := range []string{path, path + "-wal"} {
-		b, err := os.ReadFile(f)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			t.Fatal(err)
-		}
-		if bytes.Contains(b, []byte(addr)) {
-			t.Errorf("%s still holds the address", f)
-		}
+			s, err := Open(path, testKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			events, err := s.AuditEvents(ctx, AuditFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(events) != 1 || events[0].Action != "oauth.denied" {
+				t.Errorf("events after migrating = %+v, want the one row", events)
+			}
+			for _, f := range []string{path, path + "-wal"} {
+				b, err := os.ReadFile(f)
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					t.Fatal(err)
+				}
+				if bytes.Contains(b, []byte(addr)) {
+					t.Errorf("%s still holds the address", f)
+				}
+			}
+			if _, err := s.Setting(ctx, purgePendingKey); !errors.Is(err, ErrNotFound) {
+				t.Errorf("purge is still pending: %v", err)
+			}
+		})
 	}
 }

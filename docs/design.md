@@ -1644,9 +1644,11 @@ or set in other attributes is theirs and is stored as sent. The rate limit on
 OAuth client registration keeps it in memory only. shed's server log and
 `caddy.log` also omit it from panics: the server's error logger removes it from
 net/http's message, and `caddy.log` excludes `http.stdlib`, so Caddy's panic
-traces are not kept there. Migration 23 drops `audit_events.actor_ip`, and
-`store.Open` then runs `VACUUM` and truncates the WAL once, so the values do not
-stay in freed space. Backups of shed.db from before it keep them until backup
+traces are not kept there. Migration 23 drops `audit_events.actor_ip` and adds a
+`store.purge_pending` setting. While that row exists, `store.Open` runs `VACUUM`,
+truncates the WAL, and deletes the row, so the values do not stay in freed space
+and an interrupted purge runs again at the next start. A failed purge stops
+shed from starting, like a failed migration. Backups of shed.db from before it keep them until backup
 retention removes them.
 
 ### Databases
