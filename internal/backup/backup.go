@@ -415,7 +415,7 @@ func (m *Manager) execute(ctx context.Context, j *job) {
 	if j.restore != nil {
 		m.runRestore(j.ctx, *j.restore, j.backup)
 	} else {
-		m.runBackup(j.ctx, j.backup)
+		_ = m.runBackup(j.ctx, j.backup) // It records its own failure.
 	}
 	if _, err := m.store.DeleteFailedBackupsBefore(context.WithoutCancel(ctx), m.now().Add(-failedRetention)); err != nil {
 		m.log.Error("backup: delete old failed backups", "err", err)

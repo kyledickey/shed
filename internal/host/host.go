@@ -71,8 +71,8 @@ func (r Reader) Read(ctx context.Context) (Stats, error) {
 		return s, fmt.Errorf("host: statfs %s: %w", path, err)
 	}
 	bsize := uint64(fs.Bsize)
-	s.DiskTotal = uint64(fs.Blocks) * bsize
-	s.DiskUsed = (uint64(fs.Blocks) - uint64(fs.Bfree)) * bsize
+	s.DiskTotal = fs.Blocks * bsize
+	s.DiskUsed = (fs.Blocks - fs.Bfree) * bsize
 	return s, nil
 }
 

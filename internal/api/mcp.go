@@ -16,7 +16,7 @@ func rejectForeignOrigins(baseURL string, next http.Handler) http.Handler {
 	origin := u.Scheme + "://" + u.Host
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Origin"); got != "" && got != origin {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
+			_ = writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -29,7 +29,7 @@ func requireScope(scope string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(auth.ScopesFrom(r.Context()), scope) {
 			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="`+scope+`"`)
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
+			_ = writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient scope"})
 			return
 		}
 		next.ServeHTTP(w, r)

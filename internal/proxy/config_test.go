@@ -256,7 +256,7 @@ func TestBuildConfigTLSPolicies(t *testing.T) {
 				t.Fatalf("got %d policies, want %d: %v", len(policies), len(tt.wantPolicies), policies)
 			}
 			for i, want := range tt.wantPolicies {
-				if !reflect.DeepEqual(policies[i], any(map[string]any(want))) {
+				if !reflect.DeepEqual(policies[i], any(want)) {
 					t.Errorf("policy %d = %v, want %v", i, policies[i], want)
 				}
 			}

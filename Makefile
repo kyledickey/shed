@@ -2,7 +2,7 @@
 VERSION ?= dev-$(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
 DEV_CONFIG ?= shed.dev.toml
 
-.PHONY: web build site test dev
+.PHONY: web build site test lint dev
 
 web:
 	cd web && bun ci && bun run build
@@ -15,6 +15,10 @@ site:
 
 test:
 	go test -race ./...
+
+# The version matches .github/workflows/ci.yml.
+lint:
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
 
 dev:
 	go run ./cmd/shed -config $(DEV_CONFIG)

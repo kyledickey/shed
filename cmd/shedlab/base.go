@@ -62,7 +62,7 @@ func bakeBase(ctx context.Context, p *progress, root string) error {
 	if err := v.writeSeed(publicKey); err != nil {
 		return err
 	}
-	defer v.kill(context.WithoutCancel(ctx))
+	defer v.kill(context.WithoutCancel(ctx)) //nolint:errcheck // Cleanup of a throwaway VM.
 
 	p.set("booting Ubuntu")
 	if err := v.start(ctx); err != nil {

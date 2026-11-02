@@ -224,7 +224,7 @@ func (s *Server) queryMetrics(ctx context.Context, _ *sdk.CallToolRequest, in qu
 // seconds. It is at least a second, and at least what keeps the range within
 // maxPoints points; without one, the range holds about 250 points.
 func rangeStep(v string, span time.Duration) (time.Duration, error) {
-	step := time.Duration(0)
+	var step time.Duration
 	if v != "" {
 		var err error
 		if step, err = time.ParseDuration(v); err != nil {

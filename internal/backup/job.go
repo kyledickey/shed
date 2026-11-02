@@ -279,7 +279,7 @@ func (m *Manager) writeArchive(ctx context.Context, b *store.Backup, method stor
 // syncDir makes a rename in dir durable, as far as the file system allows.
 func syncDir(dir string) {
 	if d, err := os.Open(dir); err == nil {
-		d.Sync()
+		_ = d.Sync()
 		d.Close()
 	}
 }

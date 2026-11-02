@@ -170,7 +170,7 @@ func (c codec) write(w http.ResponseWriter, status int, m proto.Message) {
 		return
 	}
 	w.WriteHeader(status)
-	w.Write(b)
+	_, _ = w.Write(b)
 }
 
 // writeStatus answers with a google.rpc.Status, as OTLP/HTTP prescribes for

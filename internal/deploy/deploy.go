@@ -299,7 +299,7 @@ func (d *Deployer) Stop() {
 	d.mu.Unlock()
 	d.shutdown(errShutdown)
 	d.wg.Wait()
-	d.queueDepth.Unregister()
+	_ = d.queueDepth.Unregister()
 }
 
 // Deploy queues a new deployment of a service and returns it. Older

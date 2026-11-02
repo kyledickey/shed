@@ -131,6 +131,7 @@ Update the docs in the same change whenever you change anything relevant.
 ```sh
 make build                      # dashboard + bin/shed
 make test                       # go test
+make lint                       # golangci-lint
 go vet ./...
 cd web && bun install           # first time
 cd web && bun run dev           # dashboard dev server, proxies /api to :3000

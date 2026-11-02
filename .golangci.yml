@@ -1,0 +1,54 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - gosec
+    - misspell
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*encoding/json.Encoder).Encode # The response has already started.
+        - (*html/template.Template).Execute # Same.
+        - (*net/http.Server).Serve # Always returns an error, at shutdown.
+        - (*database/sql.Tx).Rollback # Deferred after commit, when it's a no-op.
+        - golang.org/x/sys/unix.Close
+    gosec:
+      excludes:
+        - G101 # Flags settings keys that contain the word "token".
+        - G104 # errcheck covers this, with the exclusions here.
+        - G110 # Archives are shed's own backups, read while verifying them.
+        - G115 # Sizes and counts from the kernel and Docker.
+        - G117 # The GitHub App secret is stored on purpose.
+        - G122 # Walks only directories shed owns.
+        - G124 # Secure comes from config, which it can't see.
+        - G204 # Commands run as argument lists, without a shell.
+        - G301 # Components run as other users and must read these.
+        - G304 # Paths come from config, not requests.
+        - G306 # Same as G301.
+        - G602 # False positive on slices of known length.
+        - G702 # The update re-exec runs shed's own binary.
+        - G703 # The path comes from config and systemd credentials.
+        - G710 # False positive on redirects shed builds itself.
+    misspell:
+      ignore-rules:
+        - signins
+    staticcheck:
+      checks:
+        - all
+        - -QF1001 # Style preferences, not bugs.
+        - -QF1008
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - errcheck
+          - gosec

@@ -322,7 +322,7 @@ func (u *Updater) SetChannel(ctx context.Context, ch Channel) (Status, error) {
 	u.latest, u.checkedAt, u.staged, u.stagedPath = nil, time.Time{}, "", ""
 	u.mu.Unlock()
 	// A failed check is reported in the status.
-	u.Check(ctx)
+	_, _ = u.Check(ctx)
 	return u.Status(ctx)
 }
 

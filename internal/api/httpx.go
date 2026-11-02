@@ -68,7 +68,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	} else {
 		s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 	}
-	writeJSON(w, status, map[string]string{"error": msg})
+	_ = writeJSON(w, status, map[string]string{"error": msg})
 }
 
 // statusOf returns the HTTP status of a kind of control error.
@@ -117,7 +117,7 @@ func requireJSON(next http.Handler) http.Handler {
 		case http.MethodPost, http.MethodPut, http.MethodPatch:
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if mt != "application/json" {
-				writeJSON(w, http.StatusUnsupportedMediaType,
+				_ = writeJSON(w, http.StatusUnsupportedMediaType,
 					map[string]string{"error": "Content-Type must be application/json"})
 				return
 			}
@@ -137,7 +137,7 @@ func protectMutations(baseURL string, next http.Handler) http.Handler {
 		default:
 			got, site := r.Header.Get("Origin"), r.Header.Get("Sec-Fetch-Site")
 			if got != "" && got != origin || got == "" && site != "" && site != "same-origin" {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
+				_ = writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
 				return
 			}
 		}

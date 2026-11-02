@@ -55,7 +55,7 @@ func (s *Server) grafanaProxy(addr string) http.Handler {
 		// A WebSocket handshake is a GET, so the mutation check passes it;
 		// it gets the same origin check here.
 		if r.Header.Get("Upgrade") != "" && !sameOrigin(s.baseURL, r) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
+			_ = writeJSON(w, http.StatusForbidden, map[string]string{"error": "untrusted request origin"})
 			return
 		}
 		rp.ServeHTTP(w, r)
