@@ -95,6 +95,7 @@ const DELETE = (p: string, h: Handler) => route("DELETE", p, h);
 function projectSummary(p: { id: string; name: string; createdAt: string }): Project {
   return {
     ...p,
+    updatedAt: p.createdAt,
     services: [...state.services.values()]
       .filter((s) => s.projectId === p.id)
       .map((s) => ({ id: s.id, name: s.name, kind: s.kind, status: s.status })),
@@ -215,6 +216,7 @@ GET("/projects/:id", ({ params }) => {
   if (!p) return fail(404, "project not found");
   const detail: ProjectDetail = {
     ...p,
+    updatedAt: p.createdAt,
     services: [...state.services.values()]
       .filter((s) => s.projectId === p.id)
       .map((s) => service(s.id) as Service),
