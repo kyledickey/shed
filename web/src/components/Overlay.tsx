@@ -1,8 +1,8 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { Menu as BaseMenu } from "@base-ui/react/menu";
-import { Toast } from "@base-ui/react/toast";
 import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
-import { CircleCheck, CircleX, Info, X } from "lucide-react";
+import { Toasty, useKumoToastManager } from "@cloudflare/kumo";
+import { X } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { cx } from "../lib/cx";
 import { buttonClass } from "./Button";
@@ -174,56 +174,24 @@ export const TooltipProvider = BaseTooltip.Provider;
 
 export type ToastType = "success" | "error" | "info";
 
-const toastIcons: Record<ToastType, ReactNode> = {
-  success: <CircleCheck size={16} />,
-  error: <CircleX size={16} />,
-  info: <Info size={16} />,
+type ToastOptions = {
+  title?: ReactNode;
+  description?: ReactNode;
+  type?: ToastType;
+  timeout?: number;
 };
 
-const toastTones: Record<ToastType, string> = {
-  success: "grass",
-  error: "tomato",
-  info: "sky",
-};
+// Success stays neutral: only errors take color.
+const toastVariants = { success: "default", error: "error", info: "default" } as const;
 
 /** ToastProvider renders the toast stack; call useToast().add() anywhere below it. */
-export function ToastProvider({ children }: { children: ReactNode }) {
-  return (
-    <Toast.Provider>
-      {children}
-      <Toast.Portal>
-        <Toast.Viewport className={styles.toastViewport}>
-          <ToastList />
-        </Toast.Viewport>
-      </Toast.Portal>
-    </Toast.Provider>
-  );
-}
+export const ToastProvider = Toasty;
 
-function ToastList() {
-  const { toasts } = Toast.useToastManager();
-  return toasts.map((toast) => {
-    const type = (toast.type as ToastType | undefined) ?? "info";
-    return (
-      <Toast.Root key={toast.id} toast={toast} className={styles.toast}>
-        <Toast.Content className={styles.toastContent}>
-          <span className={styles.toastIcon} data-tone={toastTones[type]}>
-            {toastIcons[type]}
-          </span>
-          <div className={styles.toastText}>
-            <Toast.Title className={styles.toastTitle} />
-            <Toast.Description className={styles.toastDescription} />
-          </div>
-          <Toast.Close
-            className={buttonClass({ variant: "ghost", size: "sm", icon: true })}
-            aria-label="Dismiss"
-          >
-            <X size={14} />
-          </Toast.Close>
-        </Toast.Content>
-      </Toast.Root>
-    );
-  });
+/** useToast adds toasts to Kumo's stack, mapping shed's `type` to Kumo's variant. */
+export function useToast() {
+  const { add } = useKumoToastManager();
+  return {
+    add: ({ type = "info", ...options }: ToastOptions) =>
+      add({ ...options, variant: toastVariants[type] }),
+  };
 }
-
-export const useToast = Toast.useToastManager;

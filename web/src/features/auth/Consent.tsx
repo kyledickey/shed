@@ -1,13 +1,12 @@
+import { Button, SkeletonLine } from "@cloudflare/kumo";
+import { CheckIcon, XIcon } from "@phosphor-icons/react";
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { Check, CircleX, X } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { meQuery } from "../../api/auth";
 import { errorMessage, isApiError } from "../../api/client";
 import { oauthRequestQuery, useDecideOAuthRequest } from "../../api/oauth";
 import type { OAuthRequest } from "../../api/types";
-import { Button, buttonClass } from "../../components/Button";
-import { Avatar, Callout, Skeleton } from "../../components/Misc";
-import { AuthCard } from "./AuthCard";
+import { AuthCard, authButtonClass, authErrorClass } from "./AuthCard";
 import styles from "./Consent.module.css";
 
 const expiredText =
@@ -21,16 +20,20 @@ export function Consent({ requestId }: { requestId: string | undefined }) {
   if (request.error) {
     return (
       <AuthCard title="Authorize agent" description="The request couldn't be loaded.">
-        <Callout tone="tomato" icon={<CircleX size={16} />}>
+        <p className={authErrorClass} role="alert">
           {errorMessage(request.error)}
-        </Callout>
+        </p>
       </AuthCard>
     );
   }
   if (!request.data) {
     return (
-      <AuthCard title="Authorize agent" description={<Skeleton width="80%" height={14} />}>
-        <Skeleton height={140} radius={10} />
+      <AuthCard title="Authorize agent" description="Loading the request…">
+        <div className={styles.loading} aria-busy>
+          <SkeletonLine minWidth={50} maxWidth={80} />
+          <SkeletonLine minWidth={40} maxWidth={70} />
+          <SkeletonLine minWidth={30} maxWidth={60} />
+        </div>
       </AuthCard>
     );
   }
@@ -38,11 +41,12 @@ export function Consent({ requestId }: { requestId: string | undefined }) {
 }
 
 function Expired() {
+  const navigate = useNavigate();
   return (
     <AuthCard title="Request expired" description={expiredText}>
-      <Link to="/" className={buttonClass({ size: "lg" })}>
+      <Button size="lg" className={authButtonClass} onClick={() => void navigate({ to: "/" })}>
         Go to the dashboard
-      </Link>
+      </Button>
     </AuthCard>
   );
 }
@@ -97,7 +101,7 @@ function ConsentForm({ request }: { request: OAuthRequest }) {
         <div>
           <dt>Acting as</dt>
           <dd>
-            <Avatar src={me.avatarUrl} name={me.login} size={18} />
+            {me.avatarUrl && <img className={styles.avatar} src={me.avatarUrl} alt="" />}
             <span>{me.login}</span>
           </dd>
         </div>
@@ -107,20 +111,20 @@ function ConsentForm({ request }: { request: OAuthRequest }) {
         <span className={styles.scopeTitle}>It will be able to</span>
         <ul className={styles.items}>
           <li>
-            <Check size={14} className={styles.yes} />
+            <CheckIcon size={14} className={styles.glyph} />
             Read projects, services, deployments, and their settings
           </li>
           <li>
-            <Check size={14} className={styles.yes} />
+            <CheckIcon size={14} className={styles.glyph} />
             Read build logs, runtime logs, metrics, and shed's own log
           </li>
           <li>
-            <Check size={14} className={styles.yes} />
+            <CheckIcon size={14} className={styles.glyph} />
             See variable names, backups, update status, and your GitHub repositories
           </li>
           {extraScopes.map((s) => (
             <li key={s}>
-              <Check size={14} className={styles.yes} />
+              <CheckIcon size={14} className={styles.glyph} />
               <span className={styles.mono}>{s}</span>
             </li>
           ))}
@@ -128,25 +132,26 @@ function ConsentForm({ request }: { request: OAuthRequest }) {
         <span className={styles.scopeTitle}>It won't be able to</span>
         <ul className={styles.items}>
           <li>
-            <X size={14} className={styles.no} />
+            <XIcon size={14} className={styles.glyph} />
             See variable values or secrets
           </li>
           <li>
-            <X size={14} className={styles.no} />
+            <XIcon size={14} className={styles.glyph} />
             Deploy, change, or delete anything
           </li>
         </ul>
       </div>
 
       {decide.error && (
-        <Callout tone="tomato" icon={<CircleX size={16} />}>
+        <p className={authErrorClass} role="alert">
           {errorMessage(decide.error)}
-        </Callout>
+        </p>
       )}
 
       <div className={styles.actions}>
         <Button
           size="lg"
+          className={authButtonClass}
           disabled={leaving || decide.isPending}
           loading={decide.isPending && decide.variables === false}
           onClick={() => submit(false)}
@@ -156,6 +161,7 @@ function ConsentForm({ request }: { request: OAuthRequest }) {
         <Button
           variant="primary"
           size="lg"
+          className={authButtonClass}
           disabled={leaving || decide.isPending}
           loading={decide.isPending && decide.variables === true}
           onClick={() => submit(true)}

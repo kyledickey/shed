@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/kyledickey/shed/internal/audit"
+	"github.com/kyledickey/shed/internal/control"
 	"github.com/kyledickey/shed/internal/store"
 )
 
@@ -250,12 +251,12 @@ func (s *Server) listDeployments(ctx context.Context, _ *sdk.CallToolRequest, in
 	if limit <= 0 {
 		limit = defaultDeployments
 	}
-	deps, err := s.backend.Deployments(ctx, in.ServiceID, min(limit, maxDeployments))
+	page, err := s.backend.Deployments(ctx, in.ServiceID, control.Page{Limit: min(limit, maxDeployments)})
 	if err != nil {
 		return nil, deploymentsOut{}, s.fail(err, "service", in.ServiceID)
 	}
-	out := deploymentsOut{Deployments: make([]deploymentOut, 0, len(deps))}
-	for _, d := range deps {
+	out := deploymentsOut{Deployments: make([]deploymentOut, 0, len(page.Deployments))}
+	for _, d := range page.Deployments {
 		out.Deployments = append(out.Deployments, toDeployment(d))
 	}
 	return nil, out, nil
@@ -318,7 +319,7 @@ func (s *Server) listVariables(ctx context.Context, _ *sdk.CallToolRequest, in s
 }
 
 func (s *Server) listBackups(ctx context.Context, _ *sdk.CallToolRequest, in serviceArgs) (*sdk.CallToolResult, backupsOut, error) {
-	list, err := s.backend.ServiceBackups(ctx, in.ServiceID)
+	list, err := s.backend.ServiceBackups(ctx, in.ServiceID, control.Page{Limit: control.MaxPage})
 	if err != nil {
 		return nil, backupsOut{}, s.fail(err, "service", in.ServiceID)
 	}

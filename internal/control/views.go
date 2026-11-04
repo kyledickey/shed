@@ -45,6 +45,13 @@ type ServiceView struct {
 	RestoreFence *store.RestoreFence
 }
 
+// DeploymentPage is a page of a service's deployments, newest first.
+type DeploymentPage struct {
+	Deployments []DeploymentView
+	// Next is the Before of the following page, or empty on the last page.
+	Next string
+}
+
 // DeploymentView is a deployment without its runtime record, which holds the
 // resolved variables its container was started with.
 type DeploymentView struct {
@@ -92,11 +99,13 @@ type BackupView struct {
 	FileName string
 }
 
-// BackupList is the backup policy and the newest backups of a service, or
-// of shed.db.
+// BackupList is the backup policy and a page of the backups of a service,
+// or of shed.db.
 type BackupList struct {
 	Policy  backup.Policy
 	Backups []BackupView
+	// Next is the Before of the following page, or empty on the last page.
+	Next string
 	// Restore is the service's latest restore, if any; always nil for
 	// shed.db.
 	Restore *store.Restore

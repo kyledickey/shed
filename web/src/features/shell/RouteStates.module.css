@@ -1,0 +1,37 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 28px var(--page-gutter) 48px;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 16px;
+  border-radius: 8px;
+  background: var(--color-kumo-base);
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+}
+
+.empty {
+  padding: 72px 24px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-kumo-base);
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+}
+
+.icon {
+  color: var(--text-color-kumo-inactive);
+}

@@ -1,0 +1,105 @@
+.layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 40px;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 28px var(--page-gutter) 48px;
+
+  @media (max-width: 860px) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+.nav {
+  position: sticky;
+  top: 76px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+
+  @media (max-width: 860px) {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+  }
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 10px;
+
+  @media (max-width: 860px) {
+    flex-basis: 100%;
+  }
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+}
+
+.title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.groupLabel {
+  padding: 0 10px 6px;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+}
+
+.item {
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--text-color-kumo-default);
+
+  &:hover {
+    background: var(--color-kumo-tint);
+  }
+}
+
+.active {
+  background: var(--color-kumo-tint);
+  font-weight: 500;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.description {
+  color: var(--text-color-kumo-subtle);
+}

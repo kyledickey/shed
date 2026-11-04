@@ -120,7 +120,7 @@ Each page is one `<slug>.mdx` with frontmatter (`title`, `group`, `order`,
   `components/<slug>/` and are imported at the top of the page.
 - Operator pages describe behavior, paths, config keys, endpoints, and
   limits; Go packages and functions belong in the "Developing" group.
-- `?` tooltips in the dashboard are entries in `topics.ts`. `docs.test.ts`
+- Help tooltips in the dashboard (`<HelpTip topic>`) are entries in `topics.ts`. `docs.test.ts`
   fails if a tooltip or a `/docs/...#id` link points at a heading that no
   longer exists, so run the tests after renaming a heading.
 

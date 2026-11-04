@@ -1,8 +1,8 @@
-/** DocTopic names a target of the dashboard's ? tooltips. */
+/** DocTopic names a target of the dashboard's help tooltips. */
 export type DocTopic = keyof typeof docTopics;
 
 /**
- * docTopics are the targets of the dashboard's ? tooltips: a page slug, the
+ * docTopics are the targets of the dashboard's help tooltips: a page slug, the
  * id of one of its ## headings, and a one-line summary. topics.test.ts
  * checks every target against content/*.mdx.
  */

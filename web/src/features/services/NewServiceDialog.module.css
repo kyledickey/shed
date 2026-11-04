@@ -1,105 +1,84 @@
-.kindGrid {
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.groupLabel {
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.methods {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 
   @media (max-width: 520px) {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.kindTile {
+/* A framed row: a glyph in a small ringed square, then the name. */
+.method {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--raised);
-  color: var(--ink);
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--color-kumo-line);
+  color: var(--text-color-kumo-default);
+  font: inherit;
+  font-size: var(--text-base);
   text-align: left;
   cursor: pointer;
-  transition:
-    border-color var(--dur) var(--ease),
-    background-color var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease);
 
   &:hover {
-    border-color: var(--tone-line);
-    background: var(--hover);
+    background: var(--color-kumo-tint);
   }
 
   &:focus-visible {
-    outline: none;
-    border-color: var(--tone);
-    box-shadow: var(--focus-ring);
+    outline: 2px solid var(--color-kumo-focus);
+    outline-offset: 1px;
   }
 }
 
-.kindName {
-  display: block;
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.kindHint {
-  display: block;
-  color: var(--ink-3);
-  font-size: var(--text-xs);
+.glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-color-kumo-subtle);
 }
 
 .form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 20px;
 }
 
-.back {
-  margin-right: auto;
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }
 
-.picker {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.branch {
+  justify-content: space-between;
+  width: 100%;
 }
 
-.repos {
-  max-height: 280px;
-  margin: 0;
-  padding: 4px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--sunken);
-  list-style: none;
-}
-
-.repo {
+.selected {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-height: 34px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-
-  & > svg {
-    flex: none;
-    color: var(--ink-3);
-  }
-
-  &:hover,
-  &:focus-visible {
-    outline: none;
-    background: var(--hover);
-  }
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 6px 0 14px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--color-kumo-line);
 }
 
 .repoName {
@@ -107,58 +86,110 @@
   min-width: 0;
   overflow: hidden;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: 0.9em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.skeletonRow {
+.error {
+  color: var(--text-color-kumo-danger);
+  font-size: var(--text-sm);
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.repos {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--color-kumo-line);
+  list-style: none;
+
+  & li + li {
+    border-top: 1px solid var(--color-kumo-hairline);
+  }
+}
+
+.repo {
   display: flex;
   align-items: center;
-  height: 34px;
-  padding: 0 8px;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: var(--text-color-kumo-default);
+  font: inherit;
+  font-size: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--color-kumo-tint);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-kumo-focus);
+    outline-offset: -2px;
+  }
+}
+
+.repoGlyph {
+  flex: none;
+  color: var(--text-color-kumo-subtle);
 }
 
 .noMatch {
-  padding: var(--space-4);
-  color: var(--ink-3);
+  padding: 12px 14px;
+  color: var(--text-color-kumo-subtle);
   font-size: var(--text-sm);
-  text-align: center;
 }
 
-.hint {
-  color: var(--ink-3);
-  font-size: var(--text-xs);
-
-  & a {
-    color: var(--accent-ink);
-
-    &:hover {
-      text-decoration: underline;
-    }
-  }
+.loading {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  color: var(--text-color-kumo-subtle);
 }
 
-.selected {
+/* An empty well: a quiet line of text with an optional small action. */
+.well {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-height: var(--control-h-lg);
-  padding: 0 4px 0 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--sunken);
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--color-kumo-hairline);
+  border-radius: 8px;
+  background: var(--color-kumo-recessed);
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
 
-  & > svg {
+  & > a {
     flex: none;
-    color: var(--ink-3);
   }
 }
 
-.detail {
-  display: block;
-  margin-bottom: 4px;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
+:global([data-mode="dark"]) .well {
+  border-style: dashed;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+
+  & a {
+    color: var(--text-color-kumo-link);
+  }
 }

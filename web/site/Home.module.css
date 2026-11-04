@@ -92,16 +92,6 @@
 
 .preview {
   margin-top: -32px;
-
-  /* The map needs room for three columns. */
-  @media (max-width: 760px) {
-    display: none;
-  }
-}
-
-.previewSheet {
-  display: flex;
-  justify-content: center;
 }
 
 .section {

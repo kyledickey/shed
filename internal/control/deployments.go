@@ -10,23 +10,18 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// MaxDeployments is the most deployments Deployments returns.
-const MaxDeployments = 50
-
-// Deployments returns up to limit of a service's newest deployments, newest
-// first, with whether each one's image is still on the server. A limit
-// outside 1 to MaxDeployments means MaxDeployments.
-func (p *Plane) Deployments(ctx context.Context, serviceID string, limit int) ([]DeploymentView, error) {
-	if limit <= 0 || limit > MaxDeployments {
-		limit = MaxDeployments
-	}
+// Deployments returns a page of a service's deployments, newest first, with
+// whether each one's image is still on the server.
+func (p *Plane) Deployments(ctx context.Context, serviceID string, page Page) (DeploymentPage, error) {
 	if _, err := p.store.Service(ctx, serviceID); err != nil {
-		return nil, err
+		return DeploymentPage{}, err
 	}
-	deps, err := p.store.Deployments(ctx, serviceID, limit)
+	limit := page.limit()
+	deps, err := p.store.DeploymentsBefore(ctx, serviceID, page.Before, limit+1)
 	if err != nil {
-		return nil, err
+		return DeploymentPage{}, err
 	}
+	deps, next := cut(deps, limit, func(d store.Deployment) string { return d.ID })
 	images := make([]string, 0, len(deps))
 	for _, d := range deps {
 		images = append(images, d.Image)
@@ -45,7 +40,7 @@ func (p *Plane) Deployments(ctx context.Context, serviceID string, limit int) ([
 		}
 		out = append(out, v)
 	}
-	return out, nil
+	return DeploymentPage{Deployments: out, Next: next}, nil
 }
 
 // Deployment returns a deployment.

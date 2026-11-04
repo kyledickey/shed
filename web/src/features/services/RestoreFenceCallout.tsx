@@ -1,12 +1,12 @@
+import { Button } from "@cloudflare/kumo";
+import { ShieldWarningIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { serviceBackupsQuery } from "../../api/backups";
 import { errorMessage } from "../../api/client";
 import { useClearRestoreFence } from "../../api/services";
 import type { RestoreFence, Service } from "../../api/types";
-import { Button } from "../../components/Button";
-import { Callout } from "../../components/Misc";
+import { Notice } from "../../components/Notice";
 import { useToast } from "../../components/Overlay";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
 import { HelpTip } from "../docs/HelpTip";
@@ -40,23 +40,23 @@ function FencedCallout({ service, fence }: { service: Service; fence: RestoreFen
 
   return (
     <>
-      <Callout
-        tone="tomato"
-        icon={<ShieldAlert size={16} />}
+      <Notice
+        danger
+        icon={<ShieldWarningIcon size={16} />}
         title={
           <>
-            Restore failed <HelpTip topic="restoreFences" />
+            <HelpTip topic="restoreFences">Restore failed</HelpTip>
           </>
         }
         actions={
-          <Button size="sm" variant="danger" onClick={() => setConfirm(true)}>
+          <Button size="sm" onClick={() => setConfirm(true)}>
             Keep current data
           </Button>
         }
       >
-        A restore of this service failed and its data may be incomplete, so it can't be started or
-        deployed. Restarting shed retries recovering it.
-      </Callout>
+        Its data may be incomplete, so it can't be started or deployed. Restarting shed retries
+        recovering it.
+      </Notice>
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

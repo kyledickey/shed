@@ -82,12 +82,18 @@ func (s *Store) Deployment(ctx context.Context, id string) (Deployment, error) {
 // Deployments returns a service's deployments, newest first. A limit of zero
 // or less returns all of them.
 func (s *Store) Deployments(ctx context.Context, serviceID string, limit int) ([]Deployment, error) {
-	if limit <= 0 {
-		limit = -1 // SQLite: no limit.
-	}
-	ds, err := queryAll(ctx, s, s.scanDeployment, `SELECT `+deploymentCols+`
-		FROM deployments WHERE service_id = ?
-		ORDER BY created_at DESC, rowid DESC LIMIT ?`, serviceID, limit)
+	return s.DeploymentsBefore(ctx, serviceID, "", limit)
+}
+
+// DeploymentsBefore returns a service's deployments older than the
+// deployment before, newest first; an empty before starts at the newest.
+// Deployments created at the same time are ordered by insertion. A before
+// that is not one of the service's deployments selects none. A limit of
+// zero or less returns all of them.
+func (s *Store) DeploymentsBefore(ctx context.Context, serviceID, before string, limit int) ([]Deployment, error) {
+	q, args := pageQuery(`SELECT `+deploymentCols+` FROM deployments`, "deployments",
+		"service_id = ?", []any{serviceID}, before, limit)
+	ds, err := queryAll(ctx, s, s.scanDeployment, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: deployments of service %s: %w", serviceID, err)
 	}

@@ -109,12 +109,12 @@ func (f *fakeBackend) Service(_ context.Context, id string) (control.ServiceView
 	return f.service(), nil
 }
 
-func (f *fakeBackend) Deployments(_ context.Context, serviceID string, limit int) ([]control.DeploymentView, error) {
+func (f *fakeBackend) Deployments(_ context.Context, serviceID string, page control.Page) (control.DeploymentPage, error) {
 	if err := f.check(serviceID, "svc1"); err != nil {
-		return nil, err
+		return control.DeploymentPage{}, err
 	}
-	f.lines = append(f.lines, limit)
-	return []control.DeploymentView{f.deployment()}, nil
+	f.lines = append(f.lines, page.Limit)
+	return control.DeploymentPage{Deployments: []control.DeploymentView{f.deployment()}}, nil
 }
 
 func (f *fakeBackend) Deployment(_ context.Context, id string) (control.DeploymentView, error) {
@@ -188,7 +188,7 @@ func (f *fakeBackend) VariableNames(_ context.Context, id string) (control.Varia
 	return out, nil
 }
 
-func (f *fakeBackend) ServiceBackups(_ context.Context, id string) (control.BackupList, error) {
+func (f *fakeBackend) ServiceBackups(_ context.Context, id string, _ control.Page) (control.BackupList, error) {
 	if err := f.check(id, "svc1"); err != nil {
 		return control.BackupList{}, err
 	}

@@ -1,122 +1,128 @@
-import { ArrowUpRight, Ellipsis, Globe, Lock, Plus, Sparkles, Trash2 } from "lucide-react";
+import { Button, ClipboardText, DropdownMenu, Input, Table } from "@cloudflare/kumo";
+import {
+  ArrowUpRightIcon,
+  DotsThreeIcon,
+  PlusIcon,
+  SparkleIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useAddDomain, useDeleteDomain } from "../../api/services";
 import type { Domain, Service } from "../../api/types";
-import { Badge } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input } from "../../components/Form";
-import { CopyButton, ServiceIcon } from "../../components/Misc";
-import { Dialog, Menu, MenuItem, MenuSeparator, useToast } from "../../components/Overlay";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { SettingsCard, useSectionForm } from "./SectionForm";
-import styles from "./Settings.module.css";
+import { useToast } from "../../components/Overlay";
+import { Pill } from "../../components/Pill";
+import { SettingRow, Well } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { HelpTip } from "../docs/HelpTip";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { NumberInput } from "./fields";
+import styles from "./Form.module.css";
+import { FormDialog } from "./FormDialog";
+import { SettingsForm, useSectionForm } from "./SectionForm";
 
-/** NetworkingCard shows the private address, public domains, and the public TCP port. */
-export function NetworkingCard({ service }: { service: Service }) {
+/** NetworkingSection shows the private address, public domains, and the public TCP port. */
+export function NetworkingSection({ service }: { service: Service }) {
+  const address = service.port > 0 ? `${service.privateHost}:${service.port}` : service.privateHost;
   return (
-    <div className={styles.stack}>
-      <LayerCard
-        title={
+    <>
+      <SettingRow
+        label={
           <>
-            Networking <HelpTip topic="privateNetwork" />
+            <HelpTip topic="privateNetwork">Private address</HelpTip>
           </>
         }
-        meta="How traffic reaches this service."
-      >
-        <div className={styles.list}>
-          <div className={styles.row}>
-            <ServiceIcon icon={<Lock />} tone="neutral" size={28} />
-            <div className={styles.rowMain}>
-              <span className={styles.mono}>
-                {service.privateHost}
-                {service.port > 0 && `:${service.port}`}
-              </span>
-              <span className={styles.muted}>
-                Private network. Other services in this project reach it by this name.
-              </span>
-            </div>
-            <CopyButton
-              value={
-                service.port > 0 ? `${service.privateHost}:${service.port}` : service.privateHost
-              }
-              label="Copy private address"
-            />
-          </div>
-        </div>
-      </LayerCard>
-      {service.kind === "app" && <DomainsCard service={service} />}
-      <PublicPortCard service={service} />
-    </div>
+        description="Other services in this project reach it by this name."
+        control={<ClipboardText text={address} size="base" className={styles.mono} />}
+      />
+      {service.kind === "app" && <Domains service={service} />}
+      <PublicPort service={service} />
+    </>
   );
 }
 
-function DomainsCard({ service }: { service: Service }) {
+function Domains({ service }: { service: Service }) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Domain | null>(null);
   const remove = useDeleteDomain(service.id);
   const toast = useToast();
 
   return (
-    <LayerCard
-      title={
+    <SettingRow
+      label={
         <>
-          Public domains <HelpTip topic="domains" />
+          <HelpTip topic="domains">Public domains</HelpTip>
         </>
       }
-      meta="Certificates are issued automatically."
-      actions={
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <Plus size={13} /> Add domain
+      description="Certificates are issued automatically. Point custom domains at this server with an A or AAAA record."
+      control={
+        <Button icon={<PlusIcon />} onClick={() => setAdding(true)}>
+          Add domain
         </Button>
-      }
-      footer={
-        <span className={styles.muted}>
-          Point custom domains at this server with an A or AAAA record.
-        </span>
       }
     >
       {service.domains.length === 0 ? (
-        <div className={styles.section}>
-          <p className={styles.note}>No public domains. The service is only reachable privately.</p>
-        </div>
+        <Well empty>No public domains. The service is only reachable privately.</Well>
       ) : (
-        <div className={styles.list}>
-          {service.domains.map((d) => (
-            <div key={d.id} className={styles.row}>
-              <ServiceIcon icon={<Globe />} tone="sky" size={28} />
-              <a className={styles.host} href={d.url} target="_blank" rel="noreferrer">
-                {d.host}
-                <ArrowUpRight size={12} />
-              </a>
-              {d.generated && (
-                <Badge size="sm" tone="neutral">
-                  generated
-                </Badge>
-              )}
-              <span className={styles.spacer} />
-              <Menu
-                trigger={
-                  <Button variant="ghost" size="sm" icon aria-label={`Actions for ${d.host}`}>
-                    <Ellipsis size={14} />
-                  </Button>
-                }
-              >
-                <MenuItem
-                  icon={<ArrowUpRight size={14} />}
-                  onClick={() => window.open(d.url, "_blank", "noreferrer")}
-                >
-                  Open
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem danger icon={<Trash2 size={14} />} onClick={() => setRemoving(d)}>
-                  Remove
-                </MenuItem>
-              </Menu>
-            </div>
-          ))}
+        <div className={styles.table}>
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Domain</Table.Head>
+                <Table.Head>Type</Table.Head>
+                <Table.Head aria-label="Actions" />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {service.domains.map((d) => (
+                <Table.Row key={d.id}>
+                  <Table.Cell>
+                    <a className={styles.host} href={d.url} target="_blank" rel="noreferrer">
+                      {d.host}
+                      <ArrowUpRightIcon size={12} />
+                    </a>
+                  </Table.Cell>
+                  <Table.Cell>
+                    {d.generated ? (
+                      <Pill>Generated</Pill>
+                    ) : (
+                      <span className={styles.muted}>Custom</span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell className={styles.cellActions}>
+                    <DropdownMenu>
+                      <DropdownMenu.Trigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            shape="square"
+                            icon={<DotsThreeIcon weight="bold" />}
+                            aria-label={`Actions for ${d.host}`}
+                          />
+                        }
+                      />
+                      <DropdownMenu.Content align="end">
+                        <DropdownMenu.Item
+                          icon={<ArrowUpRightIcon />}
+                          onClick={() => window.open(d.url, "_blank", "noreferrer")}
+                        >
+                          Open
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item
+                          variant="danger"
+                          icon={<TrashIcon />}
+                          onClick={() => setRemoving(d)}
+                        >
+                          Remove
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
         </div>
       )}
       <AddDomainDialog service={service} open={adding} onOpenChange={setAdding} />
@@ -142,7 +148,7 @@ function DomainsCard({ service }: { service: Service }) {
       >
         <strong>{removing?.host}</strong> will stop routing to this service.
       </ConfirmDialog>
-    </LayerCard>
+    </SettingRow>
   );
 }
 
@@ -169,7 +175,7 @@ function AddDomainDialog({
     });
 
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) add.reset();
@@ -178,14 +184,14 @@ function AddDomainDialog({
       title="Add domain"
       description={
         <>
-          Point an A or AAAA record for the domain at this server, or generate one under the base
-          domain. <HelpTip topic="generatedDomains" />
+          Point an A or AAAA record for the domain at this server, or generate one under the{" "}
+          <HelpTip topic="generatedDomains">base domain</HelpTip>.
         </>
       }
       footer={
         <>
-          <Button onClick={() => submit()} disabled={add.isPending}>
-            <Sparkles size={14} /> Generate domain
+          <Button icon={<SparkleIcon />} onClick={() => submit()} disabled={add.isPending}>
+            Generate domain
           </Button>
           <Button
             variant="primary"
@@ -199,57 +205,47 @@ function AddDomainDialog({
       }
     >
       <form
-        className={styles.fields}
         onSubmit={(e) => {
           e.preventDefault();
           if (host.trim()) submit(host.trim().toLowerCase());
         }}
       >
-        <Field label="Domain" error={add.error ? errorMessage(add.error) : undefined}>
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              autoFocus
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              placeholder="app.example.com"
-            />
-          )}
-        </Field>
+        <Input
+          label="Domain"
+          className={cx(styles.mono)}
+          autoFocus
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder="app.example.com"
+          spellCheck={false}
+          error={add.error ? errorMessage(add.error) : undefined}
+        />
       </form>
-    </Dialog>
+    </FormDialog>
   );
 }
 
-function PublicPortCard({ service }: { service: Service }) {
+function PublicPort({ service }: { service: Service }) {
   const form = useSectionForm(service, (s) => ({ publicPort: s.publicPort }));
   return (
-    <SettingsCard
-      title={
-        <>
-          Public TCP port <HelpTip topic="publicPort" />
-        </>
-      }
-      meta="Publish the service on a host port."
-      form={form}
-    >
-      <Field
-        label="Host port"
-        hint="Reach the service from outside, e.g. a database. 0 keeps it private."
-      >
-        {(id) => (
-          <Input
-            id={id}
-            type="number"
+    <SettingsForm form={form}>
+      <SettingRow
+        label={
+          <>
+            <HelpTip topic="publicPort">Public TCP port</HelpTip>
+          </>
+        }
+        description="Publish the service on a host port to reach it from outside, e.g. a database. 0 keeps it private."
+        control={
+          <NumberInput
+            aria-label="Public TCP port"
             min={0}
             max={65535}
-            mono
             value={form.draft.publicPort}
             onChange={(e) => form.set("publicPort", Number(e.target.value) || 0)}
           />
-        )}
-      </Field>
-    </SettingsCard>
+        }
+      />
+    </SettingsForm>
   );
 }

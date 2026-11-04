@@ -1,7 +1,6 @@
+import { Select } from "@cloudflare/kumo";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Select } from "../../components/Form";
 import { cx } from "../../lib/cx";
 import styles from "./DocsLayout.module.css";
 import { docGroups, docPage, docPages, isDocSlug } from "./registry";
@@ -68,11 +67,15 @@ export function DocsLayout() {
     <div ref={ref} className={styles.layout}>
       <div className={styles.picker}>
         <Select
+          aria-label="Docs page"
+          className={styles.pickerTrigger}
           value={slug ?? ""}
-          onChange={(next) =>
-            isDocSlug(next) && void navigate({ to: "/docs/$slug", params: { slug: next } })
+          onValueChange={(next) =>
+            typeof next === "string" &&
+            isDocSlug(next) &&
+            void navigate({ to: "/docs/$slug", params: { slug: next } })
           }
-          options={docGroups.flatMap((g) =>
+          items={docGroups.flatMap((g) =>
             g.pages.map((p) => ({ value: p.slug, label: `${g.title} / ${p.title}` })),
           )}
         />
@@ -87,6 +90,7 @@ export function DocsLayout() {
                   to="/docs/$slug"
                   params={{ slug: p.slug }}
                   className={cx(styles.pageLink, p.slug === slug && styles.current)}
+                  aria-current={p.slug === slug ? "page" : undefined}
                 >
                   {p.title}
                 </Link>
@@ -117,9 +121,7 @@ export function DocsLayout() {
           <div className={styles.pager}>
             {prev ? (
               <Link to="/docs/$slug" params={{ slug: prev.slug }} className={styles.pagerLink}>
-                <span className={styles.pagerHint}>
-                  <ArrowLeft size={13} /> Previous
-                </span>
+                <span className={styles.pagerHint}>Previous</span>
                 <span className={styles.pagerTitle}>{prev.title}</span>
               </Link>
             ) : (
@@ -131,9 +133,7 @@ export function DocsLayout() {
                 params={{ slug: next.slug }}
                 className={cx(styles.pagerLink, styles.pagerNext)}
               >
-                <span className={styles.pagerHint}>
-                  Next <ArrowRight size={13} />
-                </span>
+                <span className={styles.pagerHint}>Next</span>
                 <span className={styles.pagerTitle}>{next.title}</span>
               </Link>
             )}

@@ -1,4 +1,5 @@
-import { Box, Check, Copy, Database, Leaf, Zap } from "lucide-react";
+import { CubeIcon, DatabaseIcon, LeafIcon, LightningIcon } from "@phosphor-icons/react";
+import { Check, Copy } from "lucide-react";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import type { ServiceKind } from "../api/types";
 import { cx } from "../lib/cx";
@@ -22,14 +23,17 @@ export function Kbd({ children }: { children: ReactNode }) {
 }
 
 const kindIcons: Record<ServiceKind, ReactNode> = {
-  app: <Box />,
-  postgres: <Database />,
-  mysql: <Database />,
-  mongo: <Leaf />,
-  redis: <Zap />,
+  app: <CubeIcon />,
+  postgres: <DatabaseIcon />,
+  mysql: <DatabaseIcon />,
+  mongo: <LeafIcon />,
+  redis: <LightningIcon />,
 };
 
-/** ServiceIcon is a crayon tile for a service kind, or a custom icon. */
+/**
+ * ServiceIcon is a plain glyph for a service kind, or a custom icon. `size`
+ * is the box it sits in; the glyph takes a little over half of it.
+ */
 export function ServiceIcon({
   kind,
   icon,

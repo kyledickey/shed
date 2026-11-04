@@ -1,51 +1,44 @@
+import { Button, InputGroup, Input, LinkButton, Loader, Select } from "@cloudflare/kumo";
+import {
+  CubeIcon,
+  DatabaseIcon,
+  GithubLogoIcon,
+  LeafIcon,
+  LightningIcon,
+  MagnifyingGlassIcon,
+  type Icon,
+} from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Box, CircleX, Database, ExternalLink, Leaf, Lock, Search, Zap } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import { setupQuery } from "../../api/auth";
 import { errorMessage } from "../../api/client";
 import { branchesQuery, reposQuery } from "../../api/github";
 import { useCreateService } from "../../api/services";
 import type { NewService, Repo, ServiceKind } from "../../api/types";
-import { Badge } from "../../components/Badge";
-import { Button, LinkButton } from "../../components/Button";
-import { Field, Input, Select } from "../../components/Form";
-import { Callout, GitHubIcon, ServiceIcon, Skeleton } from "../../components/Misc";
-import { Dialog, useToast } from "../../components/Overlay";
-import type { Tone } from "../../components/tone";
+import { useToast } from "../../components/Overlay";
+import { Pill } from "../../components/Pill";
 import { imageName, repoName, toServiceName } from "../../lib/names";
+import { FormDialog } from "../settings/FormDialog";
 import styles from "./NewServiceDialog.module.css";
 
 type Source = "repo" | "image" | Exclude<ServiceKind, "app">;
 
-type Glyph = (props: { size?: number }) => ReactNode;
+type Method = { source: Source; name: string; Glyph: Icon };
 
-const sources: { source: Source; name: string; hint: string; Icon: Glyph; tone: Tone }[] = [
-  {
-    source: "repo",
-    name: "GitHub repo",
-    hint: "Build and deploy on push",
-    Icon: GitHubIcon,
-    tone: "grape",
-  },
-  { source: "image", name: "Docker image", hint: "Any public image", Icon: Box, tone: "teal" },
-  {
-    source: "postgres",
-    name: "Postgres",
-    hint: "Relational database",
-    Icon: Database,
-    tone: "sky",
-  },
-  {
-    source: "mysql",
-    name: "MySQL",
-    hint: "Relational database",
-    Icon: Database,
-    tone: "tangerine",
-  },
-  { source: "mongo", name: "MongoDB", hint: "Document database", Icon: Leaf, tone: "grass" },
-  { source: "redis", name: "Redis", hint: "Key-value store", Icon: Zap, tone: "tomato" },
+const apps: Method[] = [
+  { source: "repo", name: "GitHub repository", Glyph: GithubLogoIcon },
+  { source: "image", name: "Docker image", Glyph: CubeIcon },
 ];
+
+const databases: Method[] = [
+  { source: "postgres", name: "Postgres", Glyph: DatabaseIcon },
+  { source: "mysql", name: "MySQL", Glyph: DatabaseIcon },
+  { source: "mongo", name: "MongoDB", Glyph: LeafIcon },
+  { source: "redis", name: "Redis", Glyph: LightningIcon },
+];
+
+const methods = [...apps, ...databases];
 
 const descriptions: Record<Source, string> = {
   repo: "Builds from a Dockerfile, or with Railpack when there isn't one. Pushes deploy automatically.",
@@ -67,7 +60,11 @@ type NewServiceDialogProps = {
   onOpenChange: (open: boolean) => void;
 };
 
-/** NewServiceDialog adds a repo app, an image app or a database to a project. */
+/**
+ * NewServiceDialog adds a repo app, an image app or a database to a
+ * project in a dialog: choose a source, pick a repository if it is one,
+ * then name it and deploy.
+ */
 export function NewServiceDialog({
   projectId,
   projectName,
@@ -84,6 +81,8 @@ export function NewServiceDialog({
   const create = useCreateService(projectId);
   const navigate = useNavigate();
   const toast = useToast();
+  const setup = useQuery(setupQuery);
+  const installUrl = setup.data?.installUrl;
 
   const suggestion =
     source === "repo"
@@ -142,58 +141,59 @@ export function NewServiceDialog({
     });
   };
 
-  const picked = sources.find((s) => s.source === source);
+  const picked = methods.find((m) => m.source === source);
+  const picking = source === "repo" && !repo;
+  const title = !picked
+    ? "Add a service"
+    : picking
+      ? "Select a repository"
+      : source === "repo" || source === "image"
+        ? `Deploy a ${picked.name}`
+        : `Add ${picked.name}`;
 
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={change}
-      size="md"
-      title={picked ? `New ${picked.name}` : "New service"}
-      description={source ? descriptions[source] : `Add an app or a database to ${projectName}.`}
-      icon={picked && <picked.Icon size={18} />}
-      iconTone={picked?.tone}
+      title={title}
+      description={
+        source ? descriptions[source] : `Deploy an app or add a database to ${projectName}.`
+      }
       footer={
-        source ? (
+        source && (
           <>
-            <Button variant="ghost" onClick={reset} className={styles.back}>
+            <Button variant="secondary" onClick={reset}>
               Back
             </Button>
-            <Button
-              type="submit"
-              form={formId}
-              variant="primary"
-              disabled={!body}
-              loading={create.isPending}
-            >
-              Create and deploy
-            </Button>
+            {!picking && (
+              <Button
+                type="submit"
+                form={formId}
+                variant="primary"
+                disabled={!body}
+                loading={create.isPending}
+              >
+                Create and deploy
+              </Button>
+            )}
           </>
-        ) : (
-          <Button variant="ghost" onClick={() => change(false)}>
-            Cancel
-          </Button>
         )
       }
     >
       {!source ? (
-        <div className={styles.kindGrid}>
-          {sources.map((s) => (
-            <button
-              key={s.source}
-              type="button"
-              className={styles.kindTile}
-              data-tone={s.tone}
-              onClick={() => setSource(s.source)}
-            >
-              <ServiceIcon icon={<s.Icon />} tone={s.tone} size={30} />
-              <span>
-                <span className={styles.kindName}>{s.name}</span>
-                <span className={styles.kindHint}>{s.hint}</span>
-              </span>
-            </button>
-          ))}
-        </div>
+        <>
+          <MethodGroup label="Deploy an app" methods={apps} onPick={setSource} />
+          <MethodGroup label="Add a database" methods={databases} onPick={setSource} />
+        </>
+      ) : picking ? (
+        <RepoPicker
+          installUrl={installUrl}
+          onPick={(r) => {
+            setRepo(r);
+            setBranch(r.defaultBranch);
+            setCustomName(null);
+          }}
+        />
       ) : (
         <form
           id={formId}
@@ -203,73 +203,81 @@ export function NewServiceDialog({
             submit();
           }}
         >
-          {source === "repo" &&
-            (repo ? (
-              <>
-                <div className={styles.selected}>
-                  <GitHubIcon size={14} />
-                  <span className={styles.repoName}>{repo.fullName}</span>
-                  <Button size="sm" variant="ghost" onClick={() => setRepo(null)}>
-                    Change
-                  </Button>
-                </div>
-                <BranchField repo={repo.fullName} value={branch} onChange={setBranch} />
-              </>
-            ) : (
-              <RepoPicker
-                onPick={(r) => {
-                  setRepo(r);
-                  setBranch(r.defaultBranch);
-                  setCustomName(null);
-                }}
-              />
-            ))}
+          {repo && (
+            <>
+              <div className={styles.selected}>
+                <GithubLogoIcon size={16} />
+                <span className={styles.repoName}>{repo.fullName}</span>
+                <Button size="sm" variant="ghost" onClick={() => setRepo(null)}>
+                  Change
+                </Button>
+              </div>
+              <BranchField repo={repo.fullName} value={branch} onChange={setBranch} />
+            </>
+          )}
           {source === "image" && (
-            <Field
+            <Input
               label="Image"
-              hint="Any image reference, e.g. nginx:alpine or ghcr.io/owner/app."
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  mono
-                  value={image}
-                  onChange={(e) => setImage(e.target.value)}
-                  placeholder="nginx:alpine"
-                  autoComplete="off"
-                  autoFocus
-                />
-              )}
-            </Field>
+              description="Any image reference, such as nginx:alpine or ghcr.io/owner/app."
+              className={styles.mono}
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder="nginx:alpine"
+              autoComplete="off"
+              autoFocus
+            />
           )}
-          {(source !== "repo" || repo) && (
-            <Field
-              label="Service name"
-              hint="Also the private hostname other services use to reach it."
-              error={nameError}
-            >
-              {(id) => (
-                <Input
-                  id={id}
-                  mono
-                  value={name}
-                  autoComplete="off"
-                  autoFocus={source !== "image" && source !== "repo"}
-                  onChange={(e) =>
-                    setCustomName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
-                  }
-                />
-              )}
-            </Field>
-          )}
+          <Input
+            label="Service name"
+            description="Also the private hostname other services use to reach it."
+            error={nameError}
+            className={styles.mono}
+            value={name}
+            autoComplete="off"
+            autoFocus={source !== "image" && source !== "repo"}
+            onChange={(e) =>
+              setCustomName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))
+            }
+          />
           {create.error && (
-            <Callout tone="tomato" icon={<CircleX size={16} />} title="Couldn't create service">
-              {errorMessage(create.error)}
-            </Callout>
+            <p className={styles.error} role="alert">
+              Couldn't create the service: {errorMessage(create.error)}
+            </p>
           )}
         </form>
       )}
-    </Dialog>
+    </FormDialog>
+  );
+}
+
+function MethodGroup({
+  label,
+  methods,
+  onPick,
+}: {
+  label: string;
+  methods: Method[];
+  onPick: (source: Source) => void;
+}) {
+  return (
+    <div className={styles.group} role="group" aria-label={label}>
+      <span className={styles.groupLabel}>{label}</span>
+      <div className={styles.methods}>
+        {methods.map(({ source, name, Glyph }) => (
+          <button
+            key={source}
+            type="button"
+            className={styles.method}
+            onClick={() => onPick(source)}
+          >
+            <span className={styles.glyph}>
+              <Glyph size={16} />
+            </span>
+            {name}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -284,67 +292,57 @@ function BranchField({
 }) {
   const branches = useQuery(branchesQuery(repo));
   const names = branches.data ?? [];
-  const options = (names.includes(value) || !value ? names : [value, ...names]).map((b) => ({
+  const items = (names.includes(value) || !value ? names : [value, ...names]).map((b) => ({
     value: b,
     label: b,
   }));
   return (
-    <Field
+    <Select
       label="Branch"
-      hint="Pushes to this branch deploy automatically."
-      error={branches.error && `Couldn't load branches: ${errorMessage(branches.error)}`}
-    >
-      {(id) => (
-        <Select
-          id={id}
-          mono
-          value={value}
-          onChange={onChange}
-          options={options}
-          disabled={branches.isPending}
-        />
-      )}
-    </Field>
+      description="Pushes to this branch deploy automatically."
+      error={branches.error ? `Couldn't load branches: ${errorMessage(branches.error)}` : undefined}
+      className={styles.branch}
+      value={value}
+      onValueChange={(v) => typeof v === "string" && onChange(v)}
+      items={items}
+      loading={branches.isPending}
+      disabled={branches.isPending}
+    />
   );
 }
 
-function RepoPicker({ onPick }: { onPick: (repo: Repo) => void }) {
+function RepoPicker({
+  installUrl,
+  onPick,
+}: {
+  installUrl: string | undefined;
+  onPick: (repo: Repo) => void;
+}) {
   const repos = useQuery(reposQuery);
-  const setup = useQuery(setupQuery);
   const [filter, setFilter] = useState("");
-  const installUrl = setup.data?.installUrl;
 
   if (repos.isPending) {
     return (
-      <div className={styles.repos} aria-busy>
-        {[70, 55, 62, 48].map((w) => (
-          <div key={w} className={styles.skeletonRow}>
-            <Skeleton width={`${w}%`} height={12} />
-          </div>
-        ))}
+      <div className={styles.loading} aria-busy>
+        <Loader />
       </div>
     );
   }
 
   if (repos.isError || repos.data.length === 0) {
     return (
-      <Callout
-        tone="sunflower"
-        icon={<GitHubIcon size={16} />}
-        title={repos.isError ? "Couldn't load repositories" : "No repositories available"}
-        actions={
-          installUrl && (
-            <LinkButton size="sm" href={installUrl} target="_blank" rel="noreferrer">
-              Configure access
-              <ExternalLink size={14} />
-            </LinkButton>
-          )
-        }
-      >
-        {repos.isError && <span className={styles.detail}>{errorMessage(repos.error)}</span>}
-        The GitHub App needs access to the repositories you want to deploy. Grant it on GitHub, then
-        come back here.
-      </Callout>
+      <div className={styles.well}>
+        <span>
+          {repos.isError
+            ? `Couldn't load repositories: ${errorMessage(repos.error)}`
+            : "The GitHub App can't see any repositories yet. Grant it access on GitHub, then come back here."}
+        </span>
+        {installUrl && (
+          <LinkButton size="sm" href={installUrl} target="_blank" rel="noreferrer" external>
+            Configure access
+          </LinkButton>
+        )}
+      </div>
     );
   }
 
@@ -353,26 +351,26 @@ function RepoPicker({ onPick }: { onPick: (repo: Repo) => void }) {
 
   return (
     <div className={styles.picker}>
-      <Input
-        prefix={<Search size={14} />}
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder="Search repositories"
-        aria-label="Search repositories"
-        autoComplete="off"
-        autoFocus
-      />
+      <InputGroup>
+        <InputGroup.Addon>
+          <MagnifyingGlassIcon size={16} />
+        </InputGroup.Addon>
+        <InputGroup.Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search repositories"
+          aria-label="Search repositories"
+          autoComplete="off"
+          autoFocus
+        />
+      </InputGroup>
       <ul className={styles.repos}>
         {matches.map((r) => (
           <li key={r.fullName}>
             <button type="button" className={styles.repo} onClick={() => onPick(r)}>
-              <GitHubIcon size={14} />
+              <GithubLogoIcon size={16} className={styles.repoGlyph} />
               <span className={styles.repoName}>{r.fullName}</span>
-              {r.private && (
-                <Badge size="sm" icon={<Lock size={11} />}>
-                  Private
-                </Badge>
-              )}
+              {r.private && <Pill>Private</Pill>}
             </button>
           </li>
         ))}
@@ -381,7 +379,7 @@ function RepoPicker({ onPick }: { onPick: (repo: Repo) => void }) {
         )}
       </ul>
       {installUrl && (
-        <p className={styles.hint}>
+        <p className={styles.note}>
           Missing a repository?{" "}
           <a href={installUrl} target="_blank" rel="noreferrer">
             Adjust GitHub App access

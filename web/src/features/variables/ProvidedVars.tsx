@@ -1,7 +1,7 @@
+import { LayerCard, Table } from "@cloudflare/kumo";
 import type { Service } from "../../api/types";
-import { LayerCard } from "../../components/Card";
-import styles from "./Variables.module.css";
 import { HelpTip } from "../docs/HelpTip";
+import styles from "./Variables.module.css";
 
 /** ProvidedVars lists the variables shed injects that other variables can reference. */
 export function ProvidedVars({ service }: { service: Service }) {
@@ -17,26 +17,35 @@ export function ProvidedVars({ service }: { service: Service }) {
     ["SHED_GIT_BRANCH", "Branch being deployed."],
   ];
   return (
-    <LayerCard
-      title={
-        <>
-          Provided by shed <HelpTip topic="injectedVariables" />
-        </>
-      }
-      meta="Available in every deployment."
-    >
-      <div className={styles.provided}>
-        {vars.map(([key, desc]) => (
-          <div key={key} className={styles.row}>
-            <span className={styles.key}>{key}</span>
-            <span className={styles.desc}>{desc}</span>
-          </div>
-        ))}
-        <p className={styles.hint}>
+    <LayerCard>
+      <LayerCard.Secondary className={styles.head}>
+        <span className={styles.title}>
+          <HelpTip topic="injectedVariables">Provided by shed</HelpTip>
+        </span>
+        <span className={styles.meta}>Available in every deployment.</span>
+      </LayerCard.Secondary>
+      <LayerCard.Primary className={styles.body}>
+        <Table className={styles.table}>
+          <Table.Header variant="compact">
+            <Table.Row>
+              <Table.Head className={styles.keyCol}>Name</Table.Head>
+              <Table.Head>Description</Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {vars.map(([key, desc]) => (
+              <Table.Row key={key}>
+                <Table.Cell className={styles.key}>{key}</Table.Cell>
+                <Table.Cell className={styles.desc}>{desc}</Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+        <p className={styles.reference}>
           Reference these as <code>{"${{ KEY }}"}</code>. Use another service's variables with{" "}
           <code>{"${{ postgres.DATABASE_URL }}"}</code>.
         </p>
-      </div>
+      </LayerCard.Primary>
     </LayerCard>
   );
 }

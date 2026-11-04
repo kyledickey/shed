@@ -1,6 +1,7 @@
+import { Button, InputGroup, Loader, Select, Tabs } from "@cloudflare/kumo";
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useInfiniteQuery, useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { Ban, Check, ScrollText, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   auditQuery,
   auditSettingsQuery,
@@ -10,25 +11,33 @@ import {
 import { errorMessage } from "../../api/client";
 import { projectsQuery } from "../../api/projects";
 import type { AuditEvent, AuditOutcome } from "../../api/types";
-import { Badge, Spinner } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input, Segmented, Select } from "../../components/Form";
-import { List, Stack } from "../../components/Layout";
-import { EmptyState } from "../../components/Misc";
-import { Tooltip } from "../../components/Overlay";
+import { CountChip, Pill } from "../../components/Pill";
+import {
+  RecordEmpty,
+  RecordId,
+  RecordList,
+  RecordMeta,
+  RecordNote,
+  RecordRow,
+  RecordText,
+} from "../../components/RecordList";
+import { SettingRow } from "../../components/Settings";
 import type { Tone } from "../../components/tone";
 import { formatDate, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
-import { SettingsCard } from "../settings/SectionForm";
 import styles from "./Audit.module.css";
 import { actionGroups, detailPairs } from "./detail";
 
-const outcomeLooks: Record<AuditOutcome, { tone: Tone; label: string; icon: ReactNode }> = {
-  ok: { tone: "grass", label: "OK", icon: <Check size={14} /> },
-  failed: { tone: "tomato", label: "Failed", icon: <X size={14} /> },
-  denied: { tone: "sunflower", label: "Denied", icon: <Ban size={13} /> },
+const outcomeLooks: Record<AuditOutcome, { tone: Tone; label: string }> = {
+  ok: { tone: "grass", label: "OK" },
+  failed: { tone: "tomato", label: "Failed" },
+  denied: { tone: "sunflower", label: "Denied" },
 };
+
+const COLUMNS = "minmax(0, 200px) minmax(0, 1fr) 80px 76px minmax(0, 150px) 100px";
+const NARROW = "minmax(0, 1fr) auto";
+
+const ANY = "any";
 
 const noFilters: AuditFilters = { actor: "", action: "", service: "", outcome: "" };
 
@@ -58,109 +67,104 @@ export function AuditLog() {
   const filtered = Object.values(filters).some(Boolean);
 
   return (
-    <Stack gap={4}>
-      <LayerCard
-        header={
-          <div className={styles.toolbar}>
-            <span className={styles.heading}>
-              Audit log <HelpTip topic="audit" />
-            </span>
-            <Input
-              aria-label="Actor"
-              className={styles.actor}
-              prefix={<Search size={13} />}
-              placeholder="Login or kind"
-              value={actor}
-              onChange={(e) => setActor(e.target.value)}
-            />
-            <Select
-              value={filters.action}
-              onChange={(v) => set("action", v)}
-              placeholder="Any action"
-              mono
-              options={[
-                { value: "", label: "Any action" },
-                ...actionGroups.map((g) => ({ value: g, label: `${g}.*` })),
-              ]}
-            />
-            <Select
-              value={filters.service}
-              onChange={(v) => set("service", v)}
-              placeholder="Any service"
-              options={[
-                { value: "", label: "Any service" },
-                ...[...services].map(([id, name]) => ({ value: id, label: name })),
-              ]}
-            />
-            <Segmented
-              size="sm"
-              label="Outcome"
-              value={filters.outcome || "any"}
-              onChange={(v) => set("outcome", v === "any" ? "" : v)}
-              options={[
-                { value: "any", label: "All" },
-                { value: "ok", label: "OK" },
-                { value: "failed", label: "Failed" },
-                { value: "denied", label: "Denied" },
-              ]}
-            />
-          </div>
+    <div className={styles.page}>
+      <div className={styles.filters}>
+        <InputGroup size="sm" className={styles.actor}>
+          <InputGroup.Addon>
+            <MagnifyingGlassIcon size={14} />
+          </InputGroup.Addon>
+          <InputGroup.Input
+            aria-label="Actor"
+            placeholder="Login or kind"
+            value={actor}
+            onChange={(e) => setActor(e.target.value)}
+          />
+        </InputGroup>
+        <Select
+          size="sm"
+          aria-label="Action"
+          className={styles.select}
+          value={filters.action || ANY}
+          onValueChange={(v) => set("action", v === ANY ? "" : String(v))}
+          items={[
+            { value: ANY, label: "Any action" },
+            ...actionGroups.map((g) => ({ value: g as string, label: `${g}.*` })),
+          ]}
+        />
+        <Select
+          size="sm"
+          aria-label="Service"
+          className={styles.select}
+          value={filters.service || ANY}
+          onValueChange={(v) => set("service", v === ANY ? "" : String(v))}
+          items={[
+            { value: ANY, label: "Any service" },
+            ...[...services].map(([id, name]) => ({ value: id, label: name })),
+          ]}
+        />
+        <Tabs
+          variant="segmented"
+          size="sm"
+          value={filters.outcome || ANY}
+          onValueChange={(v) => set("outcome", v === ANY ? "" : (v as AuditOutcome))}
+          tabs={[
+            { value: ANY, label: "All" },
+            { value: "ok", label: "OK" },
+            { value: "failed", label: "Failed" },
+            { value: "denied", label: "Denied" },
+          ]}
+        />
+      </div>
+      <RecordList
+        title={
+          <>
+            <HelpTip topic="audit">Events</HelpTip>
+          </>
         }
-        sheetClassName={styles.sheet}
+        actions={
+          filtered && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setActor("");
+                setFilters(noFilters);
+              }}
+            >
+              Clear filters
+            </Button>
+          )
+        }
         footer={
           events.hasNextPage && (
-            <div className={styles.more}>
-              <Button
-                size="sm"
-                loading={events.isFetchingNextPage}
-                onClick={() => void events.fetchNextPage()}
-              >
-                Load more
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              loading={events.isFetchingNextPage}
+              onClick={() => void events.fetchNextPage()}
+            >
+              Load more
+            </Button>
           )
         }
       >
         {events.isPending ? (
           <div className={styles.loading}>
-            <Spinner />
+            <Loader size="sm" />
           </div>
         ) : events.isError ? (
           <p className={styles.error}>{errorMessage(events.error)}</p>
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={<ScrollText />}
-            tone="neutral"
-            title={filtered ? "No matching events" : "No events yet"}
-            description={
-              filtered
-                ? "Nothing in the log matches these filters."
-                : "Changes, sign-ins, denials, and agent calls appear here as they happen."
-            }
-            actions={
-              filtered && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setActor("");
-                    setFilters(noFilters);
-                  }}
-                >
-                  Clear filters
-                </Button>
-              )
-            }
-          />
+          <RecordEmpty>
+            {filtered
+              ? "Nothing in the log matches these filters."
+              : "No events yet. Changes, sign-ins, denials, and agent calls appear here as they happen."}
+          </RecordEmpty>
         ) : (
-          <List>
-            {rows.map((e) => (
-              <AuditRow key={e.id} event={e} service={services.get(e.serviceId)} />
-            ))}
-          </List>
+          rows.map((e) => <AuditRow key={e.id} event={e} service={services.get(e.serviceId)} />)
         )}
-      </LayerCard>
-      <RetentionCard />
-    </Stack>
+      </RecordList>
+      <Retention />
+    </div>
   );
 }
 
@@ -169,92 +173,107 @@ function AuditRow({ event: e, service }: { event: AuditEvent; service?: string }
   const count = typeof e.detail.count === "number" && e.detail.count > 1 ? e.detail.count : 0;
   const serviceName = service ?? (typeof e.detail.service === "string" ? e.detail.service : "");
   const client = typeof e.detail.client === "string" ? e.detail.client : "";
+  const pairs = detailPairs(e.detail);
   return (
-    <div className={styles.row}>
-      <Tooltip content={look.label}>
-        <span className={styles.rail} data-tone={look.tone} aria-label={look.label}>
-          {look.icon}
-        </span>
-      </Tooltip>
-      <div className={styles.body}>
-        <span className={styles.title}>
-          <span className={styles.action}>{e.action}</span>
-          {serviceName && <span className={styles.subject}>{serviceName}</span>}
-          {count > 0 && (
-            <Badge size="sm" tone="sunflower">
-              ×{count}
-            </Badge>
-          )}
-        </span>
-        <span className={styles.meta}>
-          <Badge size="sm" variant="outline">
-            {e.actorKind}
-          </Badge>
-          {e.actor && <span className={styles.who}>{e.actor}</span>}
-          {client && <span>via {client}</span>}
-        </span>
-        <Detail event={e} />
-      </div>
-      <Tooltip content={formatDate(e.ts)}>
-        <time className={styles.when} dateTime={e.ts}>
-          {relativeTime(e.ts)}
-        </time>
-      </Tooltip>
-    </div>
+    <RecordRow columns={COLUMNS} narrowColumns={NARROW}>
+      <RecordId className={styles.action} title={e.action}>
+        {e.action}
+        {count > 0 && <CountChip>×{count}</CountChip>}
+      </RecordId>
+      <RecordText optional className={styles.subject}>
+        {serviceName}
+      </RecordText>
+      <span className={styles.outcome} data-tone={look.tone}>
+        <span className={styles.bar} />
+        {look.label}
+      </span>
+      <RecordMeta optional>
+        <Pill>{e.actorKind}</Pill>
+      </RecordMeta>
+      <RecordMeta optional>
+        {e.actor && `by ${e.actor}`}
+        {client && ` via ${client}`}
+      </RecordMeta>
+      <RecordMeta optional className={styles.when} title={formatDate(e.ts)}>
+        <time dateTime={e.ts}>{relativeTime(e.ts)}</time>
+      </RecordMeta>
+      {pairs.length > 0 && (
+        <RecordNote>
+          <dl className={styles.detail}>
+            {pairs.map(([k, v]) => (
+              <div key={k}>
+                <dt>{k}</dt>
+                <dd>{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </RecordNote>
+      )}
+    </RecordRow>
   );
 }
 
-function Detail({ event }: { event: AuditEvent }) {
-  const pairs = detailPairs(event.detail);
-  if (pairs.length === 0) return null;
-  return (
-    <dl className={styles.detail}>
-      {pairs.map(([k, v]) => (
-        <div key={k}>
-          <dt>{k}</dt>
-          <dd>{v}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function RetentionCard() {
+function Retention() {
   const { data } = useSuspenseQuery(auditSettingsQuery);
   const save = useSaveAuditSettings();
   const [days, setDays] = useState(data.retentionDays);
   const invalid = !Number.isInteger(days) || days < 1 || days > 3650;
+  const dirty = days !== data.retentionDays;
   return (
-    <SettingsCard
-      title="Retention"
-      meta="Older events are deleted every hour."
-      form={{
-        dirty: days !== data.retentionDays,
-        invalid,
-        pending: save.isPending,
-        error: save.error,
-        reset: () => {
-          setDays(data.retentionDays);
-          save.reset();
-        },
-        save: () => save.mutate({ retentionDays: days }),
+    <form
+      onSubmit={(ev) => {
+        ev.preventDefault();
+        if (dirty && !invalid) save.mutate({ retentionDays: days });
       }}
     >
-      <Field label="Keep events for" hint="1 to 3650 days. The default is 365.">
-        {(id) => (
-          <Input
-            id={id}
-            className={styles.days}
-            type="number"
-            min={1}
-            max={3650}
-            mono
-            suffix="days"
-            value={days}
-            onChange={(ev) => setDays(Number(ev.target.value))}
-          />
-        )}
-      </Field>
-    </SettingsCard>
+      <SettingRow
+        label="Keep events for"
+        description={
+          <>
+            1 to 3650 days. The default is 365. Older events are deleted every hour.
+            {save.error && <span className={styles.errorText}> {errorMessage(save.error)}</span>}
+          </>
+        }
+        control={
+          <>
+            <InputGroup size="sm" className={styles.days}>
+              <InputGroup.Input
+                aria-label="Days to keep events"
+                type="number"
+                min={1}
+                max={3650}
+                value={Number.isNaN(days) ? "" : days}
+                onChange={(ev) => setDays(ev.target.valueAsNumber)}
+              />
+              <InputGroup.Suffix>days</InputGroup.Suffix>
+            </InputGroup>
+            {dirty && (
+              <>
+                <Button
+                  size="sm"
+                  type="button"
+                  disabled={save.isPending}
+                  onClick={() => {
+                    setDays(data.retentionDays);
+                    save.reset();
+                  }}
+                >
+                  Discard
+                </Button>
+                <Button
+                  size="sm"
+                  type="submit"
+                  variant="primary"
+                  loading={save.isPending}
+                  disabled={invalid}
+                >
+                  Save
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
+    </form>
   );
 }

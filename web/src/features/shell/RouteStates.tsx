@@ -1,25 +1,26 @@
+import { Button, Empty, SkeletonLine } from "@cloudflare/kumo";
+import { MagnifyingGlassIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useQueryErrorResetBoundary } from "@tanstack/react-query";
 import { useRouter, type ErrorComponentProps } from "@tanstack/react-router";
-import { CircleX, SearchX } from "lucide-react";
 import { useEffect } from "react";
 import { errorMessage, isApiError } from "../../api/client";
-import { Button } from "../../components/Button";
-import { Page } from "../../components/Layout";
-import { EmptyState, Skeleton } from "../../components/Misc";
+import styles from "./RouteStates.module.css";
 
-/** RoutePending is the router's loading state: a quiet skeleton page. */
+/** RoutePending is the router's loading state: the outline of a page header and a card. */
 export function RoutePending() {
   return (
-    <Page>
-      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-        <Skeleton width={44} height={44} radius={12} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
-          <Skeleton width="30%" height={20} />
-          <Skeleton width="45%" height={12} />
-        </div>
+    <div className={styles.page} aria-busy aria-label="Loading">
+      <div className={styles.head}>
+        <SkeletonLine minWidth={12} maxWidth={20} blockHeight={20} />
+        <SkeletonLine minWidth={30} maxWidth={45} />
       </div>
-      <Skeleton height={220} radius={18} />
-    </Page>
+      <div className={styles.card}>
+        <SkeletonLine minWidth={40} maxWidth={70} />
+        <SkeletonLine minWidth={30} maxWidth={60} />
+        <SkeletonLine minWidth={45} maxWidth={80} />
+        <SkeletonLine minWidth={20} maxWidth={50} />
+      </div>
+    </div>
   );
 }
 
@@ -31,25 +32,25 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
 
   if (isApiError(error, 404)) {
     return (
-      <Page>
-        <EmptyState
-          icon={<SearchX />}
-          tone="neutral"
+      <div className={styles.page}>
+        <Empty
+          className={styles.empty}
+          icon={<MagnifyingGlassIcon size={48} className={styles.icon} />}
           title="Not found"
-          description="It may have been deleted."
-          actions={<Button onClick={() => void router.navigate({ to: "/" })}>All projects</Button>}
+          description="It may have been deleted, or the link is wrong."
+          contents={<Button onClick={() => void router.navigate({ to: "/" })}>All projects</Button>}
         />
-      </Page>
+      </div>
     );
   }
   return (
-    <Page>
-      <EmptyState
-        icon={<CircleX />}
-        tone="tomato"
+    <div className={styles.page}>
+      <Empty
+        className={styles.empty}
+        icon={<WarningCircleIcon size={48} className={styles.icon} />}
         title="Something went wrong"
         description={errorMessage(error)}
-        actions={
+        contents={
           <Button
             onClick={() => {
               reset();
@@ -60,6 +61,6 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
           </Button>
         }
       />
-    </Page>
+    </div>
   );
 }

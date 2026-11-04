@@ -1,0 +1,34 @@
+.modes {
+  width: 100%;
+}
+
+.modeList {
+  width: 100%;
+
+  & > * {
+    flex: 1;
+  }
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.note {
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.key {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+
+  & > :first-child {
+    width: 100%;
+  }
+}

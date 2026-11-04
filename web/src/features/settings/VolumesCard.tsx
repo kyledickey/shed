@@ -1,20 +1,19 @@
-import { HardDrive, Plus, Trash2 } from "lucide-react";
+import { Button, Input, Table } from "@cloudflare/kumo";
+import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useAddVolume, useDeleteVolume } from "../../api/services";
 import type { Service, Volume } from "../../api/types";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input } from "../../components/Form";
-import { ServiceIcon } from "../../components/Misc";
-import { Dialog, useToast } from "../../components/Overlay";
+import { useToast } from "../../components/Overlay";
+import { SettingRow, Well } from "../../components/Settings";
+import { HelpTip } from "../docs/HelpTip";
 import { useRedeployHint } from "../services/redeploy";
 import { ConfirmDialog } from "./ConfirmDialog";
-import styles from "./Settings.module.css";
-import { HelpTip } from "../docs/HelpTip";
+import styles from "./Form.module.css";
+import { FormDialog } from "./FormDialog";
 
-/** VolumesCard lists persistent volumes and adds or removes them. */
-export function VolumesCard({ service }: { service: Service }) {
+/** VolumesSection lists persistent volumes and adds or removes them. */
+export function VolumesSection({ service }: { service: Service }) {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<Volume | null>(null);
   const remove = useDeleteVolume(service.id);
@@ -22,47 +21,52 @@ export function VolumesCard({ service }: { service: Service }) {
   const toast = useToast();
 
   return (
-    <LayerCard
-      title={
+    <SettingRow
+      label={
         <>
-          Volumes <HelpTip topic="volumes" />
+          <HelpTip topic="volumes">Mounts</HelpTip>
         </>
       }
-      meta="Data that survives redeploys."
-      actions={
-        <Button size="sm" onClick={() => setAdding(true)}>
-          <Plus size={13} /> Add volume
+      description="Data under these paths survives redeploys."
+      control={
+        <Button icon={<PlusIcon />} onClick={() => setAdding(true)}>
+          Add volume
         </Button>
       }
     >
       {service.volumes.length === 0 ? (
-        <div className={styles.section}>
-          <p className={styles.note}>
-            No volumes. Files written by the container are lost on redeploy.
-          </p>
-        </div>
+        <Well empty>No volumes. Files written by the container are lost on redeploy.</Well>
       ) : (
-        <div className={styles.list}>
-          {service.volumes.map((v) => (
-            <div key={v.id} className={styles.row}>
-              <ServiceIcon icon={<HardDrive />} tone="neutral" size={28} />
-              <div className={styles.rowMain}>
-                <span className={styles.mono}>{v.mountPath}</span>
-                <span className={styles.muted}>
-                  Created {new Date(v.createdAt).toLocaleDateString()}
-                </span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon
-                aria-label={`Remove ${v.mountPath}`}
-                onClick={() => setRemoving(v)}
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-          ))}
+        <div className={styles.table}>
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Mount path</Table.Head>
+                <Table.Head>Created</Table.Head>
+                <Table.Head aria-label="Actions" />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {service.volumes.map((v) => (
+                <Table.Row key={v.id}>
+                  <Table.Cell className={styles.cellMono}>{v.mountPath}</Table.Cell>
+                  <Table.Cell className={styles.cellSubtle}>
+                    {new Date(v.createdAt).toLocaleDateString()}
+                  </Table.Cell>
+                  <Table.Cell className={styles.cellActions}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      shape="square"
+                      icon={<TrashIcon />}
+                      aria-label={`Remove ${v.mountPath}`}
+                      onClick={() => setRemoving(v)}
+                    />
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
         </div>
       )}
       <AddVolumeDialog service={service} open={adding} onOpenChange={setAdding} />
@@ -94,7 +98,7 @@ export function VolumesCard({ service }: { service: Service }) {
         The volume mounted at <strong>{removing?.mountPath}</strong> and all data on it will be
         permanently deleted.
       </ConfirmDialog>
-    </LayerCard>
+    </SettingRow>
   );
 }
 
@@ -125,7 +129,7 @@ function AddVolumeDialog({
     });
 
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) add.reset();
@@ -149,23 +153,18 @@ function AddVolumeDialog({
           if (valid) submit();
         }}
       >
-        <Field
+        <Input
           label="Mount path"
-          hint="Absolute path inside the container."
+          description="Absolute path inside the container."
+          className={styles.mono}
+          autoFocus
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="/data"
+          spellCheck={false}
           error={add.error ? errorMessage(add.error) : undefined}
-        >
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              autoFocus
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="/data"
-            />
-          )}
-        </Field>
+        />
       </form>
-    </Dialog>
+    </FormDialog>
   );
 }

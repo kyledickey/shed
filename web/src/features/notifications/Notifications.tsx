@@ -5,7 +5,7 @@ import {
   notificationProvidersQuery,
   notificationRulesQuery,
 } from "../../api/notifications";
-import { Stack } from "../../components/Layout";
+import { Groups } from "../settings/Group";
 import { ChannelsCard } from "./ChannelsCard";
 import { DeliveriesCard } from "./DeliveriesCard";
 import { RulesCard } from "./RulesCard";
@@ -17,10 +17,10 @@ export function Notifications() {
   const { data: rules } = useSuspenseQuery(notificationRulesQuery);
   const { data: deliveries } = useSuspenseQuery(notificationDeliveriesQuery);
   return (
-    <Stack gap={4}>
+    <Groups>
       <ChannelsCard channels={channels} providers={providers} />
       <RulesCard rules={rules} channels={channels} />
       <DeliveriesCard deliveries={deliveries} />
-    </Stack>
+    </Groups>
   );
 }

@@ -53,14 +53,22 @@ type StatusBadgeProps =
   | { kind: "deployment"; status: DeploymentStatus; size?: "sm" | "md" }
   | { kind: "service"; status: ServiceStatus; size?: "sm" | "md" };
 
+/**
+ * StatusBadge is a status word with a thin bar in its color. In-progress
+ * states get a bar in their tone too: a view shows at most one spinner, on
+ * the step that is running, so the badge stays still.
+ */
 export function StatusBadge(props: StatusBadgeProps) {
   const look =
     props.kind === "deployment" ? deploymentLook(props.status) : serviceLook(props.status);
   return (
-    <Badge tone={look.tone} size={props.size}>
-      {look.live && <Spinner tone={look.tone} size={props.size === "sm" ? 8 : 9} />}
+    <span
+      className={cx(styles.status, props.size === "sm" && styles.statusSm)}
+      data-tone={look.tone}
+    >
+      <span className={styles.bar} aria-hidden />
       {look.label}
-    </Badge>
+    </span>
   );
 }
 

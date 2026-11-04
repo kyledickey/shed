@@ -1,3 +1,9 @@
+/*
+ * Kumo, Cloudflare's design system, ships its component styles precompiled.
+ * It lives in cascade layers, so shed's unlayered CSS modules override it.
+ */
+@import "@cloudflare/kumo/styles/standalone";
+
 @font-face {
   font-family: "Open Runde";
   src: url("./fonts/OpenRunde-Regular.woff2") format("woff2");
@@ -42,15 +48,11 @@
 :root {
   --font-sans: "Open Runde", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Commit Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --default-font-family: var(--font-sans);
+  --default-mono-font-family: var(--font-mono);
 
+  /* Kumo supplies --text-xs to --text-3xl; 2xs is shed's for dense metadata. */
   --text-2xs: 11px;
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-base: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
-  --text-2xl: 26px;
-  --text-3xl: 36px;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -62,14 +64,15 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  /* Softness is one knob: scale every radius together. */
-  --soft: 1;
-  --r-xs: calc(5px * var(--soft));
-  --r-sm: calc(8px * var(--soft));
-  --r-md: calc(10px * var(--soft));
-  --r-lg: calc(14px * var(--soft));
-  --r-xl: calc(18px * var(--soft));
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 8px;
+  --r-xl: 12px;
   --r-full: 999px;
+
+  --page-width: 1200px;
+  --page-gutter: 24px;
 
   --control-h: 34px;
   --control-h-sm: 28px;
@@ -81,29 +84,28 @@
   --dur-slow: 260ms;
 
   /*
-   * Neutrals: warm paper in light, near-neutral graphite in dark.
-   * Layering, back to front: bg/shell → panel → layer → raised. A layer is
-   * the tinted outer sheet of a LayerCard; raised is the content sheet on it.
+   * Neutrals come from Kumo, Cloudflare's design system, so shed's own CSS
+   * modules and Kumo components share one palette. Layering, back to front:
+   * bg (canvas) → panel → layer (LayerCard outer) → raised (content sheet).
    */
-  --bg: light-dark(oklch(0.952 0.005 85), oklch(0.125 0.004 270));
-  --shell: light-dark(oklch(0.952 0.005 85), oklch(0.125 0.004 270));
-  --panel: light-dark(oklch(0.993 0.002 85), oklch(0.163 0.004 270));
-  --layer: light-dark(oklch(0.966 0.004 85), oklch(0.192 0.005 270));
-  --raised: light-dark(oklch(1 0 0), oklch(0.232 0.006 270));
-  --sunken: light-dark(oklch(0.972 0.004 85), oklch(0.15 0.004 270));
-  --hover: light-dark(oklch(0.948 0.005 85), oklch(0.26 0.006 270));
-  --active: light-dark(oklch(0.92 0.007 85), oklch(0.285 0.007 270));
+  --bg: var(--color-kumo-canvas);
+  --shell: var(--color-kumo-canvas);
+  --panel: var(--color-kumo-canvas);
+  --layer: var(--color-kumo-elevated);
+  --raised: var(--color-kumo-base);
+  --sunken: var(--color-kumo-recessed);
+  --hover: var(--color-kumo-tint);
+  --active: var(--color-kumo-fill);
 
-  --line: light-dark(oklch(0.9 0.006 85), oklch(0.275 0.006 270));
-  --line-soft: light-dark(oklch(0.935 0.005 85), oklch(0.235 0.005 270));
-  --line-strong: light-dark(oklch(0.84 0.008 85), oklch(0.36 0.008 270));
-  /* The darker bottom edge that gives controls some material. */
-  --edge: light-dark(oklch(0.79 0.009 85), oklch(0.08 0.004 270));
+  --line: var(--color-kumo-hairline);
+  --line-soft: var(--color-kumo-hairline);
+  --line-strong: var(--color-kumo-line);
+  --edge: var(--color-kumo-line);
 
-  --ink: light-dark(oklch(0.25 0.012 285), oklch(0.96 0.003 85));
-  --ink-2: light-dark(oklch(0.45 0.012 285), oklch(0.79 0.006 270));
-  --ink-3: light-dark(oklch(0.6 0.01 285), oklch(0.63 0.008 270));
-  --ink-4: light-dark(oklch(0.72 0.008 285), oklch(0.49 0.008 270));
+  --ink: var(--text-color-kumo-default);
+  --ink-2: light-dark(oklch(0.4 0 0), oklch(0.82 0 0));
+  --ink-3: var(--text-color-kumo-subtle);
+  --ink-4: var(--text-color-kumo-placeholder);
 
   /*
    * Crayons. Per hue:
@@ -168,7 +170,7 @@
   --info-soft: var(--sky-soft);
   --info-ink: var(--sky-ink);
 
-  /* Accent defaults to grass; [data-accent] on <html> swaps the hue. */
+  /* shed's accent is green. Kumo's brand tokens follow it below. */
   --accent-h: 148;
   --accent: light-dark(oklch(0.66 0.19 var(--accent-h)), oklch(0.74 0.18 var(--accent-h)));
   --accent-soft: light-dark(
@@ -187,6 +189,13 @@
   --focus-ring:
     0 0 0 2px var(--panel), 0 0 0 4px color-mix(in oklch, var(--accent) 70%, transparent);
 
+  --color-kumo-brand: var(--accent-strong);
+  --color-kumo-brand-hover: light-dark(
+    oklch(0.5 0.16 var(--accent-h)),
+    oklch(0.68 0.17 var(--accent-h))
+  );
+  --text-color-kumo-brand: var(--accent-ink);
+
   /* light-dark() only takes colors, so shadows vary by their color stops. */
   --shadow-faint: light-dark(oklch(0.3 0.02 85 / 0.05), oklch(0 0 0 / 0));
   --shadow-soft: light-dark(oklch(0.3 0.02 85 / 0.1), oklch(0 0 0 / 0.35));
@@ -196,34 +205,18 @@
   --shadow-lg: 0 2px 6px var(--shadow-faint), 0 24px 60px -16px var(--shadow-deep);
   --backdrop: light-dark(oklch(0.3 0.02 85 / 0.22), oklch(0.05 0.005 270 / 0.65));
 
-  color-scheme: light dark;
-}
-
-:root[data-theme="light"] {
   color-scheme: light;
 }
 
-:root[data-theme="dark"] {
+/* Kumo keys its dark palette on data-mode; index.html sets it before paint. */
+:root[data-mode="dark"] {
   color-scheme: dark;
 }
 
-:root[data-accent="tangerine"] {
-  --accent-h: 52;
-}
-:root[data-accent="grass"] {
-  --accent-h: 148;
-}
-:root[data-accent="teal"] {
-  --accent-h: 192;
-}
-:root[data-accent="sky"] {
-  --accent-h: 248;
-}
-:root[data-accent="grape"] {
-  --accent-h: 295;
-}
-:root[data-accent="bubblegum"] {
-  --accent-h: 355;
+@media (max-width: 700px) {
+  :root {
+    --page-gutter: 16px;
+  }
 }
 
 /* [data-tone] exposes one crayon as --tone* for components to consume. */
@@ -288,80 +281,102 @@
   --tone-line: var(--tomato-line);
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    isolation: isolate;
+    min-height: 100dvh;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  p {
+    margin: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 600;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--accent) 30%, transparent);
+  }
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
+/* Kumo's switch is blue when on; shed's accent is green. */
+[role="switch"][aria-checked="true"] {
+  --tw-ring-color: var(--color-kumo-brand);
+  background-color: var(--color-kumo-brand);
+
+  & > * {
+    background-color: var(--on-accent);
+  }
 }
 
-body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-#root {
-  isolation: isolate;
-  min-height: 100dvh;
-}
-
-h1,
-h2,
-h3,
-h4,
-p {
-  margin: 0;
-}
-
-h1,
-h2,
-h3,
-h4 {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
-}
-
-button {
-  cursor: pointer;
-}
-
-code,
-kbd,
-pre {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-}
-
-:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-::selection {
-  background: color-mix(in oklch, var(--accent) 30%, transparent);
+/*
+ * In dark, bright fills glare, so primary and destructive buttons (Kumo sets
+ * their emphasis colors inline from the brand and danger tokens) and switches
+ * use deeper colors with white on top.
+ */
+:root[data-mode="dark"] :is([style*="--kumo-button-emphasis"], [role="switch"]) {
+  --color-kumo-brand: oklch(0.5 0.13 var(--accent-h));
+  --color-kumo-danger: oklch(0.5 0.18 27);
+  --on-accent: white;
 }
 
 .tabular {
@@ -375,5 +390,17 @@ pre {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Number fields are typed into, not stepped: hide the native spin buttons. */
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+
+  &::-webkit-inner-spin-button,
+  &::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 }

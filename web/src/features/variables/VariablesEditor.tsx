@@ -1,30 +1,30 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
+import { Button, InputArea, Input, LayerCard, Table, Tabs } from "@cloudflare/kumo";
 import {
-  Check,
-  TriangleAlert,
-  CircleX,
-  Eye,
-  EyeOff,
-  Pencil,
-  Plus,
-  Trash2,
-  KeyRound,
-} from "lucide-react";
-import { useRef, useState } from "react";
+  CheckIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  PencilSimpleIcon,
+  PlusIcon,
+  TrashIcon,
+  WarningIcon,
+  XCircleIcon,
+} from "@phosphor-icons/react";
+import { useSuspenseQuery } from "@tanstack/react-query";
+import { useRef, useState, type ReactNode } from "react";
+import { errorMessage, isApiError } from "../../api/client";
 import { onePasswordQuery } from "../../api/onepassword";
 import { resolveVariables, useSaveVariables } from "../../api/services";
-import { errorMessage, isApiError } from "../../api/client";
 import type { Variables } from "../../api/types";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Input, Segmented, Textarea } from "../../components/Form";
-import { Callout, CopyButton, EmptyState, OnePasswordIcon } from "../../components/Misc";
+import { OnePasswordIcon } from "../../components/Misc";
+import { Notice } from "../../components/Notice";
 import { useToast } from "../../components/Overlay";
+import { RecordEmpty } from "../../components/RecordList";
 import { isValidKey, parseEnv, serializeEnv } from "../../lib/env";
-import { useRedeployHint } from "../services/redeploy";
-import { VarValue } from "./VarValue";
-import styles from "./Variables.module.css";
 import { HelpTip } from "../docs/HelpTip";
+import { useRedeployHint } from "../services/redeploy";
+import styles from "./Variables.module.css";
+import { VarValue } from "./VarValue";
 
 type Mode = "table" | "raw";
 type Row = { id: number; key: string; value: string; editing: boolean };
@@ -55,23 +55,46 @@ function rowsToVars(rows: Row[]): { vars: Variables; errors: string[] } {
   return { vars, errors };
 }
 
-const title = (
-  <>
-    Variables <HelpTip topic="variables" />
-  </>
-);
-
-/** Meta says where the variables are stored when that is 1Password. */
+/** Meta says where the variables are stored and when references resolve. */
 function Meta() {
   const { data } = useSuspenseQuery(onePasswordQuery);
-  if (!data.connected) return "References resolve at deploy time.";
   return (
-    <>
-      <span className={styles.mark}>
-        <OnePasswordIcon size={12} />
-      </span>
-      Stored in 1Password. References resolve at deploy time.
-    </>
+    <span className={styles.meta}>
+      {data.connected && (
+        <>
+          <OnePasswordIcon size={14} />
+          Stored in 1Password.
+        </>
+      )}{" "}
+      References resolve at deploy time.
+    </span>
+  );
+}
+
+/** VarsCard is the card around the variables: a title strip with actions over a panel. */
+function VarsCard({
+  actions,
+  footer,
+  children,
+}: {
+  actions?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <LayerCard>
+      <LayerCard.Secondary className={styles.head}>
+        <span className={styles.title}>
+          <HelpTip topic="variables">Variables</HelpTip>
+        </span>
+        <Meta />
+        {actions && <div className={styles.headActions}>{actions}</div>}
+      </LayerCard.Secondary>
+      <LayerCard.Primary className={styles.body}>
+        {children}
+        {footer}
+      </LayerCard.Primary>
+    </LayerCard>
   );
 }
 
@@ -83,36 +106,66 @@ export function VariablesUnavailable({ serviceId, error }: { serviceId: string; 
   const save = useSaveVariables(serviceId);
   const toast = useToast();
   return (
-    <LayerCard title={title} meta={<Meta />} padded>
-      {isApiError(error, 409) ? (
-        <Callout
-          tone="sunflower"
-          icon={<TriangleAlert size={16} />}
-          title="This service's 1Password item is missing"
-          actions={
-            <Button
-              size="sm"
-              loading={save.isPending}
-              onClick={() =>
-                save.mutate(
-                  {},
-                  { onSuccess: () => toast.add({ type: "success", title: "Item created" }) },
-                )
-              }
-            >
-              Create item
-            </Button>
-          }
-        >
-          It was deleted or moved in 1Password. Saving variables creates a new, empty item.
-          {save.error && <p className={styles.error}>{errorMessage(save.error)}</p>}
-        </Callout>
-      ) : (
-        <Callout tone="tomato" icon={<CircleX size={16} />} title="Could not load variables">
-          {errorMessage(error)}
-        </Callout>
-      )}
-    </LayerCard>
+    <VarsCard>
+      <div className={styles.pad}>
+        {isApiError(error, 409) ? (
+          <Notice
+            icon={<WarningIcon size={16} />}
+            title="This service's 1Password item is missing"
+            actions={
+              <Button
+                size="sm"
+                loading={save.isPending}
+                onClick={() =>
+                  save.mutate(
+                    {},
+                    { onSuccess: () => toast.add({ type: "success", title: "Item created" }) },
+                  )
+                }
+              >
+                Create item
+              </Button>
+            }
+          >
+            It was deleted or moved in 1Password. Saving variables creates a new, empty item.
+            {save.error && <span className={styles.error}> {errorMessage(save.error)}</span>}
+          </Notice>
+        ) : (
+          <Notice icon={<XCircleIcon size={16} />} title="Could not load variables" danger>
+            {errorMessage(error)}
+          </Notice>
+        )}
+      </div>
+    </VarsCard>
+  );
+}
+
+function copy(value: string | (() => Promise<string>)): Promise<void> {
+  if (typeof value === "string") return navigator.clipboard.writeText(value);
+  const blob = value().then((text) => new Blob([text], { type: "text/plain" }));
+  return navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+}
+
+/** CopyValue copies a value, or the result of calling it, and shows a check once copied. */
+function CopyValue({ value, label }: { value: string | (() => Promise<string>); label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      shape="square"
+      aria-label={label}
+      icon={copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+      onClick={() =>
+        copy(value).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          },
+          () => {},
+        )
+      }
+    />
   );
 }
 
@@ -147,6 +200,9 @@ export function VariablesEditor({
 
   const update = (id: number, patch: Partial<Row>) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const remove = (id: number) => setRows((rs) => rs.filter((x) => x.id !== id));
+  const add = () =>
+    setRows((rs) => [...rs, { id: nextId.current++, key: "", value: "", editing: true }]);
 
   const changeMode = (next: Mode) => {
     if (next === mode) return;
@@ -198,58 +254,60 @@ export function VariablesEditor({
       return next;
     });
 
-  const footer = dirty && (
+  const footer = (dirty || current.errors.length > 0 || save.error) && (
     <div className={styles.footer}>
-      <span className={styles.footerText}>
-        {changes} {changes === 1 ? "change" : "changes"}
-      </span>
-      <Button
-        size="sm"
-        disabled={save.isPending}
-        onClick={() => {
-          reset(variables);
-          save.reset();
-        }}
-      >
-        Discard
-      </Button>
-      <Button
-        size="sm"
-        variant="primary"
-        loading={save.isPending}
-        disabled={current.errors.length > 0}
-        onClick={onSave}
-      >
-        Save
-      </Button>
+      {(current.errors.length > 0 || save.error) && (
+        <ul className={styles.errors}>
+          {current.errors.map((e) => (
+            <li key={e}>{e}</li>
+          ))}
+          {save.error && <li>{errorMessage(save.error)}</li>}
+        </ul>
+      )}
+      {dirty && (
+        <div className={styles.saveBar}>
+          <span className={styles.changes}>
+            {changes} unsaved {changes === 1 ? "change" : "changes"}
+          </span>
+          <Button
+            size="sm"
+            disabled={save.isPending}
+            onClick={() => {
+              reset(variables);
+              save.reset();
+            }}
+          >
+            Discard
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={save.isPending}
+            disabled={current.errors.length > 0}
+            onClick={onSave}
+          >
+            Save
+          </Button>
+        </div>
+      )}
     </div>
   );
 
   return (
-    <LayerCard
-      title={title}
-      meta={<Meta />}
+    <VarsCard
       actions={
         <>
           {mode === "table" && rows.length > 0 && (
-            <Button
-              size="sm"
-              onClick={() =>
-                setRows((rs) => [
-                  ...rs,
-                  { id: nextId.current++, key: "", value: "", editing: true },
-                ])
-              }
-            >
-              <Plus size={13} /> Add
+            <Button size="sm" icon={<PlusIcon size={14} />} onClick={add}>
+              Add
             </Button>
           )}
-          <Segmented
+          <Tabs
+            variant="segmented"
             size="sm"
-            label="Editor mode"
             value={mode}
-            onChange={changeMode}
-            options={[
+            onValueChange={(v) => changeMode(v as Mode)}
+            tabs={[
               { value: "table", label: "Table" },
               { value: "raw", label: "Raw" },
             ]}
@@ -259,129 +317,140 @@ export function VariablesEditor({
       footer={footer || undefined}
     >
       {mode === "raw" ? (
-        <div className={styles.raw}>
-          <Textarea
-            mono
+        <div className={styles.pad}>
+          <InputArea
             className={styles.rawText}
             value={raw}
-            onChange={(e) => setRaw(e.target.value)}
+            onValueChange={setRaw}
             placeholder="KEY=value"
             spellCheck={false}
             aria-label="Variables in .env format"
           />
+          <p className={styles.hint}>
+            One <code>KEY=value</code> per line. Paste a whole .env file to add many at once.
+          </p>
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState
-          icon={<KeyRound size={20} />}
-          title="No variables yet"
-          description="Variables are passed to the service as environment variables."
-          actions={
-            <Button
-              size="sm"
-              onClick={() => setRows([{ id: nextId.current++, key: "", value: "", editing: true }])}
-            >
-              <Plus size={13} /> Add variable
+        <RecordEmpty
+          action={
+            <Button size="sm" icon={<PlusIcon size={14} />} onClick={add}>
+              Add variable
             </Button>
           }
-        />
+        >
+          No variables yet. They are passed to the service as environment variables.
+        </RecordEmpty>
       ) : (
-        <div className={styles.list}>
-          {rows.map((r) =>
-            r.editing ? (
-              <div key={r.id} className={styles.row}>
-                <Input
-                  mono
-                  className={styles.editKey}
-                  value={r.key}
-                  onChange={(e) => update(r.id, { key: e.target.value })}
-                  placeholder="KEY"
-                  aria-label="Variable name"
-                  autoFocus={!r.key}
-                  spellCheck={false}
-                />
-                <Input
-                  mono
-                  className={styles.editValue}
-                  value={r.value}
-                  onChange={(e) => update(r.id, { value: e.target.value })}
-                  placeholder="value or ${{ service.KEY }}"
-                  aria-label="Variable value"
-                  spellCheck={false}
-                />
-                <span className={styles.actions}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon
-                    aria-label="Done"
-                    onClick={() => update(r.id, { editing: false })}
-                  >
-                    <Check size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon
-                    aria-label={`Delete ${r.key || "variable"}`}
-                    onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))}
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </span>
-              </div>
-            ) : (
-              <div key={r.id} className={styles.row}>
-                <span className={styles.key}>{r.key}</span>
-                <span className={styles.value}>
-                  {revealed.has(r.id) ? (
-                    <VarValue value={r.value} />
-                  ) : (
-                    <span className={styles.masked}>••••••••</span>
-                  )}
-                </span>
-                <span className={styles.actions}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon
-                    aria-label={revealed.has(r.id) ? "Hide" : "Reveal"}
-                    onClick={() => toggleReveal(r.id)}
-                  >
-                    {revealed.has(r.id) ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </Button>
-                  <CopyButton value={copyValue(r)} label={`Copy ${r.key}`} />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon
-                    aria-label={`Edit ${r.key}`}
-                    onClick={() => update(r.id, { editing: true })}
-                  >
-                    <Pencil size={14} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon
-                    aria-label={`Delete ${r.key}`}
-                    onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))}
-                  >
-                    <Trash2 size={14} />
-                  </Button>
-                </span>
-              </div>
-            ),
-          )}
-        </div>
+        <Table className={styles.table}>
+          <Table.Header variant="compact">
+            <Table.Row>
+              <Table.Head className={styles.keyCol}>Name</Table.Head>
+              <Table.Head>Value</Table.Head>
+              <Table.Head className={styles.actionsCol}>
+                <span className={styles.srOnly}>Actions</span>
+              </Table.Head>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {rows.map((r) =>
+              r.editing ? (
+                <Table.Row key={r.id}>
+                  <Table.Cell>
+                    <Input
+                      size="sm"
+                      className={styles.input}
+                      value={r.key}
+                      onChange={(e) => update(r.id, { key: e.target.value })}
+                      placeholder="KEY"
+                      aria-label="Variable name"
+                      autoFocus={!r.key}
+                      spellCheck={false}
+                    />
+                  </Table.Cell>
+                  <Table.Cell>
+                    <Input
+                      size="sm"
+                      className={styles.input}
+                      value={r.value}
+                      onChange={(e) => update(r.id, { value: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") update(r.id, { editing: false });
+                      }}
+                      placeholder="value or ${{ service.KEY }}"
+                      aria-label="Variable value"
+                      spellCheck={false}
+                    />
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className={styles.actions}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        shape="square"
+                        aria-label="Done"
+                        icon={<CheckIcon size={14} />}
+                        onClick={() => update(r.id, { editing: false })}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        shape="square"
+                        aria-label={`Delete ${r.key || "variable"}`}
+                        icon={<TrashIcon size={14} />}
+                        onClick={() => remove(r.id)}
+                      />
+                    </span>
+                  </Table.Cell>
+                </Table.Row>
+              ) : (
+                <Table.Row key={r.id}>
+                  <Table.Cell className={styles.key}>{r.key}</Table.Cell>
+                  <Table.Cell className={styles.value}>
+                    {revealed.has(r.id) ? (
+                      <VarValue value={r.value} />
+                    ) : (
+                      <span className={styles.masked} aria-label="Hidden value">
+                        ••••••••
+                      </span>
+                    )}
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className={styles.actions}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        shape="square"
+                        aria-label={revealed.has(r.id) ? `Hide ${r.key}` : `Reveal ${r.key}`}
+                        icon={
+                          revealed.has(r.id) ? <EyeSlashIcon size={14} /> : <EyeIcon size={14} />
+                        }
+                        onClick={() => toggleReveal(r.id)}
+                      />
+                      <CopyValue value={copyValue(r)} label={`Copy ${r.key}`} />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        shape="square"
+                        aria-label={`Edit ${r.key}`}
+                        icon={<PencilSimpleIcon size={14} />}
+                        onClick={() => update(r.id, { editing: true })}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        shape="square"
+                        aria-label={`Delete ${r.key}`}
+                        icon={<TrashIcon size={14} />}
+                        onClick={() => remove(r.id)}
+                      />
+                    </span>
+                  </Table.Cell>
+                </Table.Row>
+              ),
+            )}
+          </Table.Body>
+        </Table>
       )}
-      {(current.errors.length > 0 || save.error) && (
-        <ul className={styles.errors}>
-          {current.errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-          {save.error && <li>{errorMessage(save.error)}</li>}
-        </ul>
-      )}
-    </LayerCard>
+    </VarsCard>
   );
 }

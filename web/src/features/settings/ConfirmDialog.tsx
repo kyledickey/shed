@@ -1,8 +1,7 @@
+import { Button, Input } from "@cloudflare/kumo";
 import { useState, type ReactNode } from "react";
-import { Button } from "../../components/Button";
-import { Field, Input } from "../../components/Form";
-import { Dialog } from "../../components/Overlay";
-import styles from "./Settings.module.css";
+import { FormDialog } from "./FormDialog";
+import styles from "./Form.module.css";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -35,41 +34,53 @@ export function ConfirmDialog({
   const [typed, setTyped] = useState("");
   const ready = !typeToConfirm || typed === typeToConfirm;
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) setTyped("");
         onOpenChange(next);
       }}
+      size="base"
       title={title}
+      description={children}
       footer={
         <>
           <Button onClick={() => onOpenChange(false)} disabled={pending}>
             Cancel
           </Button>
-          <Button variant={confirmVariant} loading={pending} disabled={!ready} onClick={onConfirm}>
+          <Button
+            variant={confirmVariant === "danger" ? "destructive" : "primary"}
+            loading={pending}
+            disabled={!ready}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </Button>
         </>
       }
     >
-      <div className={styles.fields}>
-        <div className={styles.note}>{children}</div>
-        {typeToConfirm && (
-          <Field label={`Type ${typeToConfirm} to confirm`}>
-            {(id) => (
-              <Input
-                id={id}
-                mono
-                value={typed}
-                onChange={(e) => setTyped(e.target.value)}
-                autoComplete="off"
-              />
-            )}
-          </Field>
-        )}
-        {error && <p className={styles.error}>{error}</p>}
-      </div>
-    </Dialog>
+      {typeToConfirm && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (ready && !pending) onConfirm();
+          }}
+        >
+          <Input
+            label={
+              <>
+                Type <code className={styles.value}>{typeToConfirm}</code> to confirm
+              </>
+            }
+            className={styles.mono}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </form>
+      )}
+      {error && <p className={styles.error}>{error}</p>}
+    </FormDialog>
   );
 }

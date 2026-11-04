@@ -1,10 +1,16 @@
-import { Copy, Ellipsis, RotateCcw, ScrollText, Square, Undo2 } from "lucide-react";
+import { Button, DropdownMenu } from "@cloudflare/kumo";
+import {
+  ArrowCounterClockwiseIcon,
+  ArrowUUpLeftIcon,
+  CopyIcon,
+  DotsThreeIcon,
+  ScrollIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { isPending, type Deployment } from "../../api/types";
-import { Button } from "../../components/Button";
-import { Menu, MenuItem, MenuSeparator } from "../../components/Overlay";
 import { imageGone, imageGoneLabel, redeployLabel, type DeploymentActions } from "./actions";
 
-/** DeploymentMenu is the overflow menu on a deployment history row. */
+/** DeploymentMenu is the ⋯ menu on a deployment row. */
 export function DeploymentMenu({
   deployment: d,
   actions,
@@ -16,38 +22,45 @@ export function DeploymentMenu({
 }) {
   const redeploy = redeployLabel(d);
   return (
-    <Menu
-      trigger={
-        <Button variant="ghost" size="sm" icon aria-label="Deployment actions">
-          <Ellipsis size={14} />
-        </Button>
-      }
-    >
-      <MenuItem icon={<ScrollText size={14} />} onClick={onViewLogs}>
-        View logs
-      </MenuItem>
-      {redeploy && (
-        <MenuItem
-          icon={d.status === "removed" ? <Undo2 size={14} /> : <RotateCcw size={14} />}
-          disabled={imageGone(d)}
-          onClick={() => actions.redeploy(d)}
-        >
-          {imageGone(d) ? imageGoneLabel : redeploy}
-        </MenuItem>
-      )}
-      {d.commitSha && (
-        <MenuItem icon={<Copy size={14} />} onClick={() => void actions.copySha(d)}>
-          Copy commit SHA
-        </MenuItem>
-      )}
-      {isPending(d.status) && (
-        <>
-          <MenuSeparator />
-          <MenuItem icon={<Square size={14} />} danger onClick={() => actions.cancel(d)}>
-            Cancel
-          </MenuItem>
-        </>
-      )}
-    </Menu>
+    <DropdownMenu>
+      <DropdownMenu.Trigger
+        render={
+          <Button
+            variant="ghost"
+            size="sm"
+            shape="square"
+            icon={<DotsThreeIcon size={16} weight="bold" />}
+            aria-label="Deployment actions"
+          />
+        }
+      />
+      <DropdownMenu.Content align="end">
+        <DropdownMenu.Item icon={ScrollIcon} onClick={onViewLogs}>
+          View logs
+        </DropdownMenu.Item>
+        {redeploy && (
+          <DropdownMenu.Item
+            icon={d.status === "removed" ? ArrowUUpLeftIcon : ArrowCounterClockwiseIcon}
+            disabled={imageGone(d)}
+            onClick={() => actions.redeploy(d)}
+          >
+            {imageGone(d) ? imageGoneLabel : redeploy}
+          </DropdownMenu.Item>
+        )}
+        {d.commitSha && (
+          <DropdownMenu.Item icon={CopyIcon} onClick={() => void actions.copySha(d)}>
+            Copy commit SHA
+          </DropdownMenu.Item>
+        )}
+        {isPending(d.status) && (
+          <>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item icon={XIcon} variant="danger" onClick={() => actions.cancel(d)}>
+              Cancel
+            </DropdownMenu.Item>
+          </>
+        )}
+      </DropdownMenu.Content>
+    </DropdownMenu>
   );
 }

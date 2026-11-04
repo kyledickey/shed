@@ -1,0 +1,162 @@
+.card {
+  min-width: 0;
+}
+
+.head {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding-block: 12px;
+  font-size: var(--text-base);
+}
+
+.title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-block: -4px;
+}
+
+.body {
+  gap: 0;
+  padding: 0;
+}
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--cols);
+  align-items: center;
+  column-gap: 16px;
+  min-height: 44px;
+  padding: 6px 16px;
+  font-size: var(--text-base);
+
+  & + & {
+    border-top: 1px solid var(--color-kumo-hairline);
+  }
+
+  @media (max-width: 760px) {
+    grid-template-columns: var(--cols-narrow);
+
+    & > [data-optional] {
+      display: none;
+    }
+  }
+}
+
+.openable {
+  &:hover {
+    background: var(--color-kumo-tint);
+  }
+
+  /* Cells sit over the row's open button; only their own controls take clicks. */
+  & > .cell {
+    pointer-events: none;
+
+    & :is(a, button) {
+      pointer-events: auto;
+    }
+  }
+
+  & > .end {
+    pointer-events: auto;
+  }
+}
+
+.open {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--color-kumo-focus, var(--accent-strong));
+    outline-offset: -2px;
+  }
+}
+
+.cell {
+  position: relative;
+  min-width: 0;
+}
+
+.id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.message {
+  overflow: hidden;
+  color: var(--text-color-kumo-subtle);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  overflow: hidden;
+  color: var(--text-color-kumo-subtle);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note {
+  grid-column: 1 / -1;
+  padding-bottom: 2px;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.end {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--color-kumo-hairline);
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  margin: 12px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--color-kumo-line);
+  border-radius: 8px;
+  background: var(--color-kumo-recessed);
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+
+  :root[data-mode="dark"] & {
+    border-style: dashed;
+  }
+}

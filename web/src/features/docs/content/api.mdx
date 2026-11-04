@@ -20,6 +20,7 @@ The dashboard is just a client of this API, so anything you can click has an end
 - **JSON, camelCase.** IDs are 12-character lowercase base32 strings. Times are RFC 3339 UTC. A `204` has no body.
 - **Errors** are `{"error": "message"}` with a real status. Unexpected failures are logged and reported as a generic `500 internal error`.
 - **Authentication** is the `shed_session` cookie. Auth, setup, the webhook, and the OAuth endpoints under `/oauth` and `/.well-known` are public; everything else answers 401 without a session. `/mcp` takes only a bearer token, never the cookie; see [MCP](/docs/mcp). Unknown `/api/*` paths are a JSON 404, not the dashboard.
+- **Paging.** Deployment and backup lists come a page at a time, newest first: `limit` (default 10, at most 100) and `before`, the id of the last record of the previous page. Each page has `next`, the `before` of the following page, or `null` on the last. A `before` that isn't in the list returns an empty page.
 - **Mutations** from a browser must come from the origin of `server.url`, and POST, PUT, and PATCH need `Content-Type: application/json` even with an empty body. See [request protections](/docs/security#request-protections).
 
 | Status        | Meaning                                                                                                                           |
@@ -177,6 +178,7 @@ type Deployment = {
   image: string; error: string;
   createdAt: string; startedAt: string | null; finishedAt: string | null;
 };
+type DeploymentPage = { deployments: Deployment[]; next: string | null };
 ```
 
 ### Metrics
@@ -246,8 +248,11 @@ type Restore = {
   status: "running" | "succeeded" | "failed"; error: string;
   createdAt: string; finishedAt: string | null;
 };
-type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; restore: Restore | null };
-type SystemBackups = { policy: BackupPolicy; backups: Backup[] };
+// next is the before of the following page, null on the last.
+type ServiceBackups = {
+  policy: BackupPolicy; backups: Backup[]; next: string | null; restore: Restore | null;
+};
+type SystemBackups = { policy: BackupPolicy; backups: Backup[]; next: string | null };
 type S3Settings = {
   endpoint: string;                    // URL, e.g. "https://s3.us-east-1.amazonaws.com"
   region: string; bucket: string; prefix: string;

@@ -1,4 +1,5 @@
-import { BellRing, Ellipsis, Pencil, Plus, Trash2 } from "lucide-react";
+import { Button, DropdownMenu, Input, Select, Switch } from "@cloudflare/kumo";
+import { DotsThreeIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useId, useState } from "react";
 import { errorMessage } from "../../api/client";
 import {
@@ -8,14 +9,15 @@ import {
   useUpdateNotificationChannel,
 } from "../../api/notifications";
 import type { NotificationChannel } from "../../api/types";
-import { Badge, Count } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input, Select, Switch } from "../../components/Form";
-import { EmptyState } from "../../components/Misc";
-import { Dialog, Menu, MenuItem, useToast } from "../../components/Overlay";
+import { useToast } from "../../components/Overlay";
+import { Pill } from "../../components/Pill";
+import { Rows, SettingRow, Well } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
-import settings from "../settings/Settings.module.css";
+
+import form from "../settings/Form.module.css";
+import { FormDialog } from "../settings/FormDialog";
+import { Group } from "../settings/Group";
 import styles from "./Notifications.module.css";
 
 /** ChannelsCard lists where notifications go, and adds, edits, tests, and deletes channels. */
@@ -33,24 +35,30 @@ export function ChannelsCard({
   const toast = useToast();
 
   return (
-    <LayerCard
+    <Group
       title="Channels"
-      meta={<Count>{channels.length}</Count>}
+      description="Where notifications are sent, such as your phone through Hark."
       actions={
-        <Button size="sm" onClick={() => setEditing("new")}>
-          <Plus size={14} /> Add channel
-        </Button>
+        channels.length > 0 && (
+          <Button size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+            Add channel
+          </Button>
+        )
       }
     >
       {channels.length === 0 ? (
-        <EmptyState
-          icon={<BellRing />}
-          tone="neutral"
-          title="No channels yet"
-          description="A channel is where notifications are sent, such as your phone through Hark."
-        />
+        <Well
+          empty
+          action={
+            <Button size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
+              Add channel
+            </Button>
+          }
+        >
+          No channels yet.
+        </Well>
       ) : (
-        <div>
+        <Rows>
           {channels.map((c) => (
             <ChannelRow
               key={c.id}
@@ -59,7 +67,7 @@ export function ChannelsCard({
               onDelete={() => setDeleting(c)}
             />
           ))}
-        </div>
+        </Rows>
       )}
       {editing && (
         <ChannelDialog
@@ -90,9 +98,10 @@ export function ChannelsCard({
           })
         }
       >
-        {deleting?.name} stops receiving notifications, and its delivery history is deleted.
+        <strong>{deleting?.name}</strong> stops receiving notifications, and its delivery history is
+        deleted.
       </ConfirmDialog>
-    </LayerCard>
+    </Group>
   );
 }
 
@@ -108,44 +117,56 @@ function ChannelRow({
   const update = useUpdateNotificationChannel();
   const test = useTestNotificationChannel();
   return (
-    <div className={styles.row}>
-      <div className={styles.main}>
-        <span className={styles.name}>{c.name}</span>
-        <span className={styles.meta} aria-live="polite">
-          <Badge size="sm" variant="outline">
-            {c.provider}
-          </Badge>
-          {test.isSuccess && <span className={styles.ok}>Test notification sent.</span>}
-          {test.isError && <span className={styles.problem}>{errorMessage(test.error)}</span>}
-          {update.isError && <span className={styles.problem}>{errorMessage(update.error)}</span>}
-        </span>
-      </div>
-      <div className={styles.controls}>
-        <Switch
-          label="Enabled"
-          checked={c.enabled}
-          disabled={update.isPending}
-          onChange={(enabled) => update.mutate({ id: c.id, patch: { enabled } })}
-        />
-        <Button size="sm" loading={test.isPending} onClick={() => test.mutate(c.id)}>
-          Send test
-        </Button>
-        <Menu
-          trigger={
-            <Button variant="ghost" size="sm" icon aria-label={`Actions for ${c.name}`}>
-              <Ellipsis size={14} />
-            </Button>
-          }
-        >
-          <MenuItem icon={<Pencil size={14} />} onClick={onEdit}>
-            Edit…
-          </MenuItem>
-          <MenuItem icon={<Trash2 size={14} />} danger onClick={onDelete}>
-            Delete…
-          </MenuItem>
-        </Menu>
-      </div>
-    </div>
+    <SettingRow
+      label={
+        <>
+          {c.name} <Pill>{c.provider}</Pill>
+        </>
+      }
+      description={
+        (test.isSuccess || test.isError || update.isError) && (
+          <span aria-live="polite">
+            {test.isSuccess && "Test notification sent."}
+            {test.isError && <span className={styles.problem}>{errorMessage(test.error)}</span>}
+            {update.isError && <span className={styles.problem}>{errorMessage(update.error)}</span>}
+          </span>
+        )
+      }
+      control={
+        <>
+          <Button size="sm" loading={test.isPending} onClick={() => test.mutate(c.id)}>
+            Send test
+          </Button>
+          <Switch
+            aria-label={`${c.name} enabled`}
+            checked={c.enabled}
+            disabled={update.isPending}
+            onCheckedChange={(enabled) => update.mutate({ id: c.id, patch: { enabled } })}
+          />
+          <DropdownMenu>
+            <DropdownMenu.Trigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  shape="square"
+                  icon={<DotsThreeIcon weight="bold" />}
+                  aria-label={`Actions for ${c.name}`}
+                />
+              }
+            />
+            <DropdownMenu.Content align="end">
+              <DropdownMenu.Item icon={<PencilSimpleIcon />} onClick={onEdit}>
+                Edit…
+              </DropdownMenu.Item>
+              <DropdownMenu.Item variant="danger" icon={<TrashIcon />} onClick={onDelete}>
+                Delete…
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu>
+        </>
+      }
+    />
   );
 }
 
@@ -189,7 +210,7 @@ function ChannelDialog({
   };
 
   return (
-    <Dialog
+    <FormDialog
       open
       onOpenChange={(open) => !open && onClose()}
       title={channel ? "Edit channel" : "Add channel"}
@@ -212,57 +233,43 @@ function ChannelDialog({
     >
       <form
         id={formId}
-        className={settings.fields}
+        className={styles.dialogForm}
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) submit();
         }}
       >
-        <Field label="Name">
-          {(id) => (
-            <Input
-              id={id}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My phone"
-              autoComplete="off"
-              autoFocus
-            />
-          )}
-        </Field>
-        <Field label="Provider">
-          {(id) => (
-            <Select
-              id={id}
-              value={provider}
-              onChange={setProvider}
-              disabled={channel !== null}
-              options={providers.map((p) => ({ value: p, label: p }))}
-            />
-          )}
-        </Field>
-        <Field
+        <Input
+          label="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="My phone"
+          autoComplete="off"
+          autoFocus
+        />
+        <Select
+          label="Provider"
+          value={provider}
+          onValueChange={(v) => v && setProvider(v)}
+          disabled={channel !== null}
+          items={providers.map((p) => ({ value: p, label: p }))}
+        />
+        <Input
           label="Target"
-          hint={
+          description={
             channel
               ? "Leave blank to keep the saved target."
               : (targetHints[provider] ?? "Where to send notifications.")
           }
-        >
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              type="password"
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              autoComplete="new-password"
-              spellCheck={false}
-            />
-          )}
-        </Field>
-        {op.error && <p className={settings.error}>{errorMessage(op.error)}</p>}
+          className={cx(form.mono)}
+          type="password"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          autoComplete="new-password"
+          spellCheck={false}
+        />
+        {op.error && <p className={form.error}>{errorMessage(op.error)}</p>}
       </form>
-    </Dialog>
+    </FormDialog>
   );
 }

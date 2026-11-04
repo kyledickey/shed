@@ -1,6 +1,14 @@
+import { Button, Dialog } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, ChartLine, CircleX, ExternalLink, RotateCcw, Square, Undo2 } from "lucide-react";
-import { useState } from "react";
+import {
+  ArrowCounterClockwiseIcon,
+  ArrowSquareOutIcon,
+  ArrowUUpLeftIcon,
+  ProhibitIcon,
+  XCircleIcon,
+  XIcon,
+} from "@phosphor-icons/react";
+import { useState, type ReactNode } from "react";
 import { api, errorMessage } from "../../api/client";
 import { invalidateDeployments } from "../../api/deployments";
 import { useLogStream } from "../../api/events";
@@ -9,17 +17,15 @@ import { traceHref } from "../../api/logHistory";
 import { deploymentOverviewUrl, serviceTelemetryQuery } from "../../api/telemetry";
 import { isPending, type Deployment, type Service } from "../../api/types";
 import { StatusBadge } from "../../components/Badge";
-import { Button } from "../../components/Button";
 import { DeploySteps } from "../../components/deploy/Deploy";
 import { BuildLogView } from "../../components/logs/BuildLogView";
-import { Callout } from "../../components/Misc";
-import { Dialog } from "../../components/Overlay";
+import { Notice } from "../../components/Notice";
 import { formatDate, formatDuration } from "../../lib/time";
+import { HelpTip } from "../docs/HelpTip";
 import { imageGone, imageGoneLabel, redeployLabel, type DeploymentActions } from "./actions";
 import { CommitMeta, deploymentTitle } from "./CommitMeta";
 import styles from "./DeploymentDetailDialog.module.css";
 import { WaitingForCi } from "./LatestDeployment";
-import { HelpTip } from "../docs/HelpTip";
 
 type DeploymentDetailDialogProps = {
   service: Service;
@@ -59,20 +65,15 @@ export function DeploymentDetailDialog({
 
   if (!d) {
     return (
-      <Dialog
-        open={!!deploymentId}
-        onOpenChange={(open) => !open && onClose()}
-        title="Deployment"
-        size="lg"
-      >
+      <Shell open={!!deploymentId} onClose={onClose} title="Deployment">
         {single.error ? (
-          <Callout tone="tomato" icon={<CircleX size={16} />} title="Couldn't load deployment">
+          <Notice icon={<XCircleIcon size={16} />} title="Couldn't load deployment" danger>
             {errorMessage(single.error)}
-          </Callout>
+          </Notice>
         ) : (
           <p className={styles.quiet}>Loading…</p>
         )}
-      </Dialog>
+      </Shell>
     );
   }
 
@@ -82,36 +83,35 @@ export function DeploymentDetailDialog({
   const overview = telemetry && deploymentOverviewUrl(telemetry, d);
 
   return (
-    <Dialog
+    <Shell
       open={!!deploymentId}
-      onOpenChange={(open) => !open && onClose()}
-      size="lg"
+      onClose={onClose}
       title={
-        <span className={styles.title}>
-          <StatusBadge kind="deployment" status={d.status} size="sm" />
-          <span className={styles.titleText}>{deploymentTitle(d)}</span>
-          <HelpTip topic="buildLog" />
-        </span>
+        <>
+          <StatusBadge kind="deployment" status={d.status} />
+          <span className={styles.titleText}>
+            <HelpTip topic="buildLog">{deploymentTitle(d)}</HelpTip>
+          </span>
+        </>
       }
       description={
         <CommitMeta service={service} deployment={d}>
           <span>{formatDate(d.createdAt)}</span>
           {d.startedAt && <span>{formatDuration(d.startedAt, d.finishedAt)}</span>}
           {overview && (
-            <a className={styles.grafana} href={overview} target="_blank" rel="noreferrer">
-              <ChartLine size={12} />
-              Open in Grafana
+            <a className={styles.link} href={overview} target="_blank" rel="noreferrer">
+              Open in Grafana <ArrowSquareOutIcon size={12} />
             </a>
           )}
           {d.traceId && (
             <a
-              className={styles.trace}
+              className={styles.link}
               href={traceHref(d.traceId)}
               target="_blank"
               rel="noreferrer"
               title="Open this deployment's trace in Grafana"
             >
-              View trace <ExternalLink size={12} />
+              View trace <ArrowSquareOutIcon size={12} />
             </a>
           )}
         </CommitMeta>
@@ -121,22 +121,27 @@ export function DeploymentDetailDialog({
           <>
             {pending && (
               <Button
-                variant="danger"
+                variant="secondary-destructive"
+                icon={<XIcon size={14} />}
                 onClick={() => actions.cancel(d)}
                 loading={actions.isCanceling(d)}
               >
-                {!actions.isCanceling(d) && <Square size={14} />}
                 Cancel deployment
               </Button>
             )}
             {redeploy && (
               <Button
+                icon={
+                  d.status === "removed" ? (
+                    <ArrowUUpLeftIcon size={14} />
+                  ) : (
+                    <ArrowCounterClockwiseIcon size={14} />
+                  )
+                }
                 onClick={() => actions.redeploy(d)}
                 loading={actions.isRedeploying(d)}
                 disabled={imageGone(d)}
               >
-                {!actions.isRedeploying(d) &&
-                  (d.status === "removed" ? <Undo2 size={14} /> : <RotateCcw size={14} />)}
                 {imageGone(d) ? imageGoneLabel : redeploy}
               </Button>
             )}
@@ -145,22 +150,76 @@ export function DeploymentDetailDialog({
       }
     >
       {d.error && (
-        <Callout
-          tone={failed ? "tomato" : "neutral"}
-          icon={failed ? <CircleX size={16} /> : <Ban size={16} />}
+        <Notice
+          icon={failed ? <XCircleIcon size={16} /> : <ProhibitIcon size={16} />}
+          title={
+            d.status === "crashed"
+              ? "Container crashed"
+              : failed
+                ? "Deployment failed"
+                : "Deployment stopped"
+          }
+          danger={failed}
         >
-          <span className={styles.error}>{d.error}</span>
-        </Callout>
+          {d.error}
+        </Notice>
       )}
       {(pending || failed) && (
         <DeploySteps status={d.status} failedAt={d.image ? "deploying" : "building"} />
       )}
       {d.status === "waiting" && <WaitingForCi deployment={d} />}
       <BuildLogs key={d.id} serviceId={service.id} deployment={d} />
-    </Dialog>
+    </Shell>
   );
 }
 
+/** Shell is the dialog frame: a title row with a close button, the body, and a footer. */
+function Shell({
+  open,
+  onClose,
+  title,
+  description,
+  footer,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  description?: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog size="xl" className={styles.dialog}>
+        <header className={styles.header}>
+          <div className={styles.heading}>
+            <Dialog.Title className={styles.title}>{title}</Dialog.Title>
+            {description && (
+              <Dialog.Description render={<div />} className={styles.description}>
+                {description}
+              </Dialog.Description>
+            )}
+          </div>
+          <Dialog.Close
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                shape="square"
+                icon={<XIcon size={16} />}
+                aria-label="Close"
+              />
+            }
+            aria-label="Close"
+          />
+        </header>
+        <div className={styles.body}>{children}</div>
+        {footer && <footer className={styles.footer}>{footer}</footer>}
+      </Dialog>
+    </Dialog.Root>
+  );
+}
 function BuildLogs({ serviceId, deployment }: { serviceId: string; deployment: Deployment }) {
   const qc = useQueryClient();
   const { lines, state } = useLogStream(`/api/deployments/${deployment.id}/logs`, () => {

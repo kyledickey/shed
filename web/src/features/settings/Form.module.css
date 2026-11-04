@@ -1,0 +1,370 @@
+/* Setting rows, lists, and the save bar shared by every settings form. */
+
+.saveBar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 12px;
+  background: var(--color-kumo-base);
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+}
+
+.saveText,
+.saveError {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+}
+
+.saveText {
+  color: var(--text-color-kumo-subtle);
+}
+
+.saveError,
+.error {
+  color: var(--text-color-kumo-danger);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* Server sections: groups of rows under small headings, 40px apart. */
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.groupText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.groupTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+
+.groupDescription {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  text-wrap: pretty;
+}
+
+.groupActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.subhead {
+  margin: 8px 0 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+/* Controls on the right of a setting row. */
+.wide {
+  width: 320px;
+  max-width: 100%;
+
+  @media (max-width: 640px) {
+    width: 100%;
+  }
+}
+
+.number {
+  width: 168px;
+
+  @media (max-width: 640px) {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+}
+
+.mono,
+.mono input {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.unit {
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.value {
+  color: var(--text-color-kumo-default);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--text-color-kumo-subtle);
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-color-kumo-default);
+  text-decoration: underline;
+  text-decoration-color: var(--color-kumo-line);
+  text-underline-offset: 3px;
+
+  &:hover {
+    text-decoration-color: currentColor;
+  }
+}
+
+/* Lists inside a setting row: a ringed table with a header strip. */
+.table {
+  overflow-x: auto;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+
+  & table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+  }
+
+  & th {
+    padding: 8px 12px;
+    background: var(--color-kumo-elevated);
+    border-bottom: 1px solid var(--color-kumo-hairline);
+    color: var(--text-color-kumo-subtle);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  & td {
+    height: 44px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--color-kumo-hairline);
+    vertical-align: middle;
+  }
+
+  & tbody tr:first-child td {
+    border-top: 0;
+  }
+}
+
+.cellMono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.cellSubtle {
+  color: var(--text-color-kumo-subtle);
+  white-space: nowrap;
+}
+
+.cellNum {
+  font-variant-numeric: tabular-nums;
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.cellActions {
+  width: 1%;
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.cellProblem {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-color-kumo-danger);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.host {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-color-kumo-default);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* A line of quiet text with a leading glyph, inside a well. */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+
+  & > svg {
+    flex: none;
+    margin-top: 2px;
+  }
+
+  & ol {
+    margin: 4px 0 0;
+    padding-left: 1.4em;
+    list-style: decimal;
+  }
+
+  & code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    color: var(--text-color-kumo-default);
+  }
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.statusOk {
+  color: var(--text-color-kumo-default);
+}
+
+.statusFailed {
+  color: var(--text-color-kumo-danger);
+}
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.dialogHead {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dialogTitle {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.dialogText {
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+
+  & strong {
+    color: var(--text-color-kumo-default);
+    font-weight: 500;
+  }
+}
+
+.dialogFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--color-kumo-hairline);
+  background: var(--color-kumo-elevated);
+}
+
+/* Kumo wraps a labelled Select in a grid; let it fill a stacked row on phones. */
+@media (max-width: 640px) {
+  div:has(> .wide) {
+    width: 100%;
+  }
+}
+
+/* A number inside a sentence: as wide as its value, a hairline until touched. */
+.inline {
+  height: 26px;
+  min-width: 0;
+  max-width: 12ch;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-kumo-hairline);
+  color: var(--text-color-kumo-default);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  transition:
+    background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+
+  &:hover:not(:disabled) {
+    background: var(--color-kumo-tint);
+  }
+
+  &:focus-visible {
+    outline: none;
+    background: var(--color-kumo-tint);
+    box-shadow:
+      inset 0 0 0 1px var(--color-kumo-line),
+      0 0 0 2px color-mix(in oklch, var(--color-kumo-focus) 45%, transparent);
+  }
+
+  &[aria-invalid] {
+    box-shadow: inset 0 0 0 1px var(--color-kumo-danger);
+  }
+
+  &:disabled {
+    color: var(--text-color-kumo-subtle);
+    cursor: not-allowed;
+  }
+}
+
+/* The words around inline numbers. */
+.sentence {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 5px;
+  margin-right: 8px;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}

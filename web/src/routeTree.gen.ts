@@ -13,20 +13,13 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthorizeRouteImport } from './routes/authorize'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
-import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppDocsRouteImport } from './routes/_app/docs'
-import { Route as AppServerRouteImport } from './routes/_app/server'
-import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppDocsIndexRouteImport } from './routes/_app/docs/index'
 import { Route as AppDocsSlugRouteImport } from './routes/_app/docs/$slug'
 import { Route as AppProjectsProjectIdRouteImport } from './routes/_app/projects/$projectId'
 import { Route as AppServerIndexRouteImport } from './routes/_app/server/index'
-import { Route as AppServerAuditRouteImport } from './routes/_app/server/audit'
-import { Route as AppServerBackupsRouteImport } from './routes/_app/server/backups'
-import { Route as AppServerLogsRouteImport } from './routes/_app/server/logs'
-import { Route as AppServerNotificationsRouteImport } from './routes/_app/server/notifications'
-import { Route as AppServerTelemetryRouteImport } from './routes/_app/server/telemetry'
+import { Route as AppServerSectionRouteImport } from './routes/_app/server/$section'
 import { Route as AppProjectsProjectIdIndexRouteImport } from './routes/_app/projects/$projectId/index'
 import { Route as AppProjectsProjectIdSettingsRouteImport } from './routes/_app/projects/$projectId/settings'
 import { Route as AppProjectsProjectIdServicesServiceIdRouteImport } from './routes/_app/projects/$projectId/services/$serviceId'
@@ -56,11 +49,6 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShowcaseRoute = ShowcaseRouteImport.update({
-  id: '/showcase',
-  path: '/showcase',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -69,16 +57,6 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppDocsRoute = AppDocsRouteImport.update({
   id: '/docs',
   path: '/docs',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppServerRoute = AppServerRouteImport.update({
-  id: '/server',
-  path: '/server',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDocsIndexRoute = AppDocsIndexRouteImport.update({
@@ -97,34 +75,14 @@ const AppProjectsProjectIdRoute = AppProjectsProjectIdRouteImport.update({
   getParentRoute: () => AppRoute,
 } as any)
 const AppServerIndexRoute = AppServerIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppServerRoute,
+  id: '/server/',
+  path: '/server/',
+  getParentRoute: () => AppRoute,
 } as any)
-const AppServerAuditRoute = AppServerAuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
-  getParentRoute: () => AppServerRoute,
-} as any)
-const AppServerBackupsRoute = AppServerBackupsRouteImport.update({
-  id: '/backups',
-  path: '/backups',
-  getParentRoute: () => AppServerRoute,
-} as any)
-const AppServerLogsRoute = AppServerLogsRouteImport.update({
-  id: '/logs',
-  path: '/logs',
-  getParentRoute: () => AppServerRoute,
-} as any)
-const AppServerNotificationsRoute = AppServerNotificationsRouteImport.update({
-  id: '/notifications',
-  path: '/notifications',
-  getParentRoute: () => AppServerRoute,
-} as any)
-const AppServerTelemetryRoute = AppServerTelemetryRouteImport.update({
-  id: '/telemetry',
-  path: '/telemetry',
-  getParentRoute: () => AppServerRoute,
+const AppServerSectionRoute = AppServerSectionRouteImport.update({
+  id: '/server/$section',
+  path: '/server/$section',
+  getParentRoute: () => AppRoute,
 } as any)
 const AppProjectsProjectIdIndexRoute =
   AppProjectsProjectIdIndexRouteImport.update({
@@ -186,17 +144,10 @@ export interface FileRoutesByFullPath {
   '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/showcase': typeof ShowcaseRoute
   '/docs': typeof AppDocsRouteWithChildren
-  '/server': typeof AppServerRouteWithChildren
-  '/settings': typeof AppSettingsRoute
   '/docs/$slug': typeof AppDocsSlugRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
-  '/server/audit': typeof AppServerAuditRoute
-  '/server/backups': typeof AppServerBackupsRoute
-  '/server/logs': typeof AppServerLogsRoute
-  '/server/notifications': typeof AppServerNotificationsRoute
-  '/server/telemetry': typeof AppServerTelemetryRoute
+  '/server/$section': typeof AppServerSectionRoute
   '/docs/': typeof AppDocsIndexRoute
   '/server/': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -213,15 +164,9 @@ export interface FileRoutesByTo {
   '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/showcase': typeof ShowcaseRoute
-  '/settings': typeof AppSettingsRoute
   '/': typeof AppIndexRoute
   '/docs/$slug': typeof AppDocsSlugRoute
-  '/server/audit': typeof AppServerAuditRoute
-  '/server/backups': typeof AppServerBackupsRoute
-  '/server/logs': typeof AppServerLogsRoute
-  '/server/notifications': typeof AppServerNotificationsRoute
-  '/server/telemetry': typeof AppServerTelemetryRoute
+  '/server/$section': typeof AppServerSectionRoute
   '/docs': typeof AppDocsIndexRoute
   '/server': typeof AppServerIndexRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -239,18 +184,11 @@ export interface FileRoutesById {
   '/authorize': typeof AuthorizeRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
-  '/showcase': typeof ShowcaseRoute
   '/_app/docs': typeof AppDocsRouteWithChildren
-  '/_app/server': typeof AppServerRouteWithChildren
-  '/_app/settings': typeof AppSettingsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/docs/$slug': typeof AppDocsSlugRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteWithChildren
-  '/_app/server/audit': typeof AppServerAuditRoute
-  '/_app/server/backups': typeof AppServerBackupsRoute
-  '/_app/server/logs': typeof AppServerLogsRoute
-  '/_app/server/notifications': typeof AppServerNotificationsRoute
-  '/_app/server/telemetry': typeof AppServerTelemetryRoute
+  '/_app/server/$section': typeof AppServerSectionRoute
   '/_app/docs/': typeof AppDocsIndexRoute
   '/_app/server/': typeof AppServerIndexRoute
   '/_app/projects/$projectId/settings': typeof AppProjectsProjectIdSettingsRoute
@@ -270,17 +208,10 @@ export interface FileRouteTypes {
     | '/authorize'
     | '/login'
     | '/setup'
-    | '/showcase'
     | '/docs'
-    | '/server'
-    | '/settings'
     | '/docs/$slug'
     | '/projects/$projectId'
-    | '/server/audit'
-    | '/server/backups'
-    | '/server/logs'
-    | '/server/notifications'
-    | '/server/telemetry'
+    | '/server/$section'
     | '/docs/'
     | '/server/'
     | '/projects/$projectId/settings'
@@ -297,15 +228,9 @@ export interface FileRouteTypes {
     | '/authorize'
     | '/login'
     | '/setup'
-    | '/showcase'
-    | '/settings'
     | '/'
     | '/docs/$slug'
-    | '/server/audit'
-    | '/server/backups'
-    | '/server/logs'
-    | '/server/notifications'
-    | '/server/telemetry'
+    | '/server/$section'
     | '/docs'
     | '/server'
     | '/projects/$projectId/settings'
@@ -322,18 +247,11 @@ export interface FileRouteTypes {
     | '/authorize'
     | '/login'
     | '/setup'
-    | '/showcase'
     | '/_app/docs'
-    | '/_app/server'
-    | '/_app/settings'
     | '/_app/'
     | '/_app/docs/$slug'
     | '/_app/projects/$projectId'
-    | '/_app/server/audit'
-    | '/_app/server/backups'
-    | '/_app/server/logs'
-    | '/_app/server/notifications'
-    | '/_app/server/telemetry'
+    | '/_app/server/$section'
     | '/_app/docs/'
     | '/_app/server/'
     | '/_app/projects/$projectId/settings'
@@ -352,7 +270,6 @@ export interface RootRouteChildren {
   AuthorizeRoute: typeof AuthorizeRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
-  ShowcaseRoute: typeof ShowcaseRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -385,13 +302,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/showcase': {
-      id: '/showcase'
-      path: '/showcase'
-      fullPath: '/showcase'
-      preLoaderRoute: typeof ShowcaseRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_app/': {
       id: '/_app/'
       path: '/'
@@ -404,20 +314,6 @@ declare module '@tanstack/react-router' {
       path: '/docs'
       fullPath: '/docs'
       preLoaderRoute: typeof AppDocsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/server': {
-      id: '/_app/server'
-      path: '/server'
-      fullPath: '/server'
-      preLoaderRoute: typeof AppServerRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/settings': {
-      id: '/_app/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/docs/': {
@@ -443,45 +339,17 @@ declare module '@tanstack/react-router' {
     }
     '/_app/server/': {
       id: '/_app/server/'
-      path: '/'
+      path: '/server'
       fullPath: '/server/'
       preLoaderRoute: typeof AppServerIndexRouteImport
-      parentRoute: typeof AppServerRoute
+      parentRoute: typeof AppRoute
     }
-    '/_app/server/audit': {
-      id: '/_app/server/audit'
-      path: '/audit'
-      fullPath: '/server/audit'
-      preLoaderRoute: typeof AppServerAuditRouteImport
-      parentRoute: typeof AppServerRoute
-    }
-    '/_app/server/backups': {
-      id: '/_app/server/backups'
-      path: '/backups'
-      fullPath: '/server/backups'
-      preLoaderRoute: typeof AppServerBackupsRouteImport
-      parentRoute: typeof AppServerRoute
-    }
-    '/_app/server/logs': {
-      id: '/_app/server/logs'
-      path: '/logs'
-      fullPath: '/server/logs'
-      preLoaderRoute: typeof AppServerLogsRouteImport
-      parentRoute: typeof AppServerRoute
-    }
-    '/_app/server/notifications': {
-      id: '/_app/server/notifications'
-      path: '/notifications'
-      fullPath: '/server/notifications'
-      preLoaderRoute: typeof AppServerNotificationsRouteImport
-      parentRoute: typeof AppServerRoute
-    }
-    '/_app/server/telemetry': {
-      id: '/_app/server/telemetry'
-      path: '/telemetry'
-      fullPath: '/server/telemetry'
-      preLoaderRoute: typeof AppServerTelemetryRouteImport
-      parentRoute: typeof AppServerRoute
+    '/_app/server/$section': {
+      id: '/_app/server/$section'
+      path: '/server/$section'
+      fullPath: '/server/$section'
+      preLoaderRoute: typeof AppServerSectionRouteImport
+      parentRoute: typeof AppRoute
     }
     '/_app/projects/$projectId/': {
       id: '/_app/projects/$projectId/'
@@ -562,28 +430,6 @@ const AppDocsRouteChildren: AppDocsRouteChildren = {
 const AppDocsRouteWithChildren =
   AppDocsRoute._addFileChildren(AppDocsRouteChildren)
 
-interface AppServerRouteChildren {
-  AppServerAuditRoute: typeof AppServerAuditRoute
-  AppServerBackupsRoute: typeof AppServerBackupsRoute
-  AppServerLogsRoute: typeof AppServerLogsRoute
-  AppServerNotificationsRoute: typeof AppServerNotificationsRoute
-  AppServerTelemetryRoute: typeof AppServerTelemetryRoute
-  AppServerIndexRoute: typeof AppServerIndexRoute
-}
-
-const AppServerRouteChildren: AppServerRouteChildren = {
-  AppServerAuditRoute: AppServerAuditRoute,
-  AppServerBackupsRoute: AppServerBackupsRoute,
-  AppServerLogsRoute: AppServerLogsRoute,
-  AppServerNotificationsRoute: AppServerNotificationsRoute,
-  AppServerTelemetryRoute: AppServerTelemetryRoute,
-  AppServerIndexRoute: AppServerIndexRoute,
-}
-
-const AppServerRouteWithChildren = AppServerRoute._addFileChildren(
-  AppServerRouteChildren,
-)
-
 interface AppProjectsProjectIdServicesServiceIdRouteChildren {
   AppProjectsProjectIdServicesServiceIdBackupsRoute: typeof AppProjectsProjectIdServicesServiceIdBackupsRoute
   AppProjectsProjectIdServicesServiceIdLogsRoute: typeof AppProjectsProjectIdServicesServiceIdLogsRoute
@@ -632,18 +478,18 @@ const AppProjectsProjectIdRouteWithChildren =
 
 interface AppRouteChildren {
   AppDocsRoute: typeof AppDocsRouteWithChildren
-  AppServerRoute: typeof AppServerRouteWithChildren
-  AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRouteWithChildren
+  AppServerSectionRoute: typeof AppServerSectionRoute
+  AppServerIndexRoute: typeof AppServerIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppDocsRoute: AppDocsRouteWithChildren,
-  AppServerRoute: AppServerRouteWithChildren,
-  AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppProjectsProjectIdRoute: AppProjectsProjectIdRouteWithChildren,
+  AppServerSectionRoute: AppServerSectionRoute,
+  AppServerIndexRoute: AppServerIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -653,7 +499,6 @@ const rootRouteChildren: RootRouteChildren = {
   AuthorizeRoute: AuthorizeRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
-  ShowcaseRoute: ShowcaseRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

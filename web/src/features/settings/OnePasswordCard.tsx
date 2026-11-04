@@ -1,5 +1,6 @@
+import { Button, Input, Select } from "@cloudflare/kumo";
+import { ArrowRightIcon } from "@phosphor-icons/react";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import {
@@ -10,13 +11,14 @@ import {
   useOnePasswordVaults,
 } from "../../api/onepassword";
 import type { OnePassword, OnePasswordVault } from "../../api/types";
-import { Button } from "../../components/Button";
-import { Field, Input, Select } from "../../components/Form";
 import { useToast } from "../../components/Overlay";
+import { Rows, SettingRow } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { HelpTip } from "../docs/HelpTip";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { SettingsCard } from "./SectionForm";
-import styles from "./Settings.module.css";
+import styles from "./Form.module.css";
+import { Group } from "./Group";
+import { SettingsForm } from "./SectionForm";
 
 /** OnePasswordCard moves every service's variables into 1Password, or back. */
 export function OnePasswordCard({ status }: { status: OnePassword }) {
@@ -50,11 +52,13 @@ export function OnePasswordCard({ status }: { status: OnePassword }) {
       },
     );
 
+  const pending = list.isPending || connect.isPending;
   const form = {
     dirty: token.trim() !== "",
-    pending: list.isPending || connect.isPending,
+    pending,
     error: list.error ?? connect.error ?? (empty ? new Error(noVaultsMessage) : null),
     submitLabel: "Connect",
+    message: pending ? "Moving variables into 1Password…" : "Connect with this token.",
     reset: () => {
       setToken("");
       clear();
@@ -76,52 +80,48 @@ export function OnePasswordCard({ status }: { status: OnePassword }) {
   };
 
   return (
-    <SettingsCard
+    <Group
       title={
         <>
-          1Password <HelpTip topic="onePassword" />
+          <HelpTip topic="onePassword">1Password</HelpTip>
         </>
       }
-      meta="Store variables in 1Password."
-      form={status.connected ? undefined : form}
-      footerStart={
-        status.connected ? (
-          <Button size="sm" variant="danger" onClick={() => setDisconnecting(true)}>
-            Disconnect
-          </Button>
-        ) : (
-          (connect.isPending || list.isPending) && (
-            <span className={styles.muted}>Moving variables into 1Password…</span>
-          )
-        )
+      description={
+        <>
+          {status.connected
+            ? `Every service's variables are kept in ${status.vault ? `the ${status.vault} vault` : "a vault"} in your 1Password account. Edit them on a service's Variables tab or in the 1Password app; edits made in the app apply on the next deploy.`
+            : "Keep every service's variables in your 1Password account instead of on this server. Create a vault for shed, then on 1Password.com create a service account with read and write access to it and paste its token here. shed adds an item for each service and moves your variables into it."}{" "}
+          <Link to="/docs/$slug" params={{ slug: "onepassword" }} className={styles.link}>
+            Docs <ArrowRightIcon size={12} />
+          </Link>
+        </>
       }
     >
-      <p className={styles.intro}>
-        {status.connected
-          ? `Every service's variables are kept in ${status.vault ? `the ${status.vault} vault` : "a vault"} in your 1Password account. Edit them on a service's Variables tab or in the 1Password app; edits made in the app apply on the next deploy.`
-          : "Keep every service's variables in your 1Password account instead of on this server. In 1Password, create a vault for shed. Then on 1Password.com, create a service account with read and write access to that vault, and paste its token here. shed adds an item for each service to the vault and moves your variables into it."}{" "}
-        <Link to="/docs/$slug" params={{ slug: "onepassword" }} className={styles.docs}>
-          Docs <ArrowRight size={12} />
-        </Link>
-      </p>
       {status.connected ? (
-        <dl className={styles.facts}>
-          <div>
-            <dt>Vault</dt>
-            <dd>{status.vault}</dd>
-          </div>
-          <div>
-            <dt>Services</dt>
-            <dd>{status.items}</dd>
-          </div>
-        </dl>
+        <Rows>
+          <SettingRow
+            label="Vault"
+            description={`Holds the variables of ${status.items} ${status.items === 1 ? "service" : "services"}.`}
+            control={<span className={styles.value}>{status.vault}</span>}
+          />
+          <SettingRow
+            label="Disconnect"
+            description="Copy every service's variables back to this server and forget the token."
+            control={
+              <Button variant="secondary-destructive" onClick={() => setDisconnecting(true)}>
+                Disconnect
+              </Button>
+            }
+          />
+        </Rows>
       ) : (
-        <>
-          <Field label="Service account token">
-            {(id) => (
+        <SettingsForm form={form}>
+          <SettingRow
+            label="Service account token"
+            control={
               <Input
-                id={id}
-                mono
+                aria-label="Service account token"
+                className={cx(styles.wide, styles.mono)}
                 type="password"
                 value={token}
                 onChange={(e) => {
@@ -131,24 +131,27 @@ export function OnePasswordCard({ status }: { status: OnePassword }) {
                 placeholder="ops_…"
                 autoComplete="new-password"
                 spellCheck={false}
-                disabled={form.pending}
+                disabled={pending}
               />
-            )}
-          </Field>
+            }
+          />
           {vaults.length > 1 && (
-            <Field label="Vault">
-              {(id) => (
+            <SettingRow
+              label="Vault"
+              description="The token can reach more than one vault. Choose the one for shed."
+              control={
                 <Select
-                  id={id}
+                  aria-label="Vault"
+                  className={styles.wide}
                   value={vault}
-                  onChange={setVault}
-                  disabled={form.pending}
-                  options={vaults.map((v) => ({ value: v.id, label: v.name }))}
+                  onValueChange={(v) => v && setVault(v)}
+                  disabled={pending}
+                  items={vaults.map((v) => ({ value: v.id, label: v.name }))}
                 />
-              )}
-            </Field>
+              }
+            />
           )}
-        </>
+        </SettingsForm>
       )}
       <ConfirmDialog
         open={disconnecting}
@@ -172,6 +175,6 @@ export function OnePasswordCard({ status }: { status: OnePassword }) {
         shed copies every service's variables back to this server and forgets the token. The vault
         and its items stay in 1Password.
       </ConfirmDialog>
-    </SettingsCard>
+    </Group>
   );
 }

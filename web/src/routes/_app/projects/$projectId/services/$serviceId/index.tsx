@@ -1,16 +1,15 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { History } from "lucide-react";
-import { deploymentsQuery } from "../../../../../../api/deployments";
+import { deploymentPageQuery, deploymentsQuery } from "../../../../../../api/deployments";
 import { serviceQuery } from "../../../../../../api/services";
 import { isPending, type Service } from "../../../../../../api/types";
-import { Card } from "../../../../../../components/Card";
 import { Stack } from "../../../../../../components/Layout";
-import { EmptyState } from "../../../../../../components/Misc";
+import { Notice } from "../../../../../../components/Notice";
 import { useDeploymentActions } from "../../../../../../features/deployments/actions";
 import { DeploymentDetailDialog } from "../../../../../../features/deployments/DeploymentDetailDialog";
 import { DeploymentHistory } from "../../../../../../features/deployments/DeploymentHistory";
 import {
+  ActiveDeployment,
   InProgressCard,
   LatestProblem,
 } from "../../../../../../features/deployments/LatestDeployment";
@@ -23,7 +22,10 @@ export const Route = createFileRoute("/_app/projects/$projectId/services/$servic
       ? { deployment: search.deployment }
       : {},
   loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData(deploymentsQuery(params.serviceId)),
+    Promise.all([
+      context.queryClient.ensureQueryData(deploymentsQuery(params.serviceId)),
+      context.queryClient.ensureQueryData(deploymentPageQuery(params.serviceId, null)),
+    ]),
   component: DeploymentsPage,
 });
 
@@ -58,12 +60,8 @@ function DeploymentsPage() {
               onViewLogs={() => open(latest.id)}
             />
           )}
-          <DeploymentHistory
-            service={service}
-            deployments={deployments}
-            actions={actions}
-            onOpen={open}
-          />
+          <ActiveDeployment service={service} deployment={serving} onViewLogs={open} />
+          <DeploymentHistory key={service.id} service={service} actions={actions} onOpen={open} />
         </Stack>
       ) : (
         <NoDeployments service={service} />
@@ -87,9 +85,5 @@ function NoDeployments({ service }: { service: Service }) {
       ? `Deploy to pull ${service.image} and start it.`
       : "Deploy to start this service.";
 
-  return (
-    <Card>
-      <EmptyState icon={<History />} title="No deployments yet" description={description} />
-    </Card>
-  );
+  return <Notice title="No deployments yet">{description}</Notice>;
 }

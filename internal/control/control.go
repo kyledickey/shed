@@ -61,7 +61,7 @@ type Store interface {
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
 
 	Deployment(ctx context.Context, id string) (store.Deployment, error)
-	Deployments(ctx context.Context, serviceID string, limit int) ([]store.Deployment, error)
+	DeploymentsBefore(ctx context.Context, serviceID, before string, limit int) ([]store.Deployment, error)
 	LatestDeployment(ctx context.Context, serviceID string) (store.Deployment, error)
 
 	RestoreFence(ctx context.Context, serviceID string) (store.RestoreFence, error)
@@ -118,7 +118,7 @@ var _ Deployer = (*deploy.Deployer)(nil)
 // *backup.Manager implements it.
 type Backups interface {
 	BackUp(ctx context.Context, serviceID string) (store.Backup, error)
-	Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error)
+	Backups(ctx context.Context, serviceID, before string, limit int) ([]store.Backup, error)
 	Restore(ctx context.Context, backupID string) (store.Restore, error)
 	Delete(ctx context.Context, backupID string) error
 	Open(ctx context.Context, backupID string) (io.ReadCloser, error)

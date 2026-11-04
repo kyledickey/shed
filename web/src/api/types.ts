@@ -123,6 +123,9 @@ export type Deployment = {
   finishedAt: string | null;
 };
 
+/** A page of deployments, newest first. Pass next as before for the next page; null at the end. */
+export type DeploymentPage = { deployments: Deployment[]; next: string | null };
+
 export type Domain = { id: string; host: string; generated: boolean; url: string };
 export type Volume = { id: string; mountPath: string; createdAt: string };
 export type Repo = { fullName: string; defaultBranch: string; private: boolean };
@@ -237,8 +240,15 @@ export type Restore = {
 };
 
 /** The latest restore is null when the service never had one. */
-export type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; restore: Restore | null };
-export type SystemBackups = { policy: BackupPolicy; backups: Backup[] };
+/** A page of a service's backups, newest first, with its policy and latest restore. next is the before of the next page; null at the end. */
+export type ServiceBackups = {
+  policy: BackupPolicy;
+  backups: Backup[];
+  next: string | null;
+  restore: Restore | null;
+};
+/** A page of shed.db's backups, newest first, with its policy. next is the before of the next page; null at the end. */
+export type SystemBackups = { policy: BackupPolicy; backups: Backup[]; next: string | null };
 
 export type S3Settings = {
   /** URL, e.g. "https://s3.us-east-1.amazonaws.com". */

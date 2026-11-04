@@ -1,9 +1,6 @@
-import { Dialog } from "@base-ui/react/dialog";
-import { TriangleAlert } from "lucide-react";
+import { Button, ClipboardText, Loader } from "@cloudflare/kumo";
+import { Dialog } from "@cloudflare/kumo/primitives/dialog";
 import { useEffect, useState } from "react";
-import { Spinner } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { Callout, CopyButton } from "../../components/Misc";
 import { hasRestarted, restartAgain, timeoutMs, useRestart } from "./restart";
 import styles from "./RestartScreen.module.css";
 
@@ -100,27 +97,26 @@ export function RestartOverlay({
         <Dialog.Backdrop className={styles.backdrop} />
         <Dialog.Popup className={styles.popup}>
           <div className={styles.card}>
-            {stalled ? (
-              <Callout
-                tone="tomato"
-                icon={<TriangleAlert size={16} />}
-                title={<Dialog.Title render={<span />}>shed hasn't come back</Dialog.Title>}
-              >
-                <Dialog.Description render={<span />}>
-                  Installing {version} is taking longer than expected. Apps keep running.
+            <div className={styles.head}>
+              {!stalled && <Loader size="sm" />}
+              <div className={styles.heading}>
+                <Dialog.Title className={styles.title}>
+                  {stalled ? "shed hasn't come back" : "Restarting shed"}
+                </Dialog.Title>
+                <Dialog.Description className={styles.description}>
+                  {stalled ? (
+                    <span className={styles.danger}>
+                      Installing {version} is taking longer than expected. Apps keep running.
+                    </span>
+                  ) : (
+                    <>
+                      Installing <span className={styles.mono}>{version}</span>
+                    </>
+                  )}
                 </Dialog.Description>
-              </Callout>
-            ) : (
-              <div className={styles.head}>
-                <Spinner tone="accent" size={22} />
-                <div>
-                  <Dialog.Title className={styles.title}>Restarting shed</Dialog.Title>
-                  <Dialog.Description className={styles.description}>
-                    Installing <span className={styles.mono}>{version}</span>
-                  </Dialog.Description>
-                </div>
               </div>
-            )}
+              <span className={styles.elapsed}>{formatElapsed(elapsed)}</span>
+            </div>
 
             {stalled ? (
               <div className={styles.hints}>
@@ -134,17 +130,14 @@ export function RestartOverlay({
               </p>
             )}
 
-            <div className={styles.foot}>
-              <span className={styles.elapsed}>{formatElapsed(elapsed)}</span>
-              {stalled && (
-                <div className={styles.actions}>
-                  <Button onClick={onKeepWaiting}>Keep waiting</Button>
-                  <Button variant="primary" onClick={onReload}>
-                    Reload
-                  </Button>
-                </div>
-              )}
-            </div>
+            {stalled && (
+              <div className={styles.actions}>
+                <Button onClick={onKeepWaiting}>Keep waiting</Button>
+                <Button variant="primary" onClick={onReload}>
+                  Reload
+                </Button>
+              </div>
+            )}
           </div>
         </Dialog.Popup>
       </Dialog.Portal>
@@ -154,12 +147,9 @@ export function RestartOverlay({
 
 function Hint({ label, command }: { label: string; command: string }) {
   return (
-    <div>
+    <div className={styles.hint}>
       <p className={styles.hintLabel}>{label}</p>
-      <div className={styles.command}>
-        <code>{command}</code>
-        <CopyButton value={command} label={`Copy: ${label}`} />
-      </div>
+      <ClipboardText size="sm" text={command} className={styles.command} />
     </div>
   );
 }

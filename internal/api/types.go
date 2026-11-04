@@ -91,6 +91,11 @@ type restoreFenceJSON struct {
 	CreatedAt time.Time          `json:"createdAt"`
 }
 
+type deploymentPageJSON struct {
+	Deployments []deploymentJSON `json:"deployments"`
+	Next        *string          `json:"next"`
+}
+
 type deploymentJSON struct {
 	// ImageAvailable is set only in deployment lists.
 	ImageAvailable *bool                  `json:"imageAvailable,omitempty"`
@@ -254,12 +259,14 @@ type restoreJSON struct {
 type serviceBackupsJSON struct {
 	Policy  backupPolicyJSON `json:"policy"`
 	Backups []backupJSON     `json:"backups"`
+	Next    *string          `json:"next"`
 	Restore *restoreJSON     `json:"restore"`
 }
 
 type systemBackupsJSON struct {
 	Policy  backupPolicyJSON `json:"policy"`
 	Backups []backupJSON     `json:"backups"`
+	Next    *string          `json:"next"`
 }
 
 type s3SettingsJSON struct {

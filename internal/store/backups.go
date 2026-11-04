@@ -112,12 +112,18 @@ func (s *Store) Backup(ctx context.Context, id string) (Backup, error) {
 // Backups returns a service's backups, newest first. An empty serviceID
 // selects the backups of shed.db. A limit of zero or less returns all of them.
 func (s *Store) Backups(ctx context.Context, serviceID string, limit int) ([]Backup, error) {
-	if limit <= 0 {
-		limit = -1 // SQLite: no limit.
-	}
-	bs, err := queryAll(ctx, s, scanBackup, `SELECT `+backupCols+`
-		FROM backups WHERE service_id IS ?
-		ORDER BY created_at DESC, rowid DESC LIMIT ?`, optionalString(serviceID), limit)
+	return s.BackupsBefore(ctx, serviceID, "", limit)
+}
+
+// BackupsBefore returns a service's backups older than the backup before,
+// newest first; an empty before starts at the newest. An empty serviceID
+// selects the backups of shed.db. Backups created at the same time are
+// ordered by insertion. A before that is not one of the service's backups
+// selects none. A limit of zero or less returns all of them.
+func (s *Store) BackupsBefore(ctx context.Context, serviceID, before string, limit int) ([]Backup, error) {
+	q, args := pageQuery(`SELECT `+backupCols+` FROM backups`, "backups",
+		"service_id IS ?", []any{optionalString(serviceID)}, before, limit)
+	bs, err := queryAll(ctx, s, scanBackup, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: backups of service %q: %w", serviceID, err)
 	}

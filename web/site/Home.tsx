@@ -5,47 +5,69 @@ import {
   Braces,
   Database,
   GitBranch,
-  LayoutGrid,
   LockKeyhole,
   ScrollText,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { buttonClass } from "../src/components/Button";
-import { LayerCard } from "../src/components/Card";
 import { CopyButton, GitHubIcon } from "../src/components/Misc";
-import { ServiceMap, type MapEdge, type MapNode } from "../src/components/ServiceMap";
+import type { Edge } from "../src/features/projects/graph";
+import { ProjectDiagram, type DiagramService } from "../src/features/projects/ProjectDiagram";
 import { docGroups } from "../src/features/docs/registry";
 import styles from "./Home.module.css";
 import { installCommand, repoUrl } from "./links";
 
 /** Sample project for the hero; never live data. */
-const nodes: MapNode[] = [
-  {
-    id: "web",
-    name: "web",
-    kind: "app",
-    status: "active",
-    domains: ["acme.dev"],
-    detail: "acme/web",
-  },
-  {
-    id: "api",
-    name: "api",
-    kind: "app",
-    status: "active",
-    domains: ["api.acme.dev"],
-    detail: "acme/api",
-  },
-  { id: "worker", name: "worker", kind: "app", status: "deploying", detail: "acme/api" },
-  { id: "postgres", name: "postgres", kind: "postgres", status: "active", detail: "postgres:17" },
-  { id: "redis", name: "redis", kind: "redis", status: "active", detail: "redis:8" },
+const sample = (
+  name: string,
+  kind: DiagramService["kind"],
+  extra: Partial<DiagramService> = {},
+): DiagramService => ({
+  id: name,
+  projectId: "acme",
+  name,
+  kind,
+  status: "active",
+  repo: "",
+  branch: "main",
+  image: "",
+  privateHost: name,
+  port: 0,
+  domains: [],
+  volumes: kind === "app" ? [] : [{}],
+  latestDeployment: null,
+  ...extra,
+});
+
+const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+
+const services: DiagramService[] = [
+  sample("web", "app", {
+    repo: "acme/web",
+    port: 3000,
+    domains: [{ id: "d1", host: "acme.dev" }],
+    latestDeployment: { status: "active", createdAt: hourAgo },
+  }),
+  sample("api", "app", {
+    repo: "acme/api",
+    port: 8080,
+    domains: [{ id: "d2", host: "api.acme.dev" }],
+    latestDeployment: { status: "active", createdAt: hourAgo },
+  }),
+  sample("worker", "app", {
+    repo: "acme/api",
+    status: "deploying",
+    latestDeployment: { status: "building", createdAt: new Date().toISOString() },
+  }),
+  sample("postgres", "postgres", { port: 5432 }),
+  sample("redis", "redis", { port: 6379 }),
 ];
 
-const edges: MapEdge[] = [
-  { from: "api", to: "postgres", label: "DATABASE_URL" },
-  { from: "api", to: "redis", label: "REDIS_URL" },
-  { from: "worker", to: "postgres", label: "DATABASE_URL" },
-  { from: "worker", to: "redis", label: "REDIS_URL" },
+const edges: Edge[] = [
+  { from: "api", to: "postgres" },
+  { from: "api", to: "redis" },
+  { from: "worker", to: "postgres" },
+  { from: "worker", to: "redis" },
 ];
 
 type Feature = { icon: ReactNode; title: string; body: ReactNode; slug: string };
@@ -152,14 +174,7 @@ export function Home() {
       </section>
 
       <section className={styles.preview} aria-label="A project in the shed dashboard">
-        <LayerCard
-          icon={<LayoutGrid size={15} />}
-          title="acme"
-          meta="5 services"
-          sheetClassName={styles.previewSheet}
-        >
-          <ServiceMap nodes={nodes} edges={edges} />
-        </LayerCard>
+        <ProjectDiagram services={services} edges={edges} />
       </section>
 
       <section className={styles.section}>

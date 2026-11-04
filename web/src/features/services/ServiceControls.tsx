@@ -1,10 +1,9 @@
-import { Play, Rocket, RotateCcw, RotateCw, Square, X } from "lucide-react";
+import { Button } from "@cloudflare/kumo";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useCancelDeployment, useDeploy, useRedeploy } from "../../api/deployments";
 import { useRestartService, useStartService, useStopService } from "../../api/services";
 import { isPending, type Service } from "../../api/types";
-import { Button } from "../../components/Button";
 import { useToast } from "../../components/Overlay";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
 import { useRedeployHint } from "./redeploy";
@@ -53,7 +52,6 @@ export function ServiceControls({ service }: { service: Service }) {
           run((o) => cancel.mutate(latest.id, o), "Deployment canceled", "Couldn't cancel")
         }
       >
-        {!cancel.isPending && <X size={14} />}
         Cancel
       </Button>
     );
@@ -79,7 +77,6 @@ export function ServiceControls({ service }: { service: Service }) {
     return (
       <>
         <Button loading={redeploy.isPending || deploy.isPending} onClick={onRedeploy}>
-          {!(redeploy.isPending || deploy.isPending) && <RotateCcw size={14} />}
           Redeploy
         </Button>
         <Button
@@ -89,7 +86,6 @@ export function ServiceControls({ service }: { service: Service }) {
             run((o) => start.mutate(undefined, o), "Service started", "Couldn't start")
           }
         >
-          {!start.isPending && <Play size={14} />}
           Start
         </Button>
       </>
@@ -105,11 +101,9 @@ export function ServiceControls({ service }: { service: Service }) {
             run((o) => restart.mutate(undefined, o), "Service restarted", "Couldn't restart")
           }
         >
-          {!restart.isPending && <RotateCw size={14} />}
           Restart
         </Button>
-        <Button onClick={() => setConfirmStop(true)}>
-          <Square size={13} />
+        <Button variant="destructive" onClick={() => setConfirmStop(true)}>
           Stop
         </Button>
         <ConfirmDialog
@@ -143,7 +137,6 @@ export function ServiceControls({ service }: { service: Service }) {
         run((o) => deploy.mutate(undefined, o), "Deployment queued", "Couldn't deploy", hint.clear)
       }
     >
-      {!deploy.isPending && <Rocket size={14} />}
       Deploy
     </Button>
   );

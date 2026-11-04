@@ -127,15 +127,6 @@
   font-size: var(--text-xs);
 }
 
-.steps {
-  margin: var(--space-2) 0 0;
-  padding-left: 1.2em;
-
-  & li + li {
-    margin-top: 2px;
-  }
-}
-
 .bullets {
   margin: var(--space-2) 0 0;
   padding-left: 1.2em;
@@ -143,42 +134,4 @@
   & li + li {
     margin-top: 4px;
   }
-}
-
-.keyBlock {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--r-sm);
-  background: var(--sunken);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-}
-
-.key {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 4px 0;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: all;
-}
-
-.recipient {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.recipientValue {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

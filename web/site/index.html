@@ -8,6 +8,12 @@
     <title>shed</title>
     <meta name="description" content="" />
     <!--head-->
+    <script>
+      const media = matchMedia("(prefers-color-scheme: dark)");
+      const mode = () => (document.documentElement.dataset.mode = media.matches ? "dark" : "light");
+      mode();
+      media.addEventListener("change", mode);
+    </script>
   </head>
   <body>
     <div id="root"><!--app--></div>

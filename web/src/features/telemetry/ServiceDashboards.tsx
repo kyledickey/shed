@@ -27,7 +27,7 @@ export function ServiceDashboards({ serviceId }: { serviceId: string }) {
       <LayerCard
         title={
           <>
-            Grafana dashboards <HelpTip topic="dashboards" />
+            <HelpTip topic="dashboards">Grafana dashboards</HelpTip>
           </>
         }
         actions={
