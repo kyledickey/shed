@@ -15,7 +15,7 @@ const app = (
 // Prerendered pages hydrate once their route code and doc have loaded.
 // Marking the router as server-rendered makes it render the same tree as
 // the prerenderer, without the Suspense boundary of a client-only app.
-if (root.hasChildNodes()) {
+if (root.firstElementChild) {
   router.ssr = { manifest: undefined };
   void router.load().then(() => hydrateRoot(root, app));
 } else {

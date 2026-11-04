@@ -125,16 +125,17 @@ Write in the second person, keep paragraphs short, and verify every claim agains
 
 These are available in every page without an import:
 
-| Component   | Use                                                                       |
-| ----------- | ------------------------------------------------------------------------- |
-| `Callout`   | A highlighted note.                                                       |
-| `CodeBlock` | Code with a copy button. Fenced code blocks already render through it.    |
-| `Demo`      | Frames an interactive explainer that runs on sample data or reader input. |
-| `Figure`    | Frames a diagram or demo with a caption.                                  |
-| `HelpTip`   | Underlines a label and explains it on hover, from a topic in `topics.ts`. |
-| `Term`      | An inline identifier. In Markdown, backticks do the same.                 |
+| Component     | Use                                                                        |
+| ------------- | -------------------------------------------------------------------------- |
+| `AgentPrompt` | A button that copies a prompt for a coding agent to install shed over SSH. |
+| `Callout`     | A note set apart by a thin bar. `tone` is note, tip, warning, or danger.   |
+| `CodeBlock`   | Code with a copy button. Fenced code blocks already render through it.     |
+| `Demo`        | Frames an interactive explainer that runs on sample data or reader input.  |
+| `Figure`      | Frames a diagram or demo with a caption.                                   |
+| `HelpTip`     | Underlines a label and explains it on hover, from a topic in `topics.ts`.  |
+| `Term`        | An inline identifier. In Markdown, backticks do the same.                  |
 
-Markdown maps onto the docs styles too: `##` is an anchored heading, a link to `/docs/...` is a client-side router link, any other link opens in a new tab, and a GFM table becomes a docs table. Give a fenced block a title with `title="..."` after the language, as in the example above.
+Markdown maps onto the docs styles too: `##` and `###` are anchored headings, a link to `/docs/...` is a client-side router link, any other link opens in a new tab, and a GFM table becomes a docs table. Give a fenced block a title with `title="..."` after the language, as in the example above.
 
 A component that belongs to one page lives in `components/<slug>/`, with its CSS module next to it, and the `.mdx` imports it at the top, as the example does. Pure logic goes in `features/docs/lib/` with a test beside it, and the component stays thin.
 

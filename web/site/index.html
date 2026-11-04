@@ -9,8 +9,16 @@
     <meta name="description" content="" />
     <!--head-->
     <script>
+      // Same key as the dashboard: a chosen theme wins, else the OS decides.
       const media = matchMedia("(prefers-color-scheme: dark)");
-      const mode = () => (document.documentElement.dataset.mode = media.matches ? "dark" : "light");
+      const mode = () => {
+        let theme = null;
+        try {
+          theme = localStorage.getItem("shed.theme");
+        } catch {}
+        const dark = theme === "dark" || (theme !== "light" && media.matches);
+        document.documentElement.dataset.mode = dark ? "dark" : "light";
+      };
       mode();
       media.addEventListener("change", mode);
     </script>

@@ -1,13 +1,15 @@
 /// <reference types="node" />
 /**
  * prerender writes every page of the site to static HTML so crawlers see the
- * content without running JavaScript, along with sitemap.xml and robots.txt.
+ * content without running JavaScript, along with each page's link preview
+ * image (site/og/card.tsx), sitemap.xml and robots.txt.
  * It runs after both Vite builds (see the site:build script).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { siteUrl } from "./links";
+import { render as renderCard } from "./og/card";
 
 type Server = typeof import("./server");
 
@@ -22,11 +24,20 @@ const template = readFileSync(join(outDir, "index.html"), "utf8");
 
 for (const path of paths) {
   const { html, head } = await render(path);
+  // /docs/x's preview is /og/docs/x.png; /'s is /og/home.png.
+  const image = `/og${path === "/" ? "/home" : path}.png`;
+  const imageFile = join(outDir, image);
+  mkdirSync(dirname(imageFile), { recursive: true });
+  writeFileSync(imageFile, await renderCard(head.card));
   const tags = [
     `<meta property="og:title" content="${escape(head.title)}" />`,
     `<meta property="og:description" content="${escape(head.description)}" />`,
     `<meta property="og:type" content="website" />`,
     `<meta property="og:url" content="${siteUrl}${path}" />`,
+    `<meta property="og:image" content="${siteUrl}${image}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
     `<link rel="canonical" href="${siteUrl}${path}" />`,
   ];
   const page = template

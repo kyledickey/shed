@@ -13,6 +13,10 @@ On a fresh Linux server (amd64 or arm64) with systemd, run:
 curl -fsSL https://shed.land/install.sh | sudo bash
 ```
 
+Or have a coding agent with SSH access to the server do it. This copies a prompt that asks for your domains and GitHub logins, checks DNS, and runs the [unattended install](#unattended-installs):
+
+<AgentPrompt />
+
 The installer:
 
 1. Installs what's missing: Docker (through [get.docker.com](https://get.docker.com)) with the buildx plugin, `git`, and `railpack`.

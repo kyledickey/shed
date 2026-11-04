@@ -148,7 +148,10 @@ const projectSeeds: ProjectSeed[] = [
         memoryLimit: 512 * MiB,
         autoDeploy: true,
         waitForCi: true,
-        domains: [{ host: "kyle.so" }, { host: "web-production-4f2a.apps.kyle.so", generated: true }],
+        domains: [
+          { host: "kyle.so" },
+          { host: "web-production-4f2a.apps.kyle.so", generated: true },
+        ],
         variables: {
           NODE_ENV: "production",
           DATABASE_URL: "${{ postgres.DATABASE_URL }}",
@@ -297,7 +300,8 @@ const projectSeeds: ProjectSeed[] = [
           { host: "alias-production-91c3.apps.kyle.so", generated: true },
         ],
         variables: {
-          DATABASE_URL: "mysql://${{ mysql.MYSQL_USER }}:${{ mysql.MYSQL_PASSWORD }}@${{ mysql.SHED_PRIVATE_DOMAIN }}:3306/${{ mysql.MYSQL_DATABASE }}",
+          DATABASE_URL:
+            "mysql://${{ mysql.MYSQL_USER }}:${{ mysql.MYSQL_PASSWORD }}@${{ mysql.SHED_PRIVATE_DOMAIN }}:3306/${{ mysql.MYSQL_DATABASE }}",
           MAILGUN_DOMAIN: "mg.alias.party",
           MAILGUN_API_KEY: "key-" + hex("mailgun", 32),
           RAILS_ENV: "production",
@@ -344,7 +348,10 @@ const projectSeeds: ProjectSeed[] = [
         memoryLimit: 640 * MiB,
         autoDeploy: true,
         waitForCi: true,
-        domains: [{ host: "dismegle.com" }, { host: "dismegle-production-27d1.apps.kyle.so", generated: true }],
+        domains: [
+          { host: "dismegle.com" },
+          { host: "dismegle-production-27d1.apps.kyle.so", generated: true },
+        ],
         volumes: ["/app/uploads"],
         variables: {
           MONGODB_URL: "${{ mongo.MONGODB_URL }}",
@@ -456,7 +463,7 @@ const failures = [
   "deploy: health check GET /healthz did not return 2xx within 60s",
   "build: railpack: no start command could be found",
   "deploy: container exited with code 1 during startup",
-  "waiting for CI: check run \"test\" failed",
+  'waiting for CI: check run "test" failed',
 ];
 
 /** LONG_HISTORY are the services with enough deployments or backups to page through. */
@@ -466,10 +473,14 @@ function genDeployments(svc: ServiceSeed, head: DeploymentStatus[], count: numbe
   const isImage = !svc.repo;
   const pool = commitMessages[svc.name] ?? commitMessages["web"] ?? [];
   const out: Deployment[] = [];
-  const firstAge = head[0] === "building" ? 4 * MIN : 3 * HOUR + Math.floor(rand(svc.id, "first") * 5 * HOUR);
+  const firstAge =
+    head[0] === "building" ? 4 * MIN : 3 * HOUR + Math.floor(rand(svc.id, "first") * 5 * HOUR);
   const span = 13.4 * DAY - firstAge;
   for (let i = 0; i < count; i++) {
-    const age = firstAge + span * Math.pow(i / Math.max(count - 1, 1), 1.35) + (i === 0 || i === count - 1 ? 0 : (rand(svc.id, i, "jit") - 0.5) * 5 * HOUR);
+    const age =
+      firstAge +
+      span * Math.pow(i / Math.max(count - 1, 1), 1.35) +
+      (i === 0 || i === count - 1 ? 0 : (rand(svc.id, i, "jit") - 0.5) * 5 * HOUR);
     const seed = `${svc.id}:${i}`;
     const created = BOOT - age;
     let status: DeploymentStatus;
@@ -673,7 +684,10 @@ export function seed(): State {
       services.set(s.id, toService(p, s, deps));
       variables.set(s.id, { ...s.variables });
       if ((s.volumes ?? []).length > 0) {
-        servicePolicies.set(s.id, defaultPolicy(true, s.kind === "app" ? "30 4 * * *" : "0 3 * * *"));
+        servicePolicies.set(
+          s.id,
+          defaultPolicy(true, s.kind === "app" ? "30 4 * * *" : "0 3 * * *"),
+        );
         backups.push(...genBackups(s));
       }
     }
@@ -715,7 +729,9 @@ export function seed(): State {
     deployments,
     variables,
     stuck,
-    backups: [...backups, ...genSystemBackups()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    backups: [...backups, ...genSystemBackups()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    ),
     servicePolicies,
     systemPolicy: defaultPolicy(true, "15 3 * * *"),
     backupSettings: {
@@ -808,10 +824,25 @@ function genBackups(s: ServiceSeed): Backup[] {
   const out: Backup[] = [];
   const isDb = s.kind !== "app";
   const method = isDb ? "dump" : "volume";
-  const ext = s.kind === "postgres" || s.kind === "mysql" ? "sql.zst" : s.kind === "redis" ? "rdb.zst" : s.kind === "mongo" ? "archive.zst" : "tar.zst";
+  const ext =
+    s.kind === "postgres" || s.kind === "mysql"
+      ? "sql.zst"
+      : s.kind === "redis"
+        ? "rdb.zst"
+        : s.kind === "mongo"
+          ? "archive.zst"
+          : "tar.zst";
   const hour = s.kind === "app" ? 4 : 3;
   const baseSize =
-    s.kind === "postgres" ? 18 * MiB : s.kind === "mysql" ? 9 * MiB : s.kind === "mongo" ? 64 * MiB : s.kind === "redis" ? 2 * MiB : 140 * MiB;
+    s.kind === "postgres"
+      ? 18 * MiB
+      : s.kind === "mysql"
+        ? 9 * MiB
+        : s.kind === "mongo"
+          ? 64 * MiB
+          : s.kind === "redis"
+            ? 2 * MiB
+            : 140 * MiB;
   const count = LONG_HISTORY.has(s.id) ? 25 : 8;
   for (let i = 0; i < count; i++) {
     const d = new Date(BOOT);
@@ -834,7 +865,9 @@ function genBackups(s: ServiceSeed): Backup[] {
       encrypted: true,
       local: i < 5 && !failed,
       remote: !failed && !remoteFailed,
-      remoteError: remoteFailed ? "s3: PutObject: RequestTimeTooSkewed: request time too skewed" : "",
+      remoteError: remoteFailed
+        ? "s3: PutObject: RequestTimeTooSkewed: request time too skewed"
+        : "",
       error: failed ? "pg_dump: error: connection to server failed: Connection refused" : "",
       createdAt: iso(created),
       finishedAt: iso(created + 20_000 + Math.floor(rand(seed, "fin") * 60_000)),
@@ -884,37 +917,144 @@ type AuditTemplate = {
 };
 
 const auditTemplates: AuditTemplate[] = [
-  { actorKind: "github", actor: "", action: "webhook.push", w: 14, scoped: true, detail: () => ({ ref: "refs/heads/main", commits: 1 }) },
+  {
+    actorKind: "github",
+    actor: "",
+    action: "webhook.push",
+    w: 14,
+    scoped: true,
+    detail: () => ({ ref: "refs/heads/main", commits: 1 }),
+  },
   { actorKind: "system", actor: "", action: "deployment.succeeded", w: 12, scoped: true },
-  { actorKind: "system", actor: "", action: "deployment.failed", outcome: "failed", w: 3, scoped: true },
-  { actorKind: "user", actor: "kyledickey", action: "deployment.create", w: 6, scoped: true, detail: () => ({ trigger: "manual" }) },
+  {
+    actorKind: "system",
+    actor: "",
+    action: "deployment.failed",
+    outcome: "failed",
+    w: 3,
+    scoped: true,
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "deployment.create",
+    w: 6,
+    scoped: true,
+    detail: () => ({ trigger: "manual" }),
+  },
   { actorKind: "user", actor: "kyledickey", action: "deployment.redeploy", w: 2, scoped: true },
   { actorKind: "user", actor: "kyledickey", action: "deployment.cancel", w: 1, scoped: true },
-  { actorKind: "user", actor: "kyledickey", action: "service.variables.update", w: 6, scoped: true, detail: () => ({ keys: ["DATABASE_URL", "LOG_LEVEL"] }) },
-  { actorKind: "user", actor: "kyledickey", action: "service.update", w: 4, scoped: true, detail: () => ({ fields: ["memoryLimit", "healthcheckPath"] }) },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "service.variables.update",
+    w: 6,
+    scoped: true,
+    detail: () => ({ keys: ["DATABASE_URL", "LOG_LEVEL"] }),
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "service.update",
+    w: 4,
+    scoped: true,
+    detail: () => ({ fields: ["memoryLimit", "healthcheckPath"] }),
+  },
   { actorKind: "user", actor: "kyledickey", action: "service.restart", w: 3, scoped: true },
   { actorKind: "user", actor: "kyledickey", action: "service.stop", w: 1, scoped: true },
   { actorKind: "user", actor: "kyledickey", action: "service.start", w: 1, scoped: true },
-  { actorKind: "user", actor: "kyledickey", action: "service.domain.create", w: 1, scoped: true, detail: () => ({ host: "api.aretheyup.com" }) },
-  { actorKind: "user", actor: "kyledickey", action: "project.rename", w: 1, scoped: false, detail: () => ({ from: "aretheyup-dev", to: "aretheyup" }) },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "service.domain.create",
+    w: 1,
+    scoped: true,
+    detail: () => ({ host: "api.aretheyup.com" }),
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "project.rename",
+    w: 1,
+    scoped: false,
+    detail: () => ({ from: "aretheyup-dev", to: "aretheyup" }),
+  },
   { actorKind: "user", actor: "kyledickey", action: "backup.run", w: 3, scoped: true },
   { actorKind: "system", actor: "", action: "backup.succeeded", w: 10, scoped: true },
-  { actorKind: "system", actor: "", action: "backup.failed", outcome: "failed", w: 1, scoped: true },
+  {
+    actorKind: "system",
+    actor: "",
+    action: "backup.failed",
+    outcome: "failed",
+    w: 1,
+    scoped: true,
+  },
   { actorKind: "user", actor: "kyledickey", action: "backup.restore", w: 1, scoped: true },
-  { actorKind: "agent", actor: "kyledickey", action: "mcp.call", w: 9, scoped: true, detail: () => ({ tool: "service_logs", limit: 200 }) },
-  { actorKind: "agent", actor: "kyledickey", action: "mcp.call", w: 4, scoped: false, detail: () => ({ tool: "list_projects" }) },
-  { actorKind: "docker", actor: "", action: "container.crash", outcome: "failed", w: 3, scoped: true, detail: () => ({ exitCode: 137, oom: true }) },
+  {
+    actorKind: "agent",
+    actor: "kyledickey",
+    action: "mcp.call",
+    w: 9,
+    scoped: true,
+    detail: () => ({ tool: "service_logs", limit: 200 }),
+  },
+  {
+    actorKind: "agent",
+    actor: "kyledickey",
+    action: "mcp.call",
+    w: 4,
+    scoped: false,
+    detail: () => ({ tool: "list_projects" }),
+  },
+  {
+    actorKind: "docker",
+    actor: "",
+    action: "container.crash",
+    outcome: "failed",
+    w: 3,
+    scoped: true,
+    detail: () => ({ exitCode: 137, oom: true }),
+  },
   { actorKind: "user", actor: "kyledickey", action: "auth.login", w: 4, scoped: false },
-  { actorKind: "anonymous", actor: "", action: "auth.login", outcome: "denied", w: 1, scoped: false, detail: () => ({ reason: "not an allowed user" }) },
-  { actorKind: "user", actor: "kyledickey", action: "notification.rule.update", w: 1, scoped: false, detail: () => ({ rule: "shed-host-disk", fields: ["threshold"] }) },
-  { actorKind: "user", actor: "kyledickey", action: "telemetry.update", w: 1, scoped: false, detail: () => ({ fields: ["logsRetentionDays"] }) },
-  { actorKind: "user", actor: "kyledickey", action: "oauth.grant", w: 1, scoped: false, detail: () => ({ client: "Cursor" }) },
+  {
+    actorKind: "anonymous",
+    actor: "",
+    action: "auth.login",
+    outcome: "denied",
+    w: 1,
+    scoped: false,
+    detail: () => ({ reason: "not an allowed user" }),
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "notification.rule.update",
+    w: 1,
+    scoped: false,
+    detail: () => ({ rule: "shed-host-disk", fields: ["threshold"] }),
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "telemetry.update",
+    w: 1,
+    scoped: false,
+    detail: () => ({ fields: ["logsRetentionDays"] }),
+  },
+  {
+    actorKind: "user",
+    actor: "kyledickey",
+    action: "oauth.grant",
+    w: 1,
+    scoped: false,
+    detail: () => ({ client: "Cursor" }),
+  },
   { actorKind: "user", actor: "kyledickey", action: "update.check", w: 2, scoped: false },
 ];
 
 function genAudit(): AuditEvent[] {
   const total = auditTemplates.reduce((n, t) => n + t.w, 0);
-  const svcs = [...projectSeeds.flatMap((p) => p.services.map((s) => ({ s, p })))];
+  const svcs = projectSeeds.flatMap((p) => p.services.map((s) => ({ s, p })));
   const out: AuditEvent[] = [];
   const count = 130;
   for (let i = 0; i < count; i++) {
@@ -927,8 +1067,19 @@ function genAudit(): AuditEvent[] {
         break;
       }
     }
-    const target = pick(svcs.filter((x) => x.s.kind === "app" || t.action.startsWith("backup") || t.action.startsWith("mcp")), "audit", i, "svc");
-    const ts = BOOT - Math.pow(i / count, 1.6) * 14 * DAY - 3 * MIN - Math.floor(rand("audit", i, "jit") * 20 * MIN);
+    const target = pick(
+      svcs.filter(
+        (x) => x.s.kind === "app" || t.action.startsWith("backup") || t.action.startsWith("mcp"),
+      ),
+      "audit",
+      i,
+      "svc",
+    );
+    const ts =
+      BOOT -
+      Math.pow(i / count, 1.6) * 14 * DAY -
+      3 * MIN -
+      Math.floor(rand("audit", i, "jit") * 20 * MIN);
     out.push({
       id: 0,
       ts: iso(ts),
@@ -950,7 +1101,12 @@ function genAudit(): AuditEvent[] {
 // ------------------------------------------------------------ notifications
 
 function genRules(): NotificationRule[] {
-  const ev = (id: string, title: string, description: string, extra: Partial<NotificationRule> = {}): NotificationRule => ({
+  const ev = (
+    id: string,
+    title: string,
+    description: string,
+    extra: Partial<NotificationRule> = {},
+  ): NotificationRule => ({
     id,
     title,
     description,
@@ -962,40 +1118,196 @@ function genRules(): NotificationRule[] {
     available: true,
     ...extra,
   });
-  const metric = (id: string, title: string, description: string, threshold: number | null, unit: string, forSeconds: number | null, enabled = true): NotificationRule =>
+  const metric = (
+    id: string,
+    title: string,
+    description: string,
+    threshold: number | null,
+    unit: string,
+    forSeconds: number | null,
+    enabled = true,
+  ): NotificationRule =>
     ev(id, title, description, { enabled, threshold, unit, forSeconds, needsTelemetry: true });
   return [
     ev("deploy-failed", "Deployment failed", "A build or deploy failed."),
     ev("backup-failed", "Backup failed", "A scheduled or manual backup failed."),
     ev("restore-failed", "Restore failed", "A restore failed and left its service fenced."),
-    ev("service-oom", "Service out of memory", "A container was killed for exceeding its memory limit."),
-    ev("service-crash-loop", "Service crash loop", "A service crashed repeatedly within 10 minutes.", { threshold: 3, unit: "crashes" }),
-    metric("shed-host-disk", "Host disk almost full", "Host disk use is above the threshold.", 85, "%", null),
-    metric("shed-host-memory", "Host memory high", "Host memory use is above the threshold.", 90, "%", 600),
-    metric("shed-http-errors", "HTTP 5xx rate", "A service's 5xx ratio is above the threshold.", 5, "%", 300),
-    metric("shed-http-latency", "HTTP latency", "A service's p95 latency is above the threshold.", 2, "s", 600, false),
-    metric("shed-db-connections", "Database connections", "A database's connections are close to its maximum.", 80, "%", 300),
-    metric("shed-telemetry-drops", "Telemetry dropped", "shed is dropping a service's telemetry.", null, "", 300),
+    ev(
+      "service-oom",
+      "Service out of memory",
+      "A container was killed for exceeding its memory limit.",
+    ),
+    ev(
+      "service-crash-loop",
+      "Service crash loop",
+      "A service crashed repeatedly within 10 minutes.",
+      { threshold: 3, unit: "crashes" },
+    ),
+    metric(
+      "shed-host-disk",
+      "Host disk almost full",
+      "Host disk use is above the threshold.",
+      85,
+      "%",
+      null,
+    ),
+    metric(
+      "shed-host-memory",
+      "Host memory high",
+      "Host memory use is above the threshold.",
+      90,
+      "%",
+      600,
+    ),
+    metric(
+      "shed-http-errors",
+      "HTTP 5xx rate",
+      "A service's 5xx ratio is above the threshold.",
+      5,
+      "%",
+      300,
+    ),
+    metric(
+      "shed-http-latency",
+      "HTTP latency",
+      "A service's p95 latency is above the threshold.",
+      2,
+      "s",
+      600,
+      false,
+    ),
+    metric(
+      "shed-db-connections",
+      "Database connections",
+      "A database's connections are close to its maximum.",
+      80,
+      "%",
+      300,
+    ),
+    metric(
+      "shed-telemetry-drops",
+      "Telemetry dropped",
+      "shed is dropping a service's telemetry.",
+      null,
+      "",
+      300,
+    ),
   ];
 }
 
 function genDeliveries(): NotificationDelivery[] {
-  const items: { title: string; body: string; status: "sent" | "failed" | "pending"; ch: number; ago: number }[] = [
-    { title: "Deployment failed: aretheyup/api", body: "Deployment dep_3f9a1c2d7 of api failed: deploy: health check GET /healthz did not return 2xx within 60s", status: "sent", ch: 0, ago: 6 * HOUR },
-    { title: "Service crash loop: aretheyup/worker", body: "worker crashed 3 times in 10 minutes (last exit: 137, out of memory).", status: "sent", ch: 0, ago: 52 * MIN },
-    { title: "Service out of memory: aretheyup/worker", body: "worker was killed for exceeding its 384 MiB memory limit.", status: "sent", ch: 0, ago: 58 * MIN },
-    { title: "Backup failed: aretheyup/postgres", body: "Backup bak_a81c4e03f failed: pg_dump: connection to server failed: Connection refused", status: "failed", ch: 0, ago: 4 * DAY },
-    { title: "Host memory high", body: "Host memory use is 91% (7.3 GiB of 8 GiB) for 10 minutes.", status: "sent", ch: 0, ago: 3 * DAY + 2 * HOUR },
-    { title: "Deployment failed: dismegle/dismegle", body: "Deployment dep_72be90a31 of dismegle failed: build: process \"/bin/sh -c npm run build\" did not complete successfully: exit code: 1", status: "failed", ch: 0, ago: 5 * DAY },
-    { title: "Host disk almost full", body: "Host disk use is 86% (68.9 GB of 80 GB).", status: "sent", ch: 0, ago: 6 * DAY },
-    { title: "HTTP 5xx rate: kyle.so/web", body: "web returned 5xx for 7.2% of requests over the last 5 minutes.", status: "sent", ch: 0, ago: 7 * DAY },
-    { title: "Deployment failed: kyle.so/web", body: "Deployment dep_c0de5aa17 of web failed: waiting for CI: check run \"test\" failed", status: "sent", ch: 0, ago: 8 * DAY },
-    { title: "Service crash loop: dismegle/dismegle", body: "dismegle crashed 3 times in 10 minutes (last exit: 1).", status: "sent", ch: 0, ago: 9 * DAY },
-    { title: "Backup failed: kyle.so/postgres", body: "Backup bak_66d1e2b40 was written but its upload failed: s3: RequestTimeTooSkewed", status: "failed", ch: 0, ago: 10 * DAY },
-    { title: "Deployment failed: aretheyup/worker", body: "Deployment dep_91ab33c0e of worker failed: build: railpack: no start command could be found", status: "sent", ch: 0, ago: 11 * DAY },
-    { title: "Database connections: aretheyup/postgres", body: "postgres is using 86% of its connection limit.", status: "sent", ch: 0, ago: 12 * DAY },
-    { title: "Test notification", body: "This is a test message from shed.", status: "sent", ch: 1, ago: 12 * DAY },
-    { title: "Telemetry dropped: aretheyup/api", body: "shed dropped log records from api (rate cap of 500/s).", status: "pending", ch: 0, ago: 2 * MIN },
+  const items: {
+    title: string;
+    body: string;
+    status: "sent" | "failed" | "pending";
+    ch: number;
+    ago: number;
+  }[] = [
+    {
+      title: "Deployment failed: aretheyup/api",
+      body: "Deployment dep_3f9a1c2d7 of api failed: deploy: health check GET /healthz did not return 2xx within 60s",
+      status: "sent",
+      ch: 0,
+      ago: 6 * HOUR,
+    },
+    {
+      title: "Service crash loop: aretheyup/worker",
+      body: "worker crashed 3 times in 10 minutes (last exit: 137, out of memory).",
+      status: "sent",
+      ch: 0,
+      ago: 52 * MIN,
+    },
+    {
+      title: "Service out of memory: aretheyup/worker",
+      body: "worker was killed for exceeding its 384 MiB memory limit.",
+      status: "sent",
+      ch: 0,
+      ago: 58 * MIN,
+    },
+    {
+      title: "Backup failed: aretheyup/postgres",
+      body: "Backup bak_a81c4e03f failed: pg_dump: connection to server failed: Connection refused",
+      status: "failed",
+      ch: 0,
+      ago: 4 * DAY,
+    },
+    {
+      title: "Host memory high",
+      body: "Host memory use is 91% (7.3 GiB of 8 GiB) for 10 minutes.",
+      status: "sent",
+      ch: 0,
+      ago: 3 * DAY + 2 * HOUR,
+    },
+    {
+      title: "Deployment failed: dismegle/dismegle",
+      body: 'Deployment dep_72be90a31 of dismegle failed: build: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1',
+      status: "failed",
+      ch: 0,
+      ago: 5 * DAY,
+    },
+    {
+      title: "Host disk almost full",
+      body: "Host disk use is 86% (68.9 GB of 80 GB).",
+      status: "sent",
+      ch: 0,
+      ago: 6 * DAY,
+    },
+    {
+      title: "HTTP 5xx rate: kyle.so/web",
+      body: "web returned 5xx for 7.2% of requests over the last 5 minutes.",
+      status: "sent",
+      ch: 0,
+      ago: 7 * DAY,
+    },
+    {
+      title: "Deployment failed: kyle.so/web",
+      body: 'Deployment dep_c0de5aa17 of web failed: waiting for CI: check run "test" failed',
+      status: "sent",
+      ch: 0,
+      ago: 8 * DAY,
+    },
+    {
+      title: "Service crash loop: dismegle/dismegle",
+      body: "dismegle crashed 3 times in 10 minutes (last exit: 1).",
+      status: "sent",
+      ch: 0,
+      ago: 9 * DAY,
+    },
+    {
+      title: "Backup failed: kyle.so/postgres",
+      body: "Backup bak_66d1e2b40 was written but its upload failed: s3: RequestTimeTooSkewed",
+      status: "failed",
+      ch: 0,
+      ago: 10 * DAY,
+    },
+    {
+      title: "Deployment failed: aretheyup/worker",
+      body: "Deployment dep_91ab33c0e of worker failed: build: railpack: no start command could be found",
+      status: "sent",
+      ch: 0,
+      ago: 11 * DAY,
+    },
+    {
+      title: "Database connections: aretheyup/postgres",
+      body: "postgres is using 86% of its connection limit.",
+      status: "sent",
+      ch: 0,
+      ago: 12 * DAY,
+    },
+    {
+      title: "Test notification",
+      body: "This is a test message from shed.",
+      status: "sent",
+      ch: 1,
+      ago: 12 * DAY,
+    },
+    {
+      title: "Telemetry dropped: aretheyup/api",
+      body: "shed dropped log records from api (rate cap of 500/s).",
+      status: "pending",
+      ch: 0,
+      ago: 2 * MIN,
+    },
   ];
   const channelIds = ["chn_5a1f0c2", "chn_8e2b7d4"];
   const channelNames = ["Kyle's phone", "Weekend on-call"];
@@ -1060,7 +1372,9 @@ function genTelemetry(): Telemetry {
     ],
     ingest: { spans: 42.5, logs: 118.2, points: 860 },
     droppedLastHour: [{ reason: "rate_limit", signal: "logs", count: 1840 }],
-    firingAlerts: [{ name: "shed-telemetry-drops", serviceId: "svc_api7mz3", since: iso(BOOT - 14 * MIN) }],
+    firingAlerts: [
+      { name: "shed-telemetry-drops", serviceId: "svc_api7mz3", since: iso(BOOT - 14 * MIN) },
+    ],
     grafanaUrl: "http://localhost:5173/grafana/",
     otlpEndpoint: "http://localhost:4318",
   };
@@ -1116,7 +1430,11 @@ const histMessages = {
     "db query failed: deadlock detected",
     "failed to send webhook: 503 Service Unavailable",
   ],
-  debug: ["scheduler tick: 214 monitors due", "resolved example.com in 12ms", "tls handshake took 38ms"],
+  debug: [
+    "scheduler tick: 214 monitors due",
+    "resolved example.com in 12ms",
+    "tls handshake took 38ms",
+  ],
 };
 
 function genLogHistory(svc: Service, deps: Deployment[]): LogRecord[] {
@@ -1141,7 +1459,10 @@ function genLogHistory(svc: Service, deps: Deployment[]): LogRecord[] {
       deploymentId: dep?.id ?? "",
       traceId: traced ? hex(seed + "t", 32) : "",
       fields: otlp
-        ? { "http.route": pick(["/api/monitors", "/api/probes", "/healthz"], seed, "route"), service: svc.name }
+        ? {
+            "http.route": pick(["/api/monitors", "/api/probes", "/healthz"], seed, "route"),
+            service: svc.name,
+          }
         : {},
     });
   }

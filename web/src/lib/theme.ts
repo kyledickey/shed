@@ -7,7 +7,10 @@ const storageKey = "shed.theme";
 const darkQuery = "(prefers-color-scheme: dark)";
 
 function storedTheme(): Theme {
-  const value = localStorage.getItem(storageKey);
+  let value: string | null = null;
+  try {
+    value = localStorage.getItem(storageKey);
+  } catch {}
   return value === "light" || value === "dark" ? value : "system";
 }
 
@@ -19,7 +22,9 @@ function applyMode(theme: Theme) {
 
 /** Returns the user's theme preference and a setter that applies and persists it. */
 export function useTheme(): [Theme, (theme: Theme) => void] {
-  const [theme, setTheme] = useState(storedTheme);
+  // Prerendered pages start at "system"; the stored choice is read after hydration.
+  const [theme, setTheme] = useState<Theme>("system");
+  useEffect(() => setTheme(storedTheme()), []);
   useEffect(() => {
     if (theme !== "system") return;
     const media = matchMedia(darkQuery);
@@ -28,8 +33,10 @@ export function useTheme(): [Theme, (theme: Theme) => void] {
     return () => media.removeEventListener("change", onChange);
   }, [theme]);
   const apply = (next: Theme) => {
-    if (next === "system") localStorage.removeItem(storageKey);
-    else localStorage.setItem(storageKey, next);
+    try {
+      if (next === "system") localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, next);
+    } catch {}
     applyMode(next);
     setTheme(next);
   };
@@ -38,9 +45,12 @@ export function useTheme(): [Theme, (theme: Theme) => void] {
 
 /** useDarkMode reports whether the dashboard is currently drawn dark. */
 export function useDarkMode(): boolean {
-  const read = () => document.documentElement.dataset.mode === "dark";
+  // Prerendering has no document; the effect corrects it after hydration.
+  const read = () =>
+    typeof document !== "undefined" && document.documentElement.dataset.mode === "dark";
   const [dark, setDark] = useState(read);
   useEffect(() => {
+    setDark(read());
     const observer = new MutationObserver(() => setDark(read()));
     observer.observe(document.documentElement, { attributeFilter: ["data-mode"] });
     return () => observer.disconnect();

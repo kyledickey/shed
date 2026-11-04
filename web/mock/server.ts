@@ -45,16 +45,18 @@ import {
 } from "./fixtures";
 
 type BunServer = { port: number; hostname: string };
-const BunRuntime = (globalThis as unknown as {
-  Bun: {
-    serve(opts: {
-      port: number;
-      hostname: string;
-      idleTimeout: number;
-      fetch(req: Request): Response | Promise<Response>;
-    }): BunServer;
-  };
-}).Bun;
+const BunRuntime = (
+  globalThis as unknown as {
+    Bun: {
+      serve(opts: {
+        port: number;
+        hostname: string;
+        idleTimeout: number;
+        fetch(req: Request): Response | Promise<Response>;
+      }): BunServer;
+    };
+  }
+).Bun;
 
 const state = seed();
 
@@ -117,7 +119,12 @@ function findDeployment(id: string): Deployment | undefined {
 const pending = new Set<DeploymentStatus>(["queued", "waiting", "building", "deploying"]);
 const isPending = (s: DeploymentStatus) => pending.has(s);
 
-function audit(action: string, s?: Service, detail: Record<string, unknown> = {}, outcome: "ok" | "failed" = "ok") {
+function audit(
+  action: string,
+  s?: Service,
+  detail: Record<string, unknown> = {},
+  outcome: "ok" | "failed" = "ok",
+) {
   const id = (state.audit[0]?.id ?? 0) + 1;
   state.audit.unshift({
     id,
@@ -134,11 +141,7 @@ function audit(action: string, s?: Service, detail: Record<string, unknown> = {}
 }
 
 /** startDeploy queues a deployment that walks through building and deploying to active. */
-function startDeploy(
-  svc: Service,
-  trigger: Deployment["trigger"],
-  from?: Deployment,
-): Deployment {
+function startDeploy(svc: Service, trigger: Deployment["trigger"], from?: Deployment): Deployment {
   const list = state.deployments.get(svc.id) ?? [];
   const sha = from?.commitSha ?? (svc.repo ? hex(newId("sha"), 40) : "");
   const dep: Deployment = {
@@ -187,7 +190,11 @@ function startDeploy(
 GET("/me", () => me);
 GET("/setup", () => setup);
 POST("/auth/logout", () => noContent());
-GET("/auth/login", ({ url }) => new Response(null, { status: 302, headers: { Location: url.searchParams.get("next") || "/" } }));
+GET(
+  "/auth/login",
+  ({ url }) =>
+    new Response(null, { status: 302, headers: { Location: url.searchParams.get("next") || "/" } }),
+);
 GET("/auth/callback", () => new Response(null, { status: 302, headers: { Location: "/" } }));
 GET("/setup/github", () => new Response(null, { status: 302, headers: { Location: "/" } }));
 POST("/setup/github/import", () => setup);
@@ -208,7 +215,9 @@ GET("/projects/:id", ({ params }) => {
   if (!p) return fail(404, "project not found");
   const detail: ProjectDetail = {
     ...p,
-    services: [...state.services.values()].filter((s) => s.projectId === p.id).map((s) => service(s.id) as Service),
+    services: [...state.services.values()]
+      .filter((s) => s.projectId === p.id)
+      .map((s) => service(s.id) as Service),
   };
   return detail;
 });
@@ -277,7 +286,13 @@ POST("/projects/:id/services", ({ params, body }) => {
     privateHost: n.name,
     domains: [],
     volumes: isDb
-      ? [{ id: newId("vol"), mountPath: "/var/lib/data", createdAt: iso(Date.now()) } satisfies Volume]
+      ? [
+          {
+            id: newId("vol"),
+            mountPath: "/var/lib/data",
+            createdAt: iso(Date.now()),
+          } satisfies Volume,
+        ]
       : [],
     latestDeployment: null,
     restoreFence: null,
@@ -291,7 +306,10 @@ POST("/projects/:id/services", ({ params, body }) => {
   return json(service(s.id), 201);
 });
 
-GET("/services/:id", ({ params }) => service(params.id as string) ?? fail(404, "service not found"));
+GET(
+  "/services/:id",
+  ({ params }) => service(params.id as string) ?? fail(404, "service not found"),
+);
 
 PATCH("/services/:id", ({ params, body }) => {
   const s = service(params.id as string);
@@ -358,14 +376,16 @@ const INJECTED = (s: Service): Variables => {
 };
 
 function resolveVars(s: Service, depth = 0): Variables {
-  const own = { ...INJECTED(s), ...(state.variables.get(s.id) ?? {}) };
+  const own = { ...INJECTED(s), ...state.variables.get(s.id) };
   const out: Variables = {};
   const expand = (v: string): string =>
     v.replace(/\$\{\{\s*([\w.-]+?)\s*\}\}/g, (m, ref: string) => {
       if (depth > 4) return m;
       const dot = ref.indexOf(".");
       if (dot < 0) return own[ref] !== undefined ? expand(own[ref] as string) : m;
-      const other = [...state.services.values()].find((x) => x.projectId === s.projectId && x.name === ref.slice(0, dot));
+      const other = [...state.services.values()].find(
+        (x) => x.projectId === s.projectId && x.name === ref.slice(0, dot),
+      );
       const val = other ? resolveVars(other, depth + 1)[ref.slice(dot + 1)] : undefined;
       return val ?? m;
     });
@@ -402,7 +422,11 @@ POST("/onepassword/vaults", ({ body }) => {
 });
 PUT("/onepassword", ({ body }) => {
   if (state.onePassword.connected) return fail(409, "1Password is already connected");
-  state.onePassword = { connected: true, vault: body?.vault === "vlt_b9d3p1c8w" ? "Personal" : "shed", items: state.services.size };
+  state.onePassword = {
+    connected: true,
+    vault: body?.vault === "vlt_b9d3p1c8w" ? "Personal" : "shed",
+    items: state.services.size,
+  };
   return state.onePassword;
 });
 DELETE("/onepassword", () => {
@@ -436,7 +460,11 @@ DELETE("/domains/:id", ({ params }) => {
 POST("/services/:id/volumes", ({ params, body }) => {
   const s = service(params.id as string);
   if (!s) return fail(404, "service not found");
-  const v: Volume = { id: newId("vol"), mountPath: String(body?.mountPath ?? "/data"), createdAt: iso(Date.now()) };
+  const v: Volume = {
+    id: newId("vol"),
+    mountPath: String(body?.mountPath ?? "/data"),
+    createdAt: iso(Date.now()),
+  };
   s.volumes.push(v);
   audit("service.volume.create", s, { mountPath: v.mountPath });
   return json(v, 201);
@@ -460,7 +488,10 @@ DELETE("/volumes/:id", ({ params }) => {
  * limit (default 10, at most 100) records after the one whose id is before.
  * An unknown before is an empty page.
  */
-function page<T extends { id: string }>(list: T[], url: URL): { items: T[]; next: string | null } | Response {
+function page<T extends { id: string }>(
+  list: T[],
+  url: URL,
+): { items: T[]; next: string | null } | Response {
   const q = url.searchParams;
   const raw = q.get("limit");
   const n = raw === null || raw === "" ? 10 : Number(raw);
@@ -487,7 +518,10 @@ POST("/services/:id/deployments", ({ params }) => {
   audit("deployment.create", s, { trigger: "manual" });
   return json(startDeploy(s, "manual"), 201);
 });
-GET("/deployments/:id", ({ params }) => findDeployment(params.id as string) ?? fail(404, "deployment not found"));
+GET(
+  "/deployments/:id",
+  ({ params }) => findDeployment(params.id as string) ?? fail(404, "deployment not found"),
+);
 POST("/deployments/:id/redeploy", ({ params }) => {
   const d = findDeployment(params.id as string);
   const s = d && service(d.serviceId);
@@ -506,7 +540,9 @@ POST("/deployments/:id/cancel", ({ params }) => {
     state.stuck.delete(d.id);
     const s = state.services.get(d.serviceId);
     if (s && s.status === "deploying") {
-      s.status = state.deployments.get(s.id)?.some((x) => x.status === "active") ? "active" : "offline";
+      s.status = state.deployments.get(s.id)?.some((x) => x.status === "active")
+        ? "active"
+        : "offline";
     }
     audit("deployment.cancel", s, { deployment: d.id });
   }
@@ -517,7 +553,12 @@ POST("/deployments/:id/cancel", ({ params }) => {
 
 /** CRASH_MIN is how long before server start the crashed worker died. */
 const CRASH_MIN = 20;
-const RANGE_SECONDS: Record<MetricsRange, number> = { "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800 };
+const RANGE_SECONDS: Record<MetricsRange, number> = {
+  "1h": 3600,
+  "6h": 21600,
+  "24h": 86400,
+  "7d": 604800,
+};
 const BUCKETS = 180;
 
 function parseRange(url: URL): MetricsRange {
@@ -550,11 +591,46 @@ type Profile = {
 };
 
 const profiles: Record<string, Profile> = {
-  app: { cpu: [4, 60], mem: [190 * MiB, 90 * MiB], rx: [18_000, 380_000], tx: [46_000, 1_400_000], rd: [2_000, 80_000], wr: [8_000, 400_000] },
-  postgres: { cpu: [3, 38], mem: [310 * MiB, 220 * MiB], rx: [22_000, 300_000], tx: [60_000, 900_000], rd: [40_000, 6_000_000], wr: [90_000, 4_000_000] },
-  mysql: { cpu: [3, 30], mem: [380 * MiB, 160 * MiB], rx: [14_000, 200_000], tx: [40_000, 600_000], rd: [30_000, 3_000_000], wr: [70_000, 2_500_000] },
-  mongo: { cpu: [2, 26], mem: [420 * MiB, 200 * MiB], rx: [12_000, 180_000], tx: [36_000, 520_000], rd: [60_000, 4_000_000], wr: [80_000, 3_000_000] },
-  redis: { cpu: [1, 9], mem: [38 * MiB, 14 * MiB], rx: [10_000, 150_000], tx: [14_000, 220_000], rd: [0, 0], wr: [2_000, 120_000] },
+  app: {
+    cpu: [4, 60],
+    mem: [190 * MiB, 90 * MiB],
+    rx: [18_000, 380_000],
+    tx: [46_000, 1_400_000],
+    rd: [2_000, 80_000],
+    wr: [8_000, 400_000],
+  },
+  postgres: {
+    cpu: [3, 38],
+    mem: [310 * MiB, 220 * MiB],
+    rx: [22_000, 300_000],
+    tx: [60_000, 900_000],
+    rd: [40_000, 6_000_000],
+    wr: [90_000, 4_000_000],
+  },
+  mysql: {
+    cpu: [3, 30],
+    mem: [380 * MiB, 160 * MiB],
+    rx: [14_000, 200_000],
+    tx: [40_000, 600_000],
+    rd: [30_000, 3_000_000],
+    wr: [70_000, 2_500_000],
+  },
+  mongo: {
+    cpu: [2, 26],
+    mem: [420 * MiB, 200 * MiB],
+    rx: [12_000, 180_000],
+    tx: [36_000, 520_000],
+    rd: [60_000, 4_000_000],
+    wr: [80_000, 3_000_000],
+  },
+  redis: {
+    cpu: [1, 9],
+    mem: [38 * MiB, 14 * MiB],
+    rx: [10_000, 150_000],
+    tx: [14_000, 220_000],
+    rd: [0, 0],
+    wr: [2_000, 120_000],
+  },
 };
 
 function windowOf(range: MetricsRange) {
@@ -595,7 +671,12 @@ function serviceMetrics(s: Service, range: MetricsRange): Metrics {
   const mem = Array.from({ length: BUCKETS }, (_, i) => {
     const t = start + i * step + step / 2;
     const phase = ((t + rand(key, "phase") * 21 * 3600) % (21 * 3600)) / (21 * 3600);
-    return p.mem[0] + p.mem[1] * 0.5 * phase + p.mem[1] * 0.04 * (rand(key, "m", Math.floor(t / step)) - 0.5) * 2 + p.mem[1] * 0.3 * spike(key + "mem", t, step, 0.08);
+    return (
+      p.mem[0] +
+      p.mem[1] * 0.5 * phase +
+      p.mem[1] * 0.04 * (rand(key, "m", Math.floor(t / step)) - 0.5) * 2 +
+      p.mem[1] * 0.3 * spike(key + "mem", t, step, 0.08)
+    );
   });
 
   let up: boolean[] = Array(BUCKETS).fill(true);
@@ -634,7 +715,11 @@ function hostMetrics(range: MetricsRange): HostMetrics {
   const total = 8 * GiB;
   const diskTotal = 80 * 1e9;
   const cpu = series("host:cpu", start, step, 34, 190, { noise: 0.3, density: 0.12 });
-  const memory = series("host:mem", start, step, 3.3 * GiB, 0.9 * GiB, { noise: 0.03, density: 0.06, wave: 0.05 });
+  const memory = series("host:mem", start, step, 3.3 * GiB, 0.9 * GiB, {
+    noise: 0.03,
+    density: 0.06,
+    wave: 0.05,
+  });
   const disk = Array.from({ length: BUCKETS }, (_, i) => {
     const t = start + i * step;
     const daysAgo = (Date.now() / 1000 - t) / 86400;
@@ -653,7 +738,9 @@ function hostMetrics(range: MetricsRange): HostMetrics {
     netRx: series("host:rx", start, step, 90_000, 1_800_000, { density: 0.12 }).map(Math.round),
     netTx: series("host:tx", start, step, 210_000, 4_200_000, { density: 0.12 }).map(Math.round),
     diskRead: series("host:rd", start, step, 120_000, 9_000_000, { density: 0.1 }).map(Math.round),
-    diskWrite: series("host:wr", start, step, 300_000, 7_000_000, { density: 0.14 }).map(Math.round),
+    diskWrite: series("host:wr", start, step, 300_000, 7_000_000, { density: 0.14 }).map(
+      Math.round,
+    ),
   };
 }
 
@@ -689,7 +776,15 @@ function runBackup(serviceId: string | null): Backup {
   const now = new Date();
   const stamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const kind = svc?.kind;
-  const ext = !svc ? "db.zst" : kind === "postgres" || kind === "mysql" ? "sql.zst" : kind === "redis" ? "rdb.zst" : kind === "mongo" ? "archive.zst" : "tar.zst";
+  const ext = !svc
+    ? "db.zst"
+    : kind === "postgres" || kind === "mysql"
+      ? "sql.zst"
+      : kind === "redis"
+        ? "rdb.zst"
+        : kind === "mongo"
+          ? "archive.zst"
+          : "tar.zst";
   const b: Backup = {
     id: newId("bak"),
     serviceId,
@@ -723,9 +818,15 @@ function runBackup(serviceId: string | null): Backup {
 GET("/services/:id/backups", ({ params, url }) => {
   const id = params.id as string;
   if (!state.services.has(id)) return fail(404, "service not found");
-  const p = page(sortedBackups((b) => b.serviceId === id), url);
+  const p = page(
+    sortedBackups((b) => b.serviceId === id),
+    url,
+  );
   if (p instanceof Response) return p;
-  const restore = [...state.restores.values()].filter((r) => r.serviceId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  const restore =
+    [...state.restores.values()]
+      .filter((r) => r.serviceId === id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   return {
     policy: state.servicePolicies.get(id) ?? emptyPolicy(),
     backups: p.items,
@@ -743,13 +844,22 @@ POST("/services/:id/backups", ({ params }) => {
   const s = state.services.get(params.id as string);
   if (!s) return fail(404, "service not found");
   if (!s.volumes.length) return fail(400, "service has no volumes to back up");
-  if (state.backups.some((b) => b.serviceId === s.id && (b.status === "queued" || b.status === "running" || b.status === "uploading"))) {
+  if (
+    state.backups.some(
+      (b) =>
+        b.serviceId === s.id &&
+        (b.status === "queued" || b.status === "running" || b.status === "uploading"),
+    )
+  ) {
     return fail(409, "a backup is already in progress");
   }
   return json(runBackup(s.id), 202);
 });
 GET("/backups/system", ({ url }) => {
-  const p = page(sortedBackups((b) => b.serviceId === null), url);
+  const p = page(
+    sortedBackups((b) => b.serviceId === null),
+    url,
+  );
   return p instanceof Response ? p : { policy: state.systemPolicy, backups: p.items, next: p.next };
 });
 PUT("/backups/system/policy", ({ body }) => {
@@ -775,7 +885,9 @@ PUT("/backups/settings", ({ body }) => {
       : null,
     encryption: {
       enabled: input.encryption.enabled,
-      recipient: state.backupSettings.encryption.recipient || "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
+      recipient:
+        state.backupSettings.encryption.recipient ||
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p",
     },
   };
   audit("backup.settings.update");
@@ -794,7 +906,10 @@ GET("/backups/:id/download", ({ params }) => {
   const b = state.backups.find((x) => x.id === params.id);
   if (!b) return fail(404, "backup not found");
   return new Response(new Uint8Array(512).fill(0), {
-    headers: { "Content-Type": "application/zstd", "Content-Disposition": `attachment; filename="${b.fileName}"` },
+    headers: {
+      "Content-Type": "application/zstd",
+      "Content-Disposition": `attachment; filename="${b.fileName}"`,
+    },
   });
 });
 POST("/backups/:id/restore", ({ params }) => {
@@ -829,7 +944,8 @@ DELETE("/backups/:id", ({ params }) => {
   const i = state.backups.findIndex((x) => x.id === params.id);
   if (i < 0) return fail(404, "backup not found");
   const b = state.backups[i] as Backup;
-  if (b.status === "queued" || b.status === "running" || b.status === "uploading") return fail(409, "backup is in progress");
+  if (b.status === "queued" || b.status === "running" || b.status === "uploading")
+    return fail(409, "backup is in progress");
   state.backups.splice(i, 1);
   return noContent();
 });
@@ -856,7 +972,7 @@ GET("/audit", ({ url }) => {
   const events = matches.slice(0, limit);
   const page: AuditPage = {
     events,
-    next: matches.length > limit ? ((events[events.length - 1] as { id: number }).id) : null,
+    next: matches.length > limit ? (events[events.length - 1] as { id: number }).id : null,
   };
   return page;
 });
@@ -879,8 +995,16 @@ POST("/notifications/channels", ({ body }) => {
   const input = body as NotificationChannelInput;
   if (!input.name?.trim()) return fail(400, "name is required");
   if (input.provider !== "hark") return fail(400, `unknown provider "${input.provider}"`);
-  if (!input.target?.startsWith("https://")) return fail(400, "hark: target must be an https:// webhook URL");
-  const c = { id: newId("chn"), name: input.name, provider: input.provider, enabled: input.enabled, createdAt: iso(Date.now()), target: input.target };
+  if (!input.target?.startsWith("https://"))
+    return fail(400, "hark: target must be an https:// webhook URL");
+  const c = {
+    id: newId("chn"),
+    name: input.name,
+    provider: input.provider,
+    enabled: input.enabled,
+    createdAt: iso(Date.now()),
+    target: input.target,
+  };
   state.channels.push(c);
   audit("notification.channel.create", undefined, { name: c.name, provider: c.provider });
   return json(publicChannel(c), 201);
@@ -966,7 +1090,9 @@ GET("/update", () => u);
 // --------------------------------------------------------------------- GitHub
 
 GET("/github/repos", () => repos);
-GET("/github/repos/:owner/:repo/branches", ({ params }) => branchesFor(`${params.owner}/${params.repo}`));
+GET("/github/repos/:owner/:repo/branches", ({ params }) =>
+  branchesFor(`${params.owner}/${params.repo}`),
+);
 POST("/github/webhook", () => noContent());
 
 // ---------------------------------------------------------------------- OAuth
@@ -1022,8 +1148,12 @@ DELETE("/telemetry/data", () => (telemetryOff() ? noContent() : fail(409, "telem
 POST("/telemetry/dashboards/:uid/reset", () => noContent());
 POST("/telemetry/dashboards/restore", () => noContent());
 GET("/telemetry/trace/:id", ({ params }) => {
-  if (!/^[0-9a-f]{32}$/.test(params.id as string)) return fail(400, "trace ID must be 32 hex characters");
-  return new Response(null, { status: 302, headers: { Location: `/grafana/explore?trace=${params.id}` } });
+  if (!/^[0-9a-f]{32}$/.test(params.id as string))
+    return fail(400, "trace ID must be 32 hex characters");
+  return new Response(null, {
+    status: 302,
+    headers: { Location: `/grafana/explore?trace=${params.id}` },
+  });
 });
 
 function serviceTelemetry(s: Service): ServiceTelemetry {
@@ -1042,8 +1172,14 @@ function serviceTelemetry(s: Service): ServiceTelemetry {
     dropping: s.id === "svc_api7mz3",
     listenerError: s.kind === "app" ? "" : "databases do not run an OTLP listener",
     folderUrl: t.settings.enabled ? `${t.grafanaUrl}dashboards/f/p-${s.projectId}/` : "",
-    dashboards: s.kind === "app" ? [dash("overview", `${s.name} / Overview`), dash("http", `${s.name} / HTTP`)] : [dash("overview", `${s.name} / Overview`)],
-    firingAlerts: s.id === "svc_api7mz3" ? [{ name: "shed-telemetry-drops", since: iso(Date.now() - 14 * MIN) }] : [],
+    dashboards:
+      s.kind === "app"
+        ? [dash("overview", `${s.name} / Overview`), dash("http", `${s.name} / HTTP`)]
+        : [dash("overview", `${s.name} / Overview`)],
+    firingAlerts:
+      s.id === "svc_api7mz3"
+        ? [{ name: "shed-telemetry-drops", since: iso(Date.now() - 14 * MIN) }]
+        : [],
   };
 }
 GET("/services/:id/telemetry", ({ params }) => {
@@ -1056,7 +1192,8 @@ PUT("/services/:id/telemetry", ({ params, body }) => {
   if (body?.caps === null) state.serviceCaps.delete(s.id);
   else if (body?.caps) {
     const c = body.caps;
-    if (c.spansPerSecond < 1 || c.logsPerSecond < 1 || c.series < 1) return fail(400, "caps must be at least 1");
+    if (c.spansPerSecond < 1 || c.logsPerSecond < 1 || c.series < 1)
+      return fail(400, "caps must be at least 1");
     state.serviceCaps.set(s.id, c);
   }
   return serviceTelemetry(s);
@@ -1081,7 +1218,8 @@ GET("/services/:id/logs/history", ({ params, url }) => {
   if (telemetryOff()) return fail(409, "telemetry is off");
   const q = url.searchParams;
   const level = q.get("level");
-  if (level && !["debug", "info", "warn", "error"].includes(level)) return fail(400, "invalid level");
+  if (level && !["debug", "info", "warn", "error"].includes(level))
+    return fail(400, "invalid level");
   const limit = Math.min(Number(q.get("limit")) || 100, 500);
   const from = q.get("from") ? Date.parse(q.get("from") as string) : 0;
   const to = q.get("to") ? Date.parse(q.get("to") as string) : Infinity;
@@ -1095,14 +1233,24 @@ GET("/services/:id/logs/history", ({ params, url }) => {
     const hay = `${r.message} ${Object.values(r.fields).join(" ")}`.toLowerCase();
     if (!words.every((w) => hay.includes(w))) return false;
     return fields.every(([k, v]) => {
-      const val = k === "level" ? r.level : k === "traceId" || k === "trace_id" ? r.traceId : k === "source" ? r.source : r.fields[k];
+      const val =
+        k === "level"
+          ? r.level
+          : k === "traceId" || k === "trace_id"
+            ? r.traceId
+            : k === "source"
+              ? r.source
+              : r.fields[k];
       return (val ?? "").toLowerCase().includes(v);
     });
   });
   const records = matches.slice(0, limit);
   const page: LogPage = {
     records,
-    next: records.length === limit && matches.length > limit ? (records[records.length - 1] as { time: string }).time : "",
+    next:
+      records.length === limit && matches.length > limit
+        ? (records[records.length - 1] as { time: string }).time
+        : "",
   };
   return page;
 });
@@ -1111,7 +1259,10 @@ GET("/services/:id/logs/history", ({ params, url }) => {
 
 type Send = (event: string, data: string) => void;
 
-function sse(req: Request, run: (send: Send, signal: AbortSignal, end: () => void) => void | Promise<void>): Response {
+function sse(
+  req: Request,
+  run: (send: Send, signal: AbortSignal, end: () => void) => void | Promise<void>,
+): Response {
   const enc = new TextEncoder();
   const ac = new AbortController();
   let beat: ReturnType<typeof setInterval>;
@@ -1145,7 +1296,11 @@ function sse(req: Request, run: (send: Send, signal: AbortSignal, end: () => voi
     },
   });
   return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" },
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+    },
   });
 }
 
@@ -1159,13 +1314,29 @@ function every(signal: AbortSignal, minMs: number, maxMs: number, fn: () => void
   setTimeout(tick, minMs);
 }
 
-const paths = ["/", "/blog", "/blog/running-a-homelab-vps", "/uses", "/now", "/rss.xml", "/api/health", "/_next/static/chunks/main.js", "/api/monitors", "/api/probes", "/api/incidents", "/rooms/lobby", "/api/rooms", "/up"];
+const paths = [
+  "/",
+  "/blog",
+  "/blog/running-a-homelab-vps",
+  "/uses",
+  "/now",
+  "/rss.xml",
+  "/api/health",
+  "/_next/static/chunks/main.js",
+  "/api/monitors",
+  "/api/probes",
+  "/api/incidents",
+  "/rooms/lobby",
+  "/api/rooms",
+  "/up",
+];
 const ips = ["203.0.113.24", "198.51.100.7", "192.0.2.88", "203.0.113.190"];
 let lineNo = 0;
 
 /** clfTime formats t like 02/Nov/2026:10:11:12 for common-log lines. */
 function clfTime(t: number): string {
-  const [, d, mon, y, time] = /^\w+, (\d+) (\w+) (\d+) ([\d:]+)/.exec(new Date(t).toUTCString()) ?? [];
+  const [, d, mon, y, time] =
+    /^\w+, (\d+) (\w+) (\d+) ([\d:]+)/.exec(new Date(t).toUTCString()) ?? [];
   return `${d}/${mon}/${y}:${time}`;
 }
 
@@ -1209,7 +1380,8 @@ function runtimeLine(s: Service, t: number): string {
         const level = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
         return `${ts} {"level":"${level}","msg":"request","method":"${r < 0.2 ? "POST" : "GET"}","path":"${path}","status":${status},"duration":"${ms}ms","ip":"${pick(ips, n)}"}`;
       }
-      if (r < 0.04) return `${ts} ${s.name}: warn: image optimization took ${ms * 10}ms for ${path}`;
+      if (r < 0.04)
+        return `${ts} ${s.name}: warn: image optimization took ${ms * 10}ms for ${path}`;
       return `${ts} ${pick(ips, n)} - - [${clfTime(t)} +0000] "GET ${path} HTTP/1.1" ${status} ${200 + ((n * 37) % 9000)} "-" "Mozilla/5.0" ${ms}ms`;
     }
   }
@@ -1230,7 +1402,9 @@ function startupLines(s: Service, t: number): string[] {
     `${ts(0)} > ${s.name}@1.0.0 start`,
     `${ts(120)} {"level":"info","msg":"starting","version":"${hex(s.id, 7)}","node":"v22.11.0"}`,
     `${ts(310)} {"level":"info","msg":"connected to database","pool":10}`,
-    ...(s.port ? [`${ts(480)} {"level":"info","msg":"listening","port":${s.port}}`] : [`${ts(480)} {"level":"info","msg":"worker ready","concurrency":64}`]),
+    ...(s.port
+      ? [`${ts(480)} {"level":"info","msg":"listening","port":${s.port}}`]
+      : [`${ts(480)} {"level":"info","msg":"worker ready","concurrency":64}`]),
   ];
 }
 
@@ -1261,8 +1435,18 @@ function buildScript(s: Service, d: Deployment): { lines: string[]; failAt: numb
   const isImage = !s.repo;
   const L: string[] = [];
   if (isImage) {
-    L.push(`==> Pulling ${s.image}`, `${s.image.split(":")[1] ?? "latest"}: Pulling from ${s.image.split(":")[0]?.replace(/^ghcr\.io\//, "") ?? ""}`, "Digest: sha256:" + hex(d.id, 64), `Status: Downloaded newer image for ${s.image}`);
-    L.push("==> Starting container", `==> Waiting for health check${s.healthcheckPath ? ` GET ${s.healthcheckPath}` : ""}`, "==> Health check passed", "==> Deployed");
+    L.push(
+      `==> Pulling ${s.image}`,
+      `${s.image.split(":")[1] ?? "latest"}: Pulling from ${s.image.split(":")[0]?.replace(/^ghcr\.io\//, "") ?? ""}`,
+      "Digest: sha256:" + hex(d.id, 64),
+      `Status: Downloaded newer image for ${s.image}`,
+    );
+    L.push(
+      "==> Starting container",
+      `==> Waiting for health check${s.healthcheckPath ? ` GET ${s.healthcheckPath}` : ""}`,
+      "==> Health check passed",
+      "==> Deployed",
+    );
     return { lines: L, failAt: -1 };
   }
   L.push(
@@ -1321,7 +1505,16 @@ GET("/deployments/:id/logs", ({ req, params }) => {
     const stuckCut = lines.indexOf("==> Starting container");
     const live = isPending(d.status);
     if (!live) {
-      const body = failAt >= 0 ? [...lines.slice(0, failAt), "#9 1.980 error during build: Rollup failed to resolve import \"./components/Missing\"", `#9 ERROR: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1`] : d.status === "canceled" ? lines.slice(0, Math.min(14, lines.length)) : lines;
+      const body =
+        failAt >= 0
+          ? [
+              ...lines.slice(0, failAt),
+              '#9 1.980 error during build: Rollup failed to resolve import "./components/Missing"',
+              `#9 ERROR: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1`,
+            ]
+          : d.status === "canceled"
+            ? lines.slice(0, Math.min(14, lines.length))
+            : lines;
       for (const l of body) send("log", l);
       send("status", JSON.stringify({ status: d.status }));
       return end();
@@ -1350,11 +1543,16 @@ GET("/logs", ({ req }) =>
       const n = lineNo++;
       const r = Math.random();
       const ts = new Date(t).toISOString();
-      if (r < 0.55) return `time=${ts} level=INFO msg="http request" method=GET path=${pick(["/api/projects", "/api/me", "/api/services/svc_web4kq1", "/api/host/metrics", "/api/services/svc_api7mz3/deployments"], n)} status=200 duration=${(Math.random() * 6).toFixed(1)}ms`;
-      if (r < 0.7) return `time=${ts} level=INFO msg="metrics sampled" containers=${state.services.size - 2} took=${Math.round(20 + Math.random() * 40)}ms`;
-      if (r < 0.8) return `time=${ts} level=INFO msg="routes applied" routes=${[...state.services.values()].reduce((a, s) => a + s.domains.length, 0)}`;
-      if (r < 0.9) return `time=${ts} level=DEBUG msg="reconcile tick" services=${state.services.size} drift=0`;
-      if (r < 0.96) return `time=${ts} level=INFO msg="github webhook" event=push repo=kyledickey/aretheyup ref=refs/heads/main`;
+      if (r < 0.55)
+        return `time=${ts} level=INFO msg="http request" method=GET path=${pick(["/api/projects", "/api/me", "/api/services/svc_web4kq1", "/api/host/metrics", "/api/services/svc_api7mz3/deployments"], n)} status=200 duration=${(Math.random() * 6).toFixed(1)}ms`;
+      if (r < 0.7)
+        return `time=${ts} level=INFO msg="metrics sampled" containers=${state.services.size - 2} took=${Math.round(20 + Math.random() * 40)}ms`;
+      if (r < 0.8)
+        return `time=${ts} level=INFO msg="routes applied" routes=${[...state.services.values()].reduce((a, s) => a + s.domains.length, 0)}`;
+      if (r < 0.9)
+        return `time=${ts} level=DEBUG msg="reconcile tick" services=${state.services.size} drift=0`;
+      if (r < 0.96)
+        return `time=${ts} level=INFO msg="github webhook" event=push repo=kyledickey/aretheyup ref=refs/heads/main`;
       return `time=${ts} level=WARN msg="container restarting" service=worker project=aretheyup exit_code=137`;
     };
     const now = Date.now();
@@ -1400,4 +1598,6 @@ const server = BunRuntime.serve({
   },
 });
 
-console.log(`shed mock API listening on http://${server.hostname}:${server.port} (${routes.length} routes)`);
+console.log(
+  `shed mock API listening on http://${server.hostname}:${server.port} (${routes.length} routes)`,
+);

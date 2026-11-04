@@ -20,16 +20,16 @@ anything else from the patterns here with Kumo's CSS variables.
 
 ## Type
 
-| Use | Size / weight | Color |
-| --- | --- | --- |
-| Page title | 20px / 600 | default |
-| Section heading (h2) | 16px / 500 | default |
-| Card title, setting label | 14px / 500 | card titles subtle, setting labels default |
-| Body, table cells, values | 14px / 400 | default |
-| Tabs, nav, node titles | 13px / 500 | default |
-| Small labels (stat names, column heads) | 12px / 500 | subtle |
-| Big numbers (stats) | 24px / 500, tabular | default |
-| Pills | 12px / 500 | default |
+| Use                                     | Size / weight       | Color                                      |
+| --------------------------------------- | ------------------- | ------------------------------------------ |
+| Page title                              | 20px / 600          | default                                    |
+| Section heading (h2)                    | 16px / 500          | default                                    |
+| Card title, setting label               | 14px / 500          | card titles subtle, setting labels default |
+| Body, table cells, values               | 14px / 400          | default                                    |
+| Tabs, nav, node titles                  | 13px / 500          | default                                    |
+| Small labels (stat names, column heads) | 12px / 500          | subtle                                     |
+| Big numbers (stats)                     | 24px / 500, tabular | default                                    |
+| Pills                                   | 12px / 500          | default                                    |
 
 Inline code and IDs use Commit Mono at about 0.9em.
 
@@ -95,3 +95,6 @@ In light mode panels are white and rings are 10% black.
 
 Run `bun run mock` and `bun run dev`, open the page against the mock API, and
 look at it in light and dark at 1440px and 390px wide before calling it done.
+To serve the dashboard on :3000 instead, run the mock on another port and
+point the dev server's `/api` proxy at it with `SHED_API`:
+`PORT=3001 bun run mock` and `SHED_API=http://127.0.0.1:3001 bun run dev --port 3000`.
