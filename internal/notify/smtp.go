@@ -113,8 +113,7 @@ func (s smtpSender) Send(ctx context.Context, m Message) error {
 	if err != nil {
 		return s.fail(ctx, "dial", err)
 	}
-	deadline, _ := ctx.Deadline()
-	_ = raw.SetDeadline(deadline)
+	// Only ctx cuts the connection, so a timed-out send reports ctx's error.
 	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Now()) })
 	defer stop()
 
