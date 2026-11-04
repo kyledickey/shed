@@ -3,6 +3,51 @@
 Each release's section becomes its GitHub release notes, which the dashboard
 shows under Settings → Updates.
 
+## v0.3.0 - 2026-11-04
+
+Telemetry comes to shed: an optional stack with Grafana dashboards for every project and service, an OpenTelemetry gateway for your apps, and notifications to Hark, ntfy, or email when something fails. The dashboard has a new look, and shed no longer stores client IP addresses.
+
+### Features
+
+#### Databases
+
+- Added a metrics exporter and per-statement query statistics to Postgres, MySQL, MongoDB, and Redis while telemetry is on. A database deployed before this release is redeployed once, one at a time, when telemetry first turns on, and is unavailable for the few seconds the restart takes. ([#12](https://github.com/kyledickey/shed/pull/12))
+
+#### Observability
+
+- Added an optional telemetry stack under Server → Telemetry: VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana run as containers on the server, listening on loopback only, and Grafana is served at `/grafana/` behind the dashboard's sign-in. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added default Grafana dashboards for shed, every project, and every service, with deploys, restarts, stops, crashes, backups, and restores marked as annotations. A dashboard you edit is never overwritten, and **Restore default dashboards** brings back missing ones. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added request metrics, access records, and a trace for every request the proxy serves, with no change to your apps. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added an OpenTelemetry gateway: while telemetry is on, each app's next deployment gets `OTEL_EXPORTER_OTLP_ENDPOINT` and the other `OTEL_*` variables injected, and its spans, metrics, and logs go to `localhost:4318` inside its own container. Per-service caps bound how much a service can send. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added shipping of every service container's output to the log store, with searchable history on the Logs tab. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added a record of container events (`docker exec`, OOM kills, restarts) and of each service's outbound connections, with a Security dashboard listing destinations a service reaches for the first time. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added an audit log under Server → Audit recording every change, sign-in, denial, and agent tool call. It is always on, and agents can read it through the `audit_events` tool. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Added traces of shed itself while telemetry is on: deployments, builds, backups, restores, API and MCP requests, and outbound calls, with each deployment linking to its trace. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Changed shed to never store client IP addresses: they stay out of the audit log, access records, and spans, `caddy.log` drops the client's address, headers, and URI, and panic logs are scrubbed. Upgrading removes the addresses already in the audit log. ([#35](https://github.com/kyledickey/shed/pull/35))
+
+#### Dashboard
+
+- Redesigned the dashboard on Cloudflare's Kumo: a new look and logo, tabs that keep your place, and a ⌘K palette that searches projects, services, actions, and docs. Updates, backups, notifications, telemetry, and integrations moved under Server, and the site at shed.land matches, with link previews. ([#37](https://github.com/kyledickey/shed/pull/37))
+- Changed the projects list to sort by last updated. ([94e4a53](https://github.com/kyledickey/shed/commit/94e4a53))
+
+#### Agents
+
+- Added telemetry tools to the MCP server: query metrics and logs, search and read traces, list a service's slow requests and a database's top queries, and list Grafana dashboards. ([#12](https://github.com/kyledickey/shed/pull/12))
+- Changed MCP audit events to record only IDs, times, and limits, never a query, span name, or tags, which could hold the secret being looked for. ([41eb1ee](https://github.com/kyledickey/shed/commit/41eb1ee))
+
+#### Installation and Updates
+
+- Added update channels under Settings → Updates: Stable offers stable releases and Nightly also offers nightly builds of `main`. A shed installed from a nightly starts on the nightly channel, and the installer accepts `SHED_CHANNEL=nightly`. ([9d98131](https://github.com/kyledickey/shed/commit/9d98131))
+
+#### Other
+
+- Added notifications under Server → Notifications: rules send a message to every enabled channel when a deploy, backup, or restore fails, a service runs out of memory or crashes in a loop, or a metric alert fires in Grafana. Messages are stored in shed.db and retried until they send. ([#9](https://github.com/kyledickey/shed/pull/9))
+- Added ntfy and SMTP email channels, alongside Hark push. ([7f93ee0](https://github.com/kyledickey/shed/commit/7f93ee0))
+
+### Bug Fixes
+
+- Fixed every 1Password call failing with "out of bounds memory access" until shed restarted, after one request to 1Password was canceled midway. ([9a478d8](https://github.com/kyledickey/shed/commit/9a478d8))
+
 ## v0.2.6 - 2026-10-23
 
 1Password now keeps every service's variables in one vault you choose, with one service account for all of shed.
