@@ -106,22 +106,22 @@ func (s smtpSender) Send(ctx context.Context, m Message) error {
 		return fmt.Errorf("smtp: build message: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", s.addr)
+	raw, err := d.DialContext(ctx, "tcp", s.addr)
 	if err != nil {
-		return fmt.Errorf("smtp: dial: %w", err)
+		return s.fail(ctx, "dial", err)
 	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(30 * time.Second)
-	}
-	_ = conn.SetDeadline(deadline)
-	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
+	deadline, _ := ctx.Deadline()
+	_ = raw.SetDeadline(deadline)
+	stop := context.AfterFunc(ctx, func() { _ = raw.SetDeadline(time.Now()) })
 	defer stop()
 
 	cfg := &tls.Config{ServerName: s.host, RootCAs: s.roots}
+	conn := raw
 	if s.implicitTLS {
-		conn = tls.Client(conn, cfg)
+		conn = tls.Client(raw, cfg)
 	}
 	c, err := smtp.NewClient(conn, s.host)
 	if err != nil {
@@ -129,6 +129,11 @@ func (s smtpSender) Send(ctx context.Context, m Message) error {
 		return s.fail(ctx, "connect", err)
 	}
 	defer c.Close()
+	// Extension hides a failed EHLO as "not offered", which would fail a
+	// temporary 421 as permanent.
+	if err := c.Hello("localhost"); err != nil {
+		return s.fail(ctx, "hello", err)
+	}
 
 	if !s.implicitTLS {
 		if ok, _ := c.Extension("STARTTLS"); ok {
@@ -141,6 +146,10 @@ func (s smtpSender) Send(ctx context.Context, m Message) error {
 	}
 	if s.user != "" {
 		if err := c.Auth(smtp.PlainAuth("", s.user, s.pass, s.host)); err != nil {
+			// The reply text may echo the encoded credentials, so keep only its code.
+			if te, ok := errors.AsType[*textproto.Error](err); ok {
+				err = &textproto.Error{Code: te.Code, Msg: "authentication failed"}
+			}
 			return s.fail(ctx, "auth", err)
 		}
 	}

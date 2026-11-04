@@ -193,7 +193,8 @@ function ChannelDialog({
   const value = (f: Field) => values[f.key] ?? f.options?.[0]?.value ?? "";
   // The saved target is never returned, so an edit with every field blank keeps it.
   const keepTarget =
-    channel !== null && targetFields.every((f) => f.options || value(f).trim() === "");
+    channel !== null &&
+    targetFields.every((f) => (f.options ? values[f.key] === undefined : value(f).trim() === ""));
   let target: string | undefined;
   let targetError: string | undefined;
   if (!keepTarget && targetFields.every((f) => f.optional || value(f).trim() !== "")) {

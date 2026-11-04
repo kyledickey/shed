@@ -1117,10 +1117,13 @@ A failed send is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, and
 6 hours; one more failure marks the row `failed`. An error that wraps
 `notify.ErrPermanent` fails the row at once. Hark treats an unknown token
 (404), any other 4xx except 429, and a message that reached no device as
-permanent; 429, 5xx, and transport errors are retried. ntfy treats any 4xx
-except 429 as permanent and retries the rest. SMTP treats a 5xx reply and a
-server without STARTTLS as permanent; 4xx replies and transport errors are
-retried. ntfy has no idempotency key, so a retry after a lost response can
+permanent; 429, 5xx, and transport errors are retried. ntfy never follows
+redirects (they could resend the credentials over http) and treats any
+non-2xx below 500 except 429 as permanent, retrying the rest. SMTP sends
+EHLO explicitly so a 4xx greeting is retried, treats a 5xx reply and a
+server without STARTTLS as permanent, retries 4xx replies and transport
+errors, keeps only the code of a failed AUTH reply, and bounds the whole
+send, dial included, by 30 seconds. ntfy has no idempotency key, so a retry after a lost response can
 repeat a notification; so can SMTP. Rows of a channel that
 was disabled after they were queued fail with "channel is disabled", and
 deleting a channel deletes its rows. `last_error` comes from the adapter,

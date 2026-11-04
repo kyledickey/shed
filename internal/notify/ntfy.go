@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,9 +28,6 @@ var ntfyTopic = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
 // hc is the HTTP client used to call it; nil uses a client with a 10 second
 // timeout.
 func Ntfy(hc *http.Client) Provider {
-	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
-	}
 	return Provider{
 		Name: "ntfy",
 		Open: func(target string) (Sender, error) { return openNtfy(target, hc) },
@@ -68,7 +66,14 @@ func openNtfy(topicURL string, hc *http.Client) (ntfySender, error) {
 			"ntfy: topic URL must end in a topic of up to 64 letters, digits, - or _",
 		)
 	}
-	s := ntfySender{topic: topic, hc: hc}
+	c := http.Client{Timeout: 10 * time.Second}
+	if hc != nil {
+		c = *hc
+	}
+	// A redirect could resend the credentials over plain http or turn the
+	// POST into a GET that reports success.
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	s := ntfySender{topic: topic, hc: &c}
 	if u.User != nil {
 		s.user = u.User.Username()
 		s.pass, _ = u.User.Password()
@@ -132,15 +137,16 @@ func (s ntfySender) Send(ctx context.Context, m Message) error {
 	if msg := s.redact(body.Error); msg != "" {
 		err = fmt.Errorf("ntfy: %s: %s", resp.Status, msg)
 	}
-	if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+	if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
 		return permanent(err)
 	}
 	return err
 }
 
 func (s ntfySender) redact(msg string) string {
-	if s.pass != "" {
-		msg = strings.ReplaceAll(msg, s.pass, "<password>")
+	if s.pass == "" {
+		return msg
 	}
-	return msg
+	basic := base64.StdEncoding.EncodeToString([]byte(s.user + ":" + s.pass))
+	return strings.NewReplacer(s.pass, "<password>", basic, "<password>").Replace(msg)
 }

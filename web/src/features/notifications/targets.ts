@@ -104,7 +104,9 @@ export const targetForms: Record<string, TargetForm> = {
           : "";
       const port = field(v, "port") ? `:${field(v, "port")}` : "";
       const query = new URLSearchParams({ from: field(v, "from"), to: field(v, "to") });
-      return `${field(v, "security") || "smtp"}://${userinfo}${field(v, "host")}${port}?${query}`;
+      const host = field(v, "host");
+      const bracketed = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+      return `${field(v, "security") || "smtp"}://${userinfo}${bracketed}${port}?${query}`;
     },
   },
 };

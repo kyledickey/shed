@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -185,5 +186,35 @@ func TestNtfySendTransportErrorHidesToken(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), ntfyToken) {
 		t.Errorf("error %q contains the token", err)
+	}
+}
+
+func TestNtfySendDoesNotFollowRedirects(t *testing.T) {
+	var followed bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere/" {
+			followed = true
+			return
+		}
+		http.Redirect(w, r, "/elsewhere/", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(ts.Close)
+	s, err := openNtfy("http://:"+ntfyToken+"@"+strings.TrimPrefix(ts.URL, "http://")+"/alerts", ts.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Send(context.Background(), Message{Body: "hi"})
+	if followed || !errors.Is(err, ErrPermanent) {
+		t.Fatalf("followed = %v, err = %v; want no redirect and a permanent error", followed, err)
+	}
+}
+
+func TestNtfySendRedactsEncodedCredentials(t *testing.T) {
+	basic := base64.StdEncoding.EncodeToString([]byte(":" + ntfyToken))
+	s, _ := ntfyServer(t, "http://:"+ntfyToken+"@<server>/alerts", http.StatusUnauthorized,
+		`{"error":"bad Authorization: Basic `+basic+`"}`)
+	err := s.Send(context.Background(), Message{Body: "hi"})
+	if err == nil || strings.Contains(err.Error(), basic) || strings.Contains(err.Error(), ntfyToken) {
+		t.Fatalf("err = %v, want an error without the credentials", err)
 	}
 }

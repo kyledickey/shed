@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const smtpPass = "p4ss_s3cretS3cret"
@@ -304,6 +305,7 @@ func TestSMTPSendStatus(t *testing.T) {
 		{name: "mailbox busy", codes: map[string]int{"RCPT": 451}, want: "rcpt to: 451"},
 		{name: "sender deferred", codes: map[string]int{"MAIL": 421}, want: "mail from: 421"},
 		{name: "data rejected", codes: map[string]int{"DATA": 554}, want: "data: 554", perm: true},
+		{name: "greeting deferred", codes: map[string]int{"EHLO": 421, "HELO": 421}, want: "hello: 421"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -312,7 +314,9 @@ func TestSMTPSendStatus(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want it to contain %q", err, tt.want)
 			}
-			if strings.Contains(err.Error(), smtpPass) || strings.Contains(err.Error(), f.addr) {
+			plain := base64.StdEncoding.EncodeToString([]byte("\x00user\x00" + smtpPass))
+			if strings.Contains(err.Error(), smtpPass) || strings.Contains(err.Error(), plain) ||
+				strings.Contains(err.Error(), f.addr) {
 				t.Errorf("error %q contains the password or target", err)
 			}
 			if got := errors.Is(err, ErrPermanent); got != tt.perm {
@@ -349,5 +353,31 @@ func TestSMTPSendCanceled(t *testing.T) {
 	err := f.sender(t, "smtp", "").Send(ctx, Message{Body: "hi"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestSMTPSendTimeoutDuringTLS(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { c.Close() })
+		}
+	}()
+	s, err := openSMTP("smtps://" + ln.Addr().String() + "?from=a@example.com&to=b@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := s.Send(ctx, Message{Body: "hi"}); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrPermanent) {
+		t.Fatalf("err = %v, want a retryable deadline error", err)
 	}
 }

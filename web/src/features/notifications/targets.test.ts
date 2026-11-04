@@ -17,6 +17,11 @@ describe("compose", () => {
     ],
     [
       "smtp",
+      { host: "2001:db8::1", security: "smtp", port: "25", from: "s@x.io", to: "a@x.io" },
+      "smtp://[2001:db8::1]:25?from=s%40x.io&to=a%40x.io",
+    ],
+    [
+      "smtp",
       {
         host: "mail.example.com",
         security: "smtps",

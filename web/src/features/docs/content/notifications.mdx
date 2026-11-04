@@ -82,8 +82,8 @@ shed provisions the `shed` contact point and the root notification policy on eve
 Each message is stored in `shed.db` for every enabled channel before anything is sent, so a restart does not lose it. Sending is retried when it fails for a reason that might pass: after 1 minute, 5 minutes, 30 minutes, 2 hours, and 6 hours, after which the delivery is marked failed. Some failures can't pass, so they fail the delivery at once without retries:
 
 - **hark**: Hark rejects the webhook (an unknown token or another client error), or accepts the message with no device to receive it.
-- **ntfy**: the server answers with a client error other than 429 (too many requests), such as a wrong token or a forbidden topic. The error ntfy gives is kept, with the token removed.
-- **smtp**: the server answers with a permanent (5xx) error, such as failed authentication or a rejected address.
+- **ntfy**: the server answers with a client error other than 429 (too many requests), such as a wrong token or a forbidden topic, or with a redirect. shed never follows a redirect, so the token can't be sent anywhere else. The error ntfy gives is kept, with the token removed.
+- **smtp**: the server answers with a permanent (5xx) error, such as failed authentication or a rejected address, or doesn't offer STARTTLS on an `smtp://` channel. A failed sign-in keeps only the reply code, since servers may echo the credentials. Each send has 30 seconds, from connecting to the end of the message.
 
 Rate limits, server errors, temporary (4xx) SMTP replies, and network errors are retried. A repeated event, such as the same deployment failing again, is sent once per channel.
 
