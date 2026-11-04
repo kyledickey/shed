@@ -1,85 +1,103 @@
+import { Input, Select, Switch } from "@cloudflare/kumo";
 import { useQuery } from "@tanstack/react-query";
 import { branchesQuery } from "../../api/github";
 import type { Service } from "../../api/types";
-import { LayerCard } from "../../components/Card";
-import { Field, Input, Select, Switch } from "../../components/Form";
-import { SettingsCard, useSectionForm } from "./SectionForm";
-import styles from "./Settings.module.css";
+import { Rows, SettingRow } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { HelpTip } from "../docs/HelpTip";
+import { NumberInput } from "./fields";
+import styles from "./Form.module.css";
+import { SettingsForm, useSectionForm } from "./SectionForm";
 
-/** SourceCard edits where the code or image comes from; databases show their image read-only. */
-export function SourceCard({ service }: { service: Service }) {
-  const fromRepo = !!service.repo;
-  const form = useSectionForm(service, (s) =>
-    fromRepo ? { repo: s.repo, branch: s.branch, rootDir: s.rootDir } : { image: s.image },
-  );
-  const { draft, set } = form;
-
+/** SourceSection edits where the code or image comes from; databases show their image read-only. */
+export function SourceSection({ service }: { service: Service }) {
   if (service.kind !== "app") {
     return (
-      <LayerCard title="Source" padded>
-        <div className={styles.fields}>
-          <Field label="Image">
-            {(id) => <Input id={id} mono value={service.image} readOnly />}
-          </Field>
-          <p className={styles.note}>
-            Database images are managed by shed and can't be changed here.
-          </p>
-        </div>
-      </LayerCard>
+      <Rows>
+        <SettingRow
+          label="Image"
+          description="Database images are managed by shed and can't be changed here."
+          control={<span className={styles.value}>{service.image}</span>}
+        />
+      </Rows>
     );
   }
+  return service.repo ? <RepoSource service={service} /> : <ImageSource service={service} />;
+}
 
+function RepoSource({ service }: { service: Service }) {
+  const form = useSectionForm(service, (s) => ({
+    repo: s.repo,
+    branch: s.branch,
+    rootDir: s.rootDir,
+  }));
+  const { draft, set } = form;
   return (
-    <SettingsCard title="Source" meta="Where the code or image comes from." form={form}>
-      {fromRepo ? (
-        <>
-          <div className={styles.twoCol}>
-            <Field label="Repository" hint="owner/name">
-              {(id) => (
-                <Input
-                  id={id}
-                  mono
-                  value={draft.repo ?? ""}
-                  onChange={(e) => set("repo", e.target.value.trim())}
-                />
-              )}
-            </Field>
-            <BranchField
-              repo={draft.repo ?? ""}
-              value={draft.branch ?? ""}
-              onChange={(b) => set("branch", b)}
-            />
-          </div>
-          <Field label="Root directory" hint="Build from a subdirectory, e.g. apps/web.">
-            {(id) => (
-              <Input
-                id={id}
-                mono
-                value={draft.rootDir ?? ""}
-                onChange={(e) => set("rootDir", e.target.value)}
-                placeholder="/"
-              />
-            )}
-          </Field>
-        </>
-      ) : (
-        <Field label="Image" hint="Pulled on every deploy.">
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={draft.image ?? ""}
-              onChange={(e) => set("image", e.target.value.trim())}
-            />
-          )}
-        </Field>
-      )}
-    </SettingsCard>
+    <SettingsForm form={form}>
+      <SettingRow
+        label="Repository"
+        description="The GitHub repository to build, as owner/name."
+        control={
+          <Input
+            aria-label="Repository"
+            className={cx(styles.wide, styles.mono)}
+            value={draft.repo ?? ""}
+            onChange={(e) => set("repo", e.target.value.trim())}
+            spellCheck={false}
+          />
+        }
+      />
+      <SettingRow
+        label="Branch"
+        description="Deployments build the latest commit on this branch."
+        control={
+          <BranchControl
+            repo={draft.repo ?? ""}
+            value={draft.branch ?? ""}
+            onChange={(b) => set("branch", b)}
+          />
+        }
+      />
+      <SettingRow
+        label="Root directory"
+        description="Build from a subdirectory, e.g. apps/web."
+        control={
+          <Input
+            aria-label="Root directory"
+            className={cx(styles.wide, styles.mono)}
+            value={draft.rootDir ?? ""}
+            onChange={(e) => set("rootDir", e.target.value)}
+            placeholder="/"
+            spellCheck={false}
+          />
+        }
+      />
+    </SettingsForm>
   );
 }
 
-function BranchField({
+function ImageSource({ service }: { service: Service }) {
+  const form = useSectionForm(service, (s) => ({ image: s.image }));
+  return (
+    <SettingsForm form={form}>
+      <SettingRow
+        label="Image"
+        description="Pulled on every deploy."
+        control={
+          <Input
+            aria-label="Image"
+            className={cx(styles.wide, styles.mono)}
+            value={form.draft.image ?? ""}
+            onChange={(e) => form.set("image", e.target.value.trim())}
+            spellCheck={false}
+          />
+        }
+      />
+    </SettingsForm>
+  );
+}
+
+function BranchControl({
   repo,
   value,
   onChange,
@@ -90,25 +108,31 @@ function BranchField({
 }) {
   const branches = useQuery(branchesQuery(repo));
   const names = branches.data ?? [];
-  const options = (names.includes(value) || !value ? names : [value, ...names]).map((b) => ({
-    value: b,
-    label: b,
-  }));
+  if (!branches.isSuccess) {
+    return (
+      <Input
+        aria-label="Branch"
+        className={cx(styles.wide, styles.mono)}
+        value={value}
+        onChange={(e) => onChange(e.target.value.trim())}
+        spellCheck={false}
+      />
+    );
+  }
+  const options = names.includes(value) || !value ? names : [value, ...names];
   return (
-    <Field label="Branch">
-      {(id) =>
-        branches.isSuccess ? (
-          <Select id={id} mono value={value} onChange={onChange} options={options} />
-        ) : (
-          <Input id={id} mono value={value} onChange={(e) => onChange(e.target.value.trim())} />
-        )
-      }
-    </Field>
+    <Select
+      aria-label="Branch"
+      className={cx(styles.wide, styles.mono)}
+      value={value}
+      onValueChange={(v) => v && onChange(v)}
+      items={options.map((b) => ({ value: b, label: b }))}
+    />
   );
 }
 
-/** BuildCard edits the Dockerfile path (repo apps) and start command. */
-export function BuildCard({ service }: { service: Service }) {
+/** BuildSection edits the Dockerfile path (repo apps) and start command. */
+export function BuildSection({ service }: { service: Service }) {
   const fromRepo = !!service.repo;
   const form = useSectionForm(service, (s) =>
     fromRepo
@@ -117,44 +141,47 @@ export function BuildCard({ service }: { service: Service }) {
   );
   const { draft, set } = form;
   return (
-    <SettingsCard title={fromRepo ? "Build" : "Run"} form={form}>
+    <SettingsForm form={form}>
       {fromRepo && (
-        <Field
+        <SettingRow
           label={
             <>
-              Dockerfile path <HelpTip topic="buildDetection" />
+              <HelpTip topic="buildDetection">Dockerfile path</HelpTip>
             </>
           }
-          hint="Leave empty to detect automatically: the Dockerfile is used if present, otherwise the app is built with Railpack."
-        >
-          {(id) => (
+          description="Leave empty to detect: the Dockerfile is used if present, otherwise Railpack builds the app."
+          control={
             <Input
-              id={id}
-              mono
+              aria-label="Dockerfile path"
+              className={cx(styles.wide, styles.mono)}
               value={draft.dockerfilePath ?? ""}
               onChange={(e) => set("dockerfilePath", e.target.value)}
               placeholder="Dockerfile"
+              spellCheck={false}
             />
-          )}
-        </Field>
+          }
+        />
       )}
-      <Field label="Start command" hint="Overrides the image's default command.">
-        {(id) => (
+      <SettingRow
+        label="Start command"
+        description="Overrides the image's default command."
+        control={
           <Input
-            id={id}
-            mono
+            aria-label="Start command"
+            className={cx(styles.wide, styles.mono)}
             value={draft.startCommand ?? ""}
             onChange={(e) => set("startCommand", e.target.value)}
             placeholder="npm start"
+            spellCheck={false}
           />
-        )}
-      </Field>
-    </SettingsCard>
+        }
+      />
+    </SettingsForm>
   );
 }
 
-/** DeployCard edits deploy triggers, the healthcheck, and the container port. */
-export function DeployCard({ service }: { service: Service }) {
+/** DeploySection edits deploy triggers, the healthcheck, and the container port. */
+export function DeploySection({ service }: { service: Service }) {
   const fromRepo = !!service.repo;
   const form = useSectionForm(service, (s) => ({
     port: s.port,
@@ -164,75 +191,73 @@ export function DeployCard({ service }: { service: Service }) {
   }));
   const { draft, set } = form;
   return (
-    <SettingsCard
-      title={
-        <>
-          Deploy <HelpTip topic="pipeline" />
-        </>
-      }
-      form={form}
-    >
+    <SettingsForm form={form}>
       {fromRepo && (
         <>
-          <Switch
+          <SettingRow
             label={
               <>
-                Auto deploy on push <HelpTip topic="autoDeploy" />
+                <HelpTip topic="autoDeploy">Auto deploy on push</HelpTip>
               </>
             }
             description={`Deploy automatically when ${service.branch} changes.`}
-            checked={draft.autoDeploy}
-            onChange={(v) => set("autoDeploy", v)}
+            control={
+              <Switch
+                aria-label="Auto deploy on push"
+                checked={draft.autoDeploy}
+                onCheckedChange={(v) => set("autoDeploy", v)}
+              />
+            }
           />
-          <Switch
+          <SettingRow
             label={
               <>
-                Wait for CI <HelpTip topic="waitForCi" />
+                <HelpTip topic="waitForCi">Wait for CI</HelpTip>
               </>
             }
             description="Hold push deployments until GitHub checks pass. Failed checks skip the deploy."
-            checked={draft.waitForCi}
-            disabled={!draft.autoDeploy}
-            onChange={(v) => set("waitForCi", v)}
+            control={
+              <Switch
+                aria-label="Wait for CI"
+                checked={draft.waitForCi}
+                disabled={!draft.autoDeploy}
+                onCheckedChange={(v) => set("waitForCi", v)}
+              />
+            }
           />
         </>
       )}
-      <div className={styles.twoCol}>
-        <Field
-          label={
-            <>
-              Healthcheck path <HelpTip topic="healthchecks" />
-            </>
-          }
-          hint="Must return 2xx or 3xx. Empty only checks that the port accepts connections."
-        >
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={draft.healthcheckPath}
-              onChange={(e) => set("healthcheckPath", e.target.value)}
-              placeholder="/health"
-            />
-          )}
-        </Field>
-        <Field
-          label="Container port"
-          hint="0 detects the port from the image's EXPOSE. Injected as PORT."
-        >
-          {(id) => (
-            <Input
-              id={id}
-              type="number"
-              min={0}
-              max={65535}
-              mono
-              value={draft.port}
-              onChange={(e) => set("port", Number(e.target.value) || 0)}
-            />
-          )}
-        </Field>
-      </div>
-    </SettingsCard>
+      <SettingRow
+        label={
+          <>
+            <HelpTip topic="healthchecks">Healthcheck path</HelpTip>
+          </>
+        }
+        description="Must return 2xx or 3xx. Empty only checks that the port accepts connections."
+        control={
+          <Input
+            aria-label="Healthcheck path"
+            className={cx(styles.wide, styles.mono)}
+            value={draft.healthcheckPath}
+            onChange={(e) => set("healthcheckPath", e.target.value)}
+            placeholder="/health"
+            spellCheck={false}
+          />
+        }
+      />
+      <SettingRow
+        label="Container port"
+        description="0 detects the port from the image's EXPOSE. Injected as PORT."
+        control={
+          <NumberInput
+            aria-label="Container port"
+            min={0}
+            max={65535}
+            value={draft.port}
+            onChange={(e) => set("port", Number(e.target.value) || 0)}
+          />
+        }
+      />
+    </SettingsForm>
   );
 }

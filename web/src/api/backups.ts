@@ -1,6 +1,13 @@
-import { queryOptions, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
+import { pagePath } from "./paging";
 import {
   isBackupActive,
   type Backup,
@@ -21,18 +28,29 @@ function pollWhileActive(data: SystemBackups | ServiceBackups | undefined): numb
   return restoring || data?.backups.some(isBackupActive) ? POLL_MS : false;
 }
 
-export const serviceBackupsQuery = (serviceId: string) =>
+/**
+ * serviceBackupsQuery is a service's backup policy, latest restore, and the
+ * page of backups after before; null, the default, is the newest.
+ */
+export const serviceBackupsQuery = (serviceId: string, before: string | null = null) =>
   queryOptions({
-    queryKey: keys.serviceBackups(serviceId),
-    queryFn: () => api.get<ServiceBackups>(`/services/${serviceId}/backups`),
+    queryKey: [...keys.serviceBackups(serviceId), before],
+    queryFn: () => api.get<ServiceBackups>(pagePath(`/services/${serviceId}/backups`, before)),
+    placeholderData: keepPreviousData,
     refetchInterval: (q) => pollWhileActive(q.state.data),
   });
 
-export const systemBackupsQuery = queryOptions({
-  queryKey: keys.systemBackups,
-  queryFn: () => api.get<SystemBackups>("/backups/system"),
-  refetchInterval: (q) => pollWhileActive(q.state.data),
-});
+/** systemBackupsPageQuery is shed.db's backup policy and the page of backups after before. */
+export const systemBackupsPageQuery = (before: string | null) =>
+  queryOptions({
+    queryKey: [...keys.systemBackups, before],
+    queryFn: () => api.get<SystemBackups>(pagePath("/backups/system", before)),
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => pollWhileActive(q.state.data),
+  });
+
+/** systemBackupsQuery is shed.db's backup policy and newest backups. */
+export const systemBackupsQuery = systemBackupsPageQuery(null);
 
 export const backupSettingsQuery = queryOptions({
   queryKey: keys.backupSettings,
@@ -47,8 +65,9 @@ type Scope = string | null;
 
 const scopeKey = (scope: Scope) => (scope ? keys.serviceBackups(scope) : keys.systemBackups);
 
+/** refresh refetches every page of scope's backups. */
 function refresh(qc: QueryClient, scope: Scope) {
-  return qc.invalidateQueries({ queryKey: scopeKey(scope), exact: true });
+  return qc.invalidateQueries({ queryKey: scopeKey(scope) });
 }
 
 export function useRunBackup(scope: Scope) {
@@ -68,7 +87,7 @@ export function useSaveBackupPolicy(scope: Scope) {
         policy,
       ),
     onSuccess: (policy) =>
-      qc.setQueryData<SystemBackups | ServiceBackups>(scopeKey(scope), (old) =>
+      qc.setQueriesData<SystemBackups | ServiceBackups>({ queryKey: scopeKey(scope) }, (old) =>
         old ? { ...old, policy } : old,
       ),
   });

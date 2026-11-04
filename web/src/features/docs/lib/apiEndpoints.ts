@@ -154,9 +154,9 @@ export const endpointGroups: EndpointGroup[] = [
     endpoints: [
       {
         method: "GET",
-        path: "/api/services/{id}/deployments",
-        response: "Deployment[]",
-        notes: "Newest first, 50.",
+        path: "/api/services/{id}/deployments?before=&limit=",
+        response: "DeploymentPage",
+        notes: "Newest first, paged. limit default 10, at most 100.",
       },
       {
         method: "POST",
@@ -209,9 +209,9 @@ export const endpointGroups: EndpointGroup[] = [
     endpoints: [
       {
         method: "GET",
-        path: "/api/services/{id}/backups",
+        path: "/api/services/{id}/backups?before=&limit=",
         response: "ServiceBackups",
-        notes: "Newest first, 100.",
+        notes: "Newest first, paged. limit default 10, at most 100.",
       },
       {
         method: "PUT",
@@ -226,7 +226,12 @@ export const endpointGroups: EndpointGroup[] = [
         notes:
           "Run now. 409 if one is queued, running, or uploading. 400 without volumes or a deployment.",
       },
-      { method: "GET", path: "/api/backups/system", response: "SystemBackups" },
+      {
+        method: "GET",
+        path: "/api/backups/system?before=&limit=",
+        response: "SystemBackups",
+        notes: "Newest first, paged like service backups.",
+      },
       {
         method: "PUT",
         path: "/api/backups/system/policy",

@@ -18,11 +18,15 @@ func toBackupList(l control.BackupList) (backupPolicyJSON, []backupJSON) {
 }
 
 func (s *Server) serviceBackups(w http.ResponseWriter, r *http.Request) error {
-	l, err := s.control.ServiceBackups(r.Context(), r.PathValue("id"))
+	page, err := pageParams(r)
 	if err != nil {
 		return err
 	}
-	var out serviceBackupsJSON
+	l, err := s.control.ServiceBackups(r.Context(), r.PathValue("id"), page)
+	if err != nil {
+		return err
+	}
+	out := serviceBackupsJSON{Next: nextCursor(l.Next)}
 	out.Policy, out.Backups = toBackupList(l)
 	if l.Restore != nil {
 		v := toRestore(*l.Restore)
@@ -32,11 +36,15 @@ func (s *Server) serviceBackups(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) systemBackups(w http.ResponseWriter, r *http.Request) error {
-	l, err := s.control.SystemBackups(r.Context())
+	page, err := pageParams(r)
 	if err != nil {
 		return err
 	}
-	var out systemBackupsJSON
+	l, err := s.control.SystemBackups(r.Context(), page)
+	if err != nil {
+		return err
+	}
+	out := systemBackupsJSON{Next: nextCursor(l.Next)}
 	out.Policy, out.Backups = toBackupList(l)
 	return writeJSON(w, http.StatusOK, out)
 }

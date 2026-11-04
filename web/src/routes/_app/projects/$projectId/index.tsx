@@ -1,14 +1,17 @@
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ExternalLink, Layers, Plus } from "lucide-react";
+import { Button, LinkButton } from "@cloudflare/kumo";
+import { ArrowSquareOutIcon, PlusIcon } from "@phosphor-icons/react";
+import { Layers } from "lucide-react";
 import { projectQuery } from "../../../../api/projects";
 import { projectFolderUrl, telemetryQuery } from "../../../../api/telemetry";
-import { Button, LinkButton } from "../../../../components/Button";
 import { Page } from "../../../../components/Layout";
 import { EmptyState } from "../../../../components/Misc";
-import { PageHeader } from "../../../../components/Shell";
+import { PageHeader } from "../../../../components/PageHeader";
+import { useServiceEdges } from "../../../../features/projects/overview";
+import { RecentDeployments } from "../../../../features/projects/ProjectActivity";
+import { ProjectDiagram } from "../../../../features/projects/ProjectDiagram";
 import { servicesLabel } from "../../../../features/projects/graph";
-import { ProjectMap, ServiceCards } from "../../../../features/projects/ProjectCanvas";
 import { NewServiceDialog } from "../../../../features/services/NewServiceDialog";
 
 type ProjectSearch = { new?: boolean };
@@ -28,26 +31,29 @@ function ProjectPage() {
     void navigate({ search: open ? { new: true } : {}, replace: !open });
 
   const newButton = (
-    <Button variant="primary" onClick={() => setAdding(true)}>
-      <Plus size={14} />
+    <Button variant="primary" icon={<PlusIcon size={14} />} onClick={() => setAdding(true)}>
       New service
     </Button>
   );
 
+  const edges = useServiceEdges(project.services);
+
   return (
-    <Page>
+    <>
       <PageHeader
+        crumbs={[{ label: "Projects", href: "/" }]}
         title={project.name}
-        description={servicesLabel(project.services.length)}
+        meta={servicesLabel(project.services.length)}
         actions={
           <>
             {telemetry?.settings.enabled && (
               <LinkButton
+                variant="secondary"
                 href={projectFolderUrl(telemetry.grafanaUrl, project.id)}
                 target="_blank"
                 rel="noreferrer"
+                icon={<ArrowSquareOutIcon size={14} />}
               >
-                <ExternalLink size={14} />
                 Open in Grafana
               </LinkButton>
             )}
@@ -55,26 +61,32 @@ function ProjectPage() {
           </>
         }
       />
-      {project.services.length === 0 ? (
-        <EmptyState
-          icon={<Layers />}
-          title="No services yet"
-          description="Deploy a GitHub repo or a Docker image, or add a database. Services in a project reach each other by name."
-          actions={newButton}
+      <Page>
+        {project.services.length === 0 ? (
+          <EmptyState
+            icon={<Layers />}
+            title="No services yet"
+            description="Deploy a GitHub repo or a Docker image, or add a database. Services in a project reach each other by name."
+            actions={newButton}
+          />
+        ) : (
+          <>
+            <ProjectDiagram
+              services={project.services}
+              edges={edges}
+              href={(s) => `/projects/${s.projectId}/services/${s.id}`}
+            />
+            <RecentDeployments services={project.services} />
+          </>
+        )}
+        <NewServiceDialog
+          projectId={project.id}
+          projectName={project.name}
+          taken={project.services.map((s) => s.name)}
+          open={search.new === true}
+          onOpenChange={setAdding}
         />
-      ) : (
-        <>
-          <ProjectMap projectId={project.id} services={project.services} />
-          <ServiceCards services={project.services} />
-        </>
-      )}
-      <NewServiceDialog
-        projectId={project.id}
-        projectName={project.name}
-        taken={project.services.map((s) => s.name)}
-        open={search.new === true}
-        onOpenChange={setAdding}
-      />
-    </Page>
+      </Page>
+    </>
   );
 }

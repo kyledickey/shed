@@ -260,7 +260,6 @@ function Sandbox({ project }: { project: PlayProject }) {
           {edges.map((e) => (
             <li key={`${e.from}>${e.to}`} className={styles.dep}>
               {e.from} references {e.to}
-              {e.label ? ` (${e.label})` : ""}
             </li>
           ))}
         </ul>

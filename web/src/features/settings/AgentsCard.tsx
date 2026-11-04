@@ -1,20 +1,19 @@
+import { Button, ClipboardText, Loader, Table, Tabs } from "@cloudflare/kumo";
+import { ArrowRightIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Bot } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import { oauthGrantsQuery, useRevokeOAuthGrant } from "../../api/oauth";
 import type { OAuthGrant } from "../../api/types";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Segmented } from "../../components/Form";
-import { CopyButton, ServiceIcon, Skeleton } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
+import { SettingRow, Well } from "../../components/Settings";
 import { formatDate, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
 import styles from "./AgentsCard.module.css";
 import { ConfirmDialog } from "./ConfirmDialog";
-import settings from "./Settings.module.css";
+import form from "./Form.module.css";
+import { Group } from "./Group";
 
 type Client = "any" | "claude" | "codex" | "url";
 
@@ -53,45 +52,39 @@ export function AgentsCard() {
   const [client, setClient] = useState<Client>("any");
   const { value, note } = connect(client, url);
   return (
-    <LayerCard
+    <Group
       title={
         <>
-          Agents <HelpTip topic="mcp" />
+          <HelpTip topic="mcp">Agents</HelpTip>
         </>
       }
-      meta="Connect AI agents over MCP."
-    >
-      <div className={settings.section}>
-        <p className={settings.intro}>
-          Agents can read your projects, deployments, logs, and metrics, never variable values. Each
-          signs in through your browser with GitHub.{" "}
-          <Link to="/docs/$slug" params={{ slug: "mcp" }} className={settings.docs}>
-            Docs <ArrowRight size={12} />
+      description={
+        <>
+          Agents can read your projects, deployments, logs, and metrics over MCP, never variable
+          values. Each signs in through your browser with GitHub.{" "}
+          <Link to="/docs/$slug" params={{ slug: "mcp" }} className={form.link}>
+            Docs <ArrowRightIcon size={12} />
           </Link>
-        </p>
-        <div className={styles.group}>
-          <Segmented
-            value={client}
-            onChange={setClient}
-            options={clients}
+        </>
+      }
+    >
+      <SettingRow
+        label="Connect an agent"
+        description={note}
+        control={
+          <Tabs
+            variant="segmented"
             size="sm"
-            label="Client"
+            value={client}
+            onValueChange={(v) => setClient(v as Client)}
+            tabs={clients}
           />
-          <CodeLine value={value} label={client === "url" ? "Copy URL" : "Copy command"} />
-          <p className={settings.note}>{note}</p>
-        </div>
-      </div>
+        }
+      >
+        <ClipboardText text={value} size="base" className={styles.command} />
+      </SettingRow>
       <ConnectedClients />
-    </LayerCard>
-  );
-}
-
-function CodeLine({ value, label }: { value: string; label: string }) {
-  return (
-    <div className={styles.code}>
-      <code className={styles.codeValue}>{value}</code>
-      <CopyButton value={value} label={label} />
-    </div>
+    </Group>
   );
 }
 
@@ -102,43 +95,57 @@ function ConnectedClients() {
   const toast = useToast();
 
   return (
-    <div className={styles.clients}>
-      <div className={styles.clientsHead}>
-        <p className={settings.subhead}>Connected clients</p>
-      </div>
+    <>
+      <h4 className={form.subhead}>Connected clients</h4>
       {grants.error ? (
-        <p className={styles.empty}>{errorMessage(grants.error)}</p>
+        <p className={form.error}>{errorMessage(grants.error)}</p>
       ) : !grants.data ? (
-        <div className={styles.empty}>
-          <Skeleton width="50%" height={14} />
-        </div>
+        <Well empty>
+          <Loader size="sm" />
+        </Well>
       ) : grants.data.length === 0 ? (
-        <p className={styles.empty}>No agents are connected.</p>
+        <Well empty>No agents are connected.</Well>
       ) : (
-        <div className={settings.list}>
-          {grants.data.map((g) => (
-            <div key={g.id} className={settings.row}>
-              <ServiceIcon icon={<Bot />} tone="neutral" size={28} />
-              <div className={settings.rowMain}>
-                <span className={styles.name}>{g.clientName || "Unnamed client"}</span>
-                <span className={styles.details}>
-                  {g.redirectHost} ·{" "}
-                  <span title={formatDate(g.createdAt)}>connected {relativeTime(g.createdAt)}</span>{" "}
-                  ·{" "}
-                  {g.lastUsedAt ? (
-                    <span title={formatDate(g.lastUsedAt)}>
-                      last used {relativeTime(g.lastUsedAt)}
-                    </span>
-                  ) : (
-                    "never used"
-                  )}
-                </span>
-              </div>
-              <Button size="sm" onClick={() => setRevoking(g)}>
-                Revoke
-              </Button>
-            </div>
-          ))}
+        <div className={form.table}>
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Client</Table.Head>
+                <Table.Head>Redirect host</Table.Head>
+                <Table.Head>Connected</Table.Head>
+                <Table.Head>Last used</Table.Head>
+                <Table.Head aria-label="Actions" />
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {grants.data.map((g) => (
+                <Table.Row key={g.id}>
+                  <Table.Cell className={styles.name}>
+                    {g.clientName || "Unnamed client"}
+                  </Table.Cell>
+                  <Table.Cell className={form.cellMono}>{g.redirectHost}</Table.Cell>
+                  <Table.Cell className={form.cellSubtle} title={formatDate(g.createdAt)}>
+                    {relativeTime(g.createdAt)}
+                  </Table.Cell>
+                  <Table.Cell
+                    className={form.cellSubtle}
+                    title={g.lastUsedAt ? formatDate(g.lastUsedAt) : undefined}
+                  >
+                    {g.lastUsedAt ? relativeTime(g.lastUsedAt) : "Never"}
+                  </Table.Cell>
+                  <Table.Cell className={form.cellActions}>
+                    <Button
+                      size="sm"
+                      variant="secondary-destructive"
+                      onClick={() => setRevoking(g)}
+                    >
+                      Revoke
+                    </Button>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
         </div>
       )}
       <ConfirmDialog
@@ -164,6 +171,6 @@ function ConnectedClients() {
         <strong>{revoking?.clientName || "This client"}</strong> loses access immediately. To use it
         again, connect it again from the agent.
       </ConfirmDialog>
-    </div>
+    </>
   );
 }

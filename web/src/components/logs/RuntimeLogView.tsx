@@ -1,23 +1,23 @@
-import { Dialog as BaseDialog } from "@base-ui/react/dialog";
+import { Button, InputGroup, LayerCard, Tabs, Tooltip } from "@cloudflare/kumo";
+import { Dialog as BaseDialog } from "@cloudflare/kumo/primitives/dialog";
 import {
-  ChevronRight,
-  Download,
-  Maximize2,
-  Minimize2,
-  Pause,
-  Play,
-  Search,
-  TextWrap,
-  Trash,
-} from "lucide-react";
+  ArrowsInIcon,
+  ArrowsOutIcon,
+  CaretRightIcon,
+  DownloadSimpleIcon,
+  MagnifyingGlassIcon,
+  PauseIcon,
+  PlayIcon,
+  TextAlignLeftIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { LogLine, StreamState } from "../../api/events";
 import { cx } from "../../lib/cx";
 import { parseRuntimeLine, type LogLevel, type RuntimeLog } from "../../lib/logs";
-import { Button } from "../Button";
 import { Histogram } from "../charts/Mini";
 import { CopyButton } from "../Misc";
-import { Tooltip } from "../Overlay";
+import { CountChip } from "../Pill";
 import type { Tone } from "../tone";
 import styles from "./logs.module.css";
 import { Highlight, JumpToLatest, LogTime, StreamIndicator, useFollow } from "./shared";
@@ -31,11 +31,11 @@ const levels: { level: LogLevel; label: string; tone: Tone }[] = [
   { level: "debug", label: "Debug", tone: "neutral" },
 ];
 
-function statusTone(status: number): Tone {
-  if (status >= 500) return "tomato";
-  if (status >= 400) return "sunflower";
-  if (status >= 300) return "neutral";
-  return "grass";
+/** statusClass marks server errors in the danger color and redirects as quiet. */
+function statusClass(status: number): string | undefined {
+  if (status >= 500) return styles.statusError;
+  if (status >= 300 && status < 400) return styles.statusQuiet;
+  return undefined;
 }
 
 /** showMessage hides a message that only repeats the HTTP request line. */
@@ -80,7 +80,7 @@ export function RuntimeLogView({
   height = 440,
 }: RuntimeLogViewProps) {
   const [query, setQuery] = useState("");
-  const [hidden, setHidden] = useState<ReadonlySet<LogLevel>>(new Set());
+  const [level, setLevel] = useState<LogLevel | "all">("all");
   const [wrap, setWrap] = useState(true);
   const [frozen, setFrozen] = useState<LogLine[] | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -94,17 +94,11 @@ export function RuntimeLogView({
   const visible = useMemo(() => {
     const q = query.toLowerCase();
     return entries.filter(
-      (e) => !hidden.has(e.level ?? "info") && (!q || e.raw.toLowerCase().includes(q)),
+      (e) =>
+        (level === "all" || (e.level ?? "info") === level) &&
+        (!q || e.raw.toLowerCase().includes(q)),
     );
-  }, [entries, hidden, query]);
-
-  const toggle = (level: LogLevel) =>
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(level)) next.delete(level);
-      else next.add(level);
-      return next;
-    });
+  }, [entries, level, query]);
 
   const download = () => {
     const blob = new Blob([entries.map((e) => e.raw).join("\n")], { type: "text/plain" });
@@ -115,91 +109,94 @@ export function RuntimeLogView({
     URL.revokeObjectURL(a.href);
   };
 
+  const tool = (label: string, icon: ReactNode, onClick: () => void, pressed?: boolean) => (
+    <Tooltip
+      content={label}
+      render={
+        <Button
+          variant="ghost"
+          size="sm"
+          shape="square"
+          icon={icon}
+          aria-label={label}
+          aria-pressed={pressed}
+          className={cx(pressed && styles.pressed)}
+          onClick={onClick}
+        />
+      }
+    />
+  );
+
   const toolbar = (inFullscreen: boolean) => (
     <div className={styles.toolbar}>
-      <label className={styles.search}>
-        <Search size={14} />
-        <input
+      <InputGroup size="sm" className={styles.search}>
+        <InputGroup.Addon>
+          <MagnifyingGlassIcon size={14} />
+        </InputGroup.Addon>
+        <InputGroup.Input
+          aria-label="Search logs"
           placeholder="Search logs"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           spellCheck={false}
         />
-        {query && <span className={styles.matches}>{visible.length}</span>}
-      </label>
-      <div className={styles.levelChips}>
-        {levels.map((l) => (
-          <button
-            key={l.level}
-            type="button"
-            className={styles.levelChip}
-            data-tone={l.tone}
-            aria-pressed={!hidden.has(l.level)}
-            onClick={() => toggle(l.level)}
-          >
-            {l.label}
-            <span className={styles.levelChipCount}>{counts[l.level]}</span>
-          </button>
-        ))}
-      </div>
+        {query && (
+          <InputGroup.Addon align="end">
+            <CountChip>{visible.length}</CountChip>
+          </InputGroup.Addon>
+        )}
+      </InputGroup>
+      <Tabs
+        variant="segmented"
+        size="sm"
+        aria-label="Level"
+        value={level}
+        onValueChange={(v) => setLevel(v as LogLevel | "all")}
+        tabs={[
+          { value: "all", label: "All" },
+          ...levels.map((l) => ({
+            value: l.level,
+            label: (
+              <>
+                {l.label}
+                <span className={styles.levelCount}>{counts[l.level]}</span>
+              </>
+            ),
+          })),
+        ]}
+      />
       <div className={styles.toolbarEnd}>
         <StreamIndicator state={state} paused={frozen !== null} />
-        <Tooltip content={frozen ? "Resume" : "Pause"}>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon
-            aria-label={frozen ? "Resume" : "Pause"}
-            onClick={() => setFrozen(frozen ? null : lines)}
-          >
-            {frozen ? <Play size={14} /> : <Pause size={14} />}
-          </Button>
-        </Tooltip>
-        <Tooltip content={wrap ? "Don't wrap lines" : "Wrap lines"}>
-          <Button
-            variant={wrap ? "soft" : "ghost"}
-            size="sm"
-            icon
-            aria-label="Wrap lines"
-            aria-pressed={wrap}
-            onClick={() => setWrap(!wrap)}
-          >
-            <TextWrap size={14} />
-          </Button>
-        </Tooltip>
-        <Tooltip content="Download">
-          <Button variant="ghost" size="sm" icon aria-label="Download" onClick={download}>
-            <Download size={14} />
-          </Button>
-        </Tooltip>
-        {onClear && (
-          <Tooltip content="Clear">
-            <Button variant="ghost" size="sm" icon aria-label="Clear" onClick={onClear}>
-              <Trash size={14} />
-            </Button>
-          </Tooltip>
+        {tool(
+          frozen ? "Resume" : "Pause",
+          frozen ? <PlayIcon size={16} /> : <PauseIcon size={16} />,
+          () => setFrozen(frozen ? null : lines),
         )}
-        <Tooltip content={inFullscreen ? "Exit fullscreen" : "Fullscreen"}>
-          <Button
-            variant="ghost"
-            size="sm"
-            icon
-            aria-label={inFullscreen ? "Exit fullscreen" : "Fullscreen"}
-            onClick={() => setFullscreen(!inFullscreen)}
-          >
-            {inFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </Button>
-        </Tooltip>
+        {tool(
+          wrap ? "Don't wrap lines" : "Wrap lines",
+          <TextAlignLeftIcon size={16} />,
+          () => setWrap(!wrap),
+          wrap,
+        )}
+        {tool("Download", <DownloadSimpleIcon size={16} />, download)}
+        {onClear && tool("Clear", <TrashIcon size={16} />, onClear)}
+        {tool(
+          inFullscreen ? "Exit fullscreen" : "Fullscreen",
+          inFullscreen ? <ArrowsInIcon size={16} /> : <ArrowsOutIcon size={16} />,
+          () => setFullscreen(!inFullscreen),
+        )}
       </div>
     </div>
   );
 
   return (
     <>
-      <div className={styles.viewer}>
-        {toolbar(false)}
-        <LogList entries={visible} query={query} wrap={wrap} style={{ height }} />
-      </div>
+      <LayerCard className={styles.viewer}>
+        <LayerCard.Secondary className={styles.bar}>{toolbar(false)}</LayerCard.Secondary>
+        <LayerCard.Primary className={styles.panel}>
+          <LogList entries={visible} query={query} wrap={wrap} style={{ height }} />
+        </LayerCard.Primary>
+      </LayerCard>
 
       <BaseDialog.Root open={fullscreen} onOpenChange={setFullscreen}>
         <BaseDialog.Portal>
@@ -209,8 +206,10 @@ export function RuntimeLogView({
               <BaseDialog.Title className={styles.fsTitle}>{title}</BaseDialog.Title>
               <VolumeChart entries={entries} />
             </header>
-            {toolbar(true)}
-            <LogList entries={visible} query={query} wrap={wrap} className={styles.fsList} />
+            <div className={styles.bar}>{toolbar(true)}</div>
+            <div className={cx(styles.panel, styles.fsPanel)}>
+              <LogList entries={visible} query={query} wrap={wrap} className={styles.fsList} />
+            </div>
           </BaseDialog.Popup>
         </BaseDialog.Portal>
       </BaseDialog.Root>
@@ -282,9 +281,7 @@ function RuntimeRow({
           {e.http && (
             <span className={styles.http}>
               <span className={styles.method}>{e.http.method}</span>
-              <span className={styles.status} data-tone={statusTone(e.http.status)}>
-                {e.http.status}
-              </span>
+              <span className={cx(styles.status, statusClass(e.http.status))}>{e.http.status}</span>
               <span className={styles.path}>
                 <Highlight text={e.http.path} query={query} />
               </span>
@@ -306,7 +303,7 @@ function RuntimeRow({
             </span>
           ))}
         </span>
-        <ChevronRight size={13} className={styles.rowChevron} />
+        <CaretRightIcon size={12} className={styles.rowChevron} />
       </button>
       {open && (
         <div className={styles.detail}>

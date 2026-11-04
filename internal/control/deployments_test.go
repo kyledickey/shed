@@ -35,10 +35,11 @@ func TestDeploymentsImageAvailability(t *testing.T) {
 				}
 			}
 			f.deployer.available, f.deployer.imagesErr = tc.available, tc.err
-			deps, err := f.plane.Deployments(ctx, svc.ID, 0)
+			page, err := f.plane.Deployments(ctx, svc.ID, Page{})
 			if err != nil {
 				t.Fatal(err)
 			}
+			deps := page.Deployments
 			if len(deps) != 2 {
 				t.Fatalf("deployments = %d, want 2", len(deps))
 			}
@@ -57,24 +58,50 @@ func TestDeploymentsImageAvailability(t *testing.T) {
 	}
 }
 
-func TestDeploymentsLimit(t *testing.T) {
+func TestDeploymentsPage(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	svc := createApp(t, f.st)
-	for range MaxDeployments + 5 {
-		if _, err := f.st.CreateDeployment(ctx, store.Deployment{
+	var ids []string // Newest first.
+	for range MaxPage + 5 {
+		d, err := f.st.CreateDeployment(ctx, store.Deployment{
 			ServiceID: svc.ID, Status: store.StatusRemoved, Trigger: store.TriggerManual,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatal(err)
 		}
+		ids = append([]string{d.ID}, ids...)
 	}
-	for limit, want := range map[int]int{0: MaxDeployments, -1: MaxDeployments, 3: 3, 1000: MaxDeployments} {
-		deps, err := f.plane.Deployments(ctx, svc.ID, limit)
-		if err != nil || len(deps) != want {
-			t.Errorf("Deployments(%d) = %d, %v; want %d", limit, len(deps), err, want)
-		}
+	for _, tt := range []struct {
+		name     string
+		page     Page
+		first    string
+		n        int
+		wantNext string
+	}{
+		{"default", Page{}, ids[0], DefaultPage, ids[DefaultPage-1]},
+		{"negative", Page{Limit: -1}, ids[0], DefaultPage, ids[DefaultPage-1]},
+		{"limit", Page{Limit: 3}, ids[0], 3, ids[2]},
+		{"capped", Page{Limit: 1000}, ids[0], MaxPage, ids[MaxPage-1]},
+		{"after a cursor", Page{Before: ids[2], Limit: 3}, ids[3], 3, ids[5]},
+		{"exactly the rest", Page{Before: ids[len(ids)-4], Limit: 3}, ids[len(ids)-3], 3, ""},
+		{"short last page", Page{Before: ids[len(ids)-3], Limit: 5}, ids[len(ids)-2], 2, ""},
+		{"unknown cursor", Page{Before: "nope"}, "", 0, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := f.plane.Deployments(ctx, svc.ID, tt.page)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Deployments) != tt.n || got.Next != tt.wantNext {
+				t.Fatalf("Deployments(%+v) = %d, next %q; want %d, next %q", tt.page, len(got.Deployments), got.Next, tt.n, tt.wantNext)
+			}
+			if tt.n > 0 && got.Deployments[0].ID != tt.first {
+				t.Errorf("first = %s, want %s", got.Deployments[0].ID, tt.first)
+			}
+		})
 	}
-	if _, err := f.plane.Deployments(ctx, "nope", 1); !errors.Is(err, ErrNotFound) {
+	if _, err := f.plane.Deployments(ctx, "nope", Page{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Deployments(nope) = %v, want not found", err)
 	}
 }

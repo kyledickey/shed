@@ -66,7 +66,7 @@ type Control interface {
 	CreateVolume(ctx context.Context, serviceID, mountPath string) (store.Volume, error)
 	DeleteVolume(ctx context.Context, id string) error
 
-	Deployments(ctx context.Context, serviceID string, limit int) ([]control.DeploymentView, error)
+	Deployments(ctx context.Context, serviceID string, page control.Page) (control.DeploymentPage, error)
 	Deployment(ctx context.Context, id string) (control.DeploymentView, error)
 	Deploy(ctx context.Context, serviceID string) (control.DeploymentView, error)
 	Redeploy(ctx context.Context, deploymentID string) (control.DeploymentView, error)
@@ -82,8 +82,8 @@ type Control interface {
 	ServiceMetrics(ctx context.Context, serviceID, rng string) (metrics.Series, error)
 	HostMetrics(ctx context.Context, rng string) (metrics.HostSeries, error)
 
-	ServiceBackups(ctx context.Context, serviceID string) (control.BackupList, error)
-	SystemBackups(ctx context.Context) (control.BackupList, error)
+	ServiceBackups(ctx context.Context, serviceID string, page control.Page) (control.BackupList, error)
+	SystemBackups(ctx context.Context, page control.Page) (control.BackupList, error)
 	SetServiceBackupPolicy(ctx context.Context, serviceID string, in backup.PolicyInput) (backup.Policy, error)
 	SetSystemBackupPolicy(ctx context.Context, in backup.PolicyInput) (backup.Policy, error)
 	BackUpService(ctx context.Context, serviceID string) (control.BackupView, error)

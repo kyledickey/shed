@@ -1,18 +1,15 @@
+import { useState } from "react";
+import { Button, DropdownMenu, Tooltip } from "@cloudflare/kumo";
 import {
-  Archive,
-  Check,
-  Download,
-  Ellipsis,
-  Hourglass,
-  Lock,
-  RotateCcw,
-  Trash2,
-  TriangleAlert,
-  X,
-} from "lucide-react";
-import { useState, type ReactNode } from "react";
+  ArrowCounterClockwiseIcon,
+  DotsThreeIcon,
+  DownloadSimpleIcon,
+  LockSimpleIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import { downloadUrl, useDeleteBackup, useRestoreBackup, useRunBackup } from "../../api/backups";
 import { errorMessage } from "../../api/client";
+import type { CursorPages } from "../../api/paging";
 import {
   isBackupActive,
   type Backup,
@@ -20,21 +17,29 @@ import {
   type BackupStatus,
   type BackupTrigger,
 } from "../../api/types";
-import { Badge, Count, Spinner } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { List } from "../../components/Layout";
-import { EmptyState } from "../../components/Misc";
-import { Menu, MenuItem, MenuSeparator, Tooltip, useToast } from "../../components/Overlay";
+import { Spinner } from "../../components/Badge";
+import { useToast } from "../../components/Overlay";
+import { Pager } from "../../components/Pager";
+import { Pill } from "../../components/Pill";
+import {
+  RecordEmpty,
+  RecordEnd,
+  RecordList,
+  RecordMessage,
+  RecordMeta,
+  RecordNote,
+  RecordRow,
+  RecordText,
+} from "../../components/RecordList";
 import type { Tone } from "../../components/tone";
 import { formatBytes } from "../../lib/format";
 import { formatDate, formatDuration, relativeTime } from "../../lib/time";
-import { ConfirmDialog } from "../settings/ConfirmDialog";
-import styles from "./Backups.module.css";
 import { HelpTip } from "../docs/HelpTip";
+import { ConfirmDialog } from "../settings/ConfirmDialog";
+import styles from "./BackupList.module.css";
 
-/** The API returns at most this many backups. */
-const LIST_LIMIT = 100;
+const COLUMNS = "minmax(150px, 170px) minmax(0, 1fr) 112px 100px minmax(0, 170px) 124px 96px 32px";
+const NARROW = "minmax(0, 1fr) auto 32px";
 
 const triggerLabels: Record<BackupTrigger, string> = {
   schedule: "Scheduled",
@@ -60,51 +65,72 @@ type BackupListProps = {
   /** A service id, or null for shed's own database, which cannot be restored from the dashboard. */
   scope: string | null;
   serviceName?: string;
+  /** The page of backups on screen. */
   backups: Backup[];
+  /** The cursor of the following page, or null on the last. */
+  next: string | null;
+  pages: CursorPages;
+  /** The next page is loading. */
+  turning?: boolean;
+  /** A backup is queued, running, or uploading; it is on the first page. */
+  backingUp: boolean;
   /** A restore is running for this service, so another cannot start. */
   restoreRunning?: boolean;
 };
 
-/** BackupList lists backups, newest first, with a "Back up now" button and per-row actions. */
-export function BackupList({ scope, serviceName, backups, restoreRunning }: BackupListProps) {
+/** BackupList lists backups, newest first, a page at a time, with a "Back up now" button and per-row actions. */
+export function BackupList({
+  scope,
+  serviceName,
+  backups,
+  next,
+  pages,
+  turning,
+  backingUp,
+  restoreRunning,
+}: BackupListProps) {
   const [restoring, setRestoring] = useState<Backup | null>(null);
   const [deleting, setDeleting] = useState<Backup | null>(null);
 
   return (
-    <LayerCard
-      title={
-        <>
-          Backups <HelpTip topic="backupMethods" />
-        </>
-      }
-      meta={<Count>{backups.length}</Count>}
-      actions={<BackupNowButton scope={scope} busy={backups.some(isBackupActive)} />}
-      sheetClassName={styles.sheet}
-      footer={
-        backups.length >= LIST_LIMIT && (
-          <span className={styles.foot}>Showing the {LIST_LIMIT} most recent backups.</span>
-        )
-      }
-    >
-      {backups.length === 0 ? (
-        <EmptyState
-          icon={<Archive />}
-          tone="neutral"
-          title="No backups yet"
-          description="Backups appear here when the schedule runs or when you back up now."
-        />
-      ) : (
-        <List>
-          {backups.map((b) => (
+    <>
+      <RecordList
+        title={
+          <>
+            <HelpTip topic="backupMethods">Backups</HelpTip>
+          </>
+        }
+        actions={<BackupNowButton scope={scope} busy={backingUp} />}
+        footer={
+          (pages.hasPrevious || next) && (
+            <Pager
+              count={backups.length}
+              hasPrevious={pages.hasPrevious}
+              hasNext={next !== null}
+              busy={turning}
+              onPrevious={pages.previous}
+              onNext={() => next && pages.next(next)}
+            />
+          )
+        }
+      >
+        {backups.length === 0 ? (
+          <RecordEmpty>
+            {pages.hasPrevious
+              ? "No older backups."
+              : "No backups yet. They appear here when the schedule runs or when you back up now."}
+          </RecordEmpty>
+        ) : (
+          backups.map((b) => (
             <BackupRow
               key={b.id}
               backup={b}
               onRestore={scope && !restoreRunning ? () => setRestoring(b) : undefined}
               onDelete={() => setDeleting(b)}
             />
-          ))}
-        </List>
-      )}
+          ))
+        )}
+      </RecordList>
       {scope && (
         <RestoreDialog
           serviceId={scope}
@@ -114,7 +140,7 @@ export function BackupList({ scope, serviceName, backups, restoreRunning }: Back
         />
       )}
       <DeleteDialog scope={scope} backup={deleting} onClose={() => setDeleting(null)} />
-    </LayerCard>
+    </>
   );
 }
 
@@ -143,6 +169,17 @@ function BackupNowButton({ scope, busy }: { scope: string | null; busy: boolean 
   );
 }
 
+/** BackupStatusWord is a backup's status as a thin bar and a word, or a spinner while it runs. */
+function BackupStatusWord({ status }: { status: BackupStatus }) {
+  const look = statusLooks[status];
+  return (
+    <span className={styles.status} data-tone={look.tone}>
+      {look.live ? <Spinner tone={look.tone} size={10} /> : <span className={styles.bar} />}
+      {look.label}
+    </span>
+  );
+}
+
 function BackupRow({
   backup: b,
   onRestore,
@@ -152,132 +189,98 @@ function BackupRow({
   onRestore?: () => void;
   onDelete: () => void;
 }) {
-  const look = statusLooks[b.status];
   const active = isBackupActive(b);
   const stored = b.local || b.remote;
+  const uploadFailed = b.remoteError !== "";
+  const done = b.status === "succeeded";
+  const details = [
+    methodLabels[b.method],
+    (done || b.status === "uploading") && formatBytes(b.size),
+    b.finishedAt && formatDuration(b.createdAt, b.finishedAt),
+  ].filter(Boolean);
   return (
-    <div className={styles.row}>
-      <div className={styles.rowMain}>
-        <span className={styles.rail} data-tone={look.tone}>
-          <StatusGlyph status={b.status} />
-        </span>
-        <div className={styles.body}>
-          <span className={styles.title}>
-            {formatDate(b.createdAt)}
-            <span className={styles.ago}>{relativeTime(b.createdAt)}</span>
-          </span>
-          <span className={styles.meta}>
-            <Badge size="sm" variant={b.trigger === "pre-restore" ? "outline" : "soft"}>
-              {triggerLabels[b.trigger]}
-            </Badge>
-            <span>{methodLabels[b.method]}</span>
-            {(b.status === "succeeded" || b.status === "uploading") && (
-              <span>{formatBytes(b.size)}</span>
+    <RecordRow columns={COLUMNS} narrowColumns={NARROW}>
+      <RecordText title={relativeTime(b.createdAt)}>{formatDate(b.createdAt)}</RecordText>
+      <RecordMessage optional className={styles.file} title={b.fileName}>
+        {b.fileName}
+      </RecordMessage>
+      <span className={styles.statusCell}>
+        <BackupStatusWord status={b.status} />
+      </span>
+      <RecordMeta optional>
+        <Pill>{triggerLabels[b.trigger]}</Pill>
+      </RecordMeta>
+      <RecordMeta optional>{details.join(" · ")}</RecordMeta>
+      <RecordMeta optional className={styles.stored}>
+        {done && b.local && <Pill>Local</Pill>}
+        {done && b.remote && !uploadFailed && <Pill>S3</Pill>}
+        {done && uploadFailed && (
+          <Tooltip
+            content={`Upload to S3 failed: ${b.remoteError}`}
+            render={
+              <span className={styles.failedPill} aria-label="Upload to S3 failed" tabIndex={0}>
+                <Pill>S3</Pill>
+              </span>
+            }
+          />
+        )}
+        {done && !stored && !uploadFailed && "No copy"}
+        {done && b.encrypted && (
+          <Tooltip
+            content="Encrypted with age"
+            render={
+              <span className={styles.lock} aria-label="Encrypted" tabIndex={0}>
+                <LockSimpleIcon size={14} />
+              </span>
+            }
+          />
+        )}
+      </RecordMeta>
+      <RecordMeta optional className={styles.when}>
+        {relativeTime(b.createdAt)}
+      </RecordMeta>
+      <RecordEnd>
+        <DropdownMenu>
+          <DropdownMenu.Trigger
+            render={
+              <Button
+                variant="ghost"
+                size="sm"
+                shape="square"
+                icon={<DotsThreeIcon size={16} weight="bold" />}
+                aria-label="Backup actions"
+              />
+            }
+          />
+          <DropdownMenu.Content align="end">
+            {done && stored && (
+              <DropdownMenu.LinkItem
+                icon={DownloadSimpleIcon}
+                href={downloadUrl(b.id)}
+                render={<a download />}
+              >
+                Download
+              </DropdownMenu.LinkItem>
             )}
-            {b.finishedAt && <span>{formatDuration(b.createdAt, b.finishedAt)}</span>}
-            {b.fileName && <span className={styles.file}>{b.fileName}</span>}
-          </span>
-          {b.error && (
-            <Problem kind="error" icon={<X size={12} />}>
-              {b.error}
-            </Problem>
-          )}
-          {b.remoteError && (
-            <Problem kind="warning" icon={<TriangleAlert size={12} />}>
-              Upload to S3 failed: {b.remoteError}
-            </Problem>
-          )}
-        </div>
-        <div className={styles.side}>
-          {b.status === "succeeded" ? (
-            <span className={styles.badges}>
-              {b.encrypted && (
-                <Tooltip content="Encrypted with age">
-                  <span className={styles.lock} aria-label="Encrypted">
-                    <Lock size={13} />
-                  </span>
-                </Tooltip>
-              )}
-              {b.local && (
-                <Badge size="sm" variant="outline">
-                  Local
-                </Badge>
-              )}
-              {b.remote && (
-                <Badge size="sm" tone="accent">
-                  S3
-                </Badge>
-              )}
-              {!stored && (
-                <Badge size="sm" variant="outline">
-                  No copy
-                </Badge>
-              )}
-            </span>
-          ) : (
-            <Badge size="sm" tone={look.tone}>
-              {look.live && <Spinner tone={look.tone} size={8} />}
-              {look.label}
-            </Badge>
-          )}
-        </div>
-      </div>
-      <div className={styles.actions}>
-        <Menu
-          trigger={
-            <Button variant="ghost" size="sm" icon aria-label="Backup actions">
-              <Ellipsis size={14} />
-            </Button>
-          }
-        >
-          {b.status === "succeeded" && stored && (
-            <MenuItem icon={<Download size={14} />} href={downloadUrl(b.id)} download>
-              Download
-            </MenuItem>
-          )}
-          {onRestore && b.status === "succeeded" && stored && (
-            <MenuItem icon={<RotateCcw size={14} />} onClick={onRestore}>
-              Restore…
-            </MenuItem>
-          )}
-          {b.status === "succeeded" && stored && <MenuSeparator />}
-          <MenuItem icon={<Trash2 size={14} />} danger disabled={active} onClick={onDelete}>
-            Delete
-          </MenuItem>
-        </Menu>
-      </div>
-    </div>
-  );
-}
-
-function StatusGlyph({ status }: { status: BackupStatus }) {
-  switch (status) {
-    case "succeeded":
-      return <Check size={13} strokeWidth={2.5} />;
-    case "failed":
-      return <X size={13} strokeWidth={2.5} />;
-    case "running":
-    case "uploading":
-      return <Spinner tone="sky" size={12} />;
-    default:
-      return <Hourglass size={12} />;
-  }
-}
-
-function Problem({
-  kind,
-  icon,
-  children,
-}: {
-  kind: "error" | "warning";
-  icon: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <p className={styles.problem} data-kind={kind}>
-      {icon}
-      <span>{children}</span>
-    </p>
+            {onRestore && done && stored && (
+              <DropdownMenu.Item icon={ArrowCounterClockwiseIcon} onClick={onRestore}>
+                Restore…
+              </DropdownMenu.Item>
+            )}
+            {done && stored && <DropdownMenu.Separator />}
+            <DropdownMenu.Item
+              icon={TrashIcon}
+              variant="danger"
+              disabled={active}
+              onClick={onDelete}
+            >
+              Delete
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu>
+      </RecordEnd>
+      {b.error && <RecordNote className={styles.error}>{b.error}</RecordNote>}
+    </RecordRow>
   );
 }
 

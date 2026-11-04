@@ -1,17 +1,21 @@
-import { Activity, CloudUpload, GitCommitHorizontal, Rocket, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Deployment, DeploymentTrigger, Service } from "../../api/types";
-import { Avatar } from "../../components/Misc";
+import { Pill } from "../../components/Pill";
 import { shortSha } from "../../lib/names";
 import styles from "./CommitMeta.module.css";
 
-const triggers: Record<DeploymentTrigger, { label: string; icon: ReactNode }> = {
-  push: { label: "Push", icon: <GitCommitHorizontal size={12} /> },
-  manual: { label: "Manual", icon: <Rocket size={12} /> },
-  redeploy: { label: "Redeploy", icon: <RotateCcw size={12} /> },
-  create: { label: "Initial deploy", icon: <CloudUpload size={12} /> },
-  telemetry: { label: "Telemetry", icon: <Activity size={12} /> },
+const triggers: Record<DeploymentTrigger, string> = {
+  push: "Push",
+  manual: "Manual",
+  redeploy: "Redeploy",
+  create: "Initial deploy",
+  telemetry: "Telemetry",
 };
+
+/** triggerLabel names what started a deployment, for its source pill. */
+export function triggerLabel(d: Deployment): string {
+  return triggers[d.trigger];
+}
 
 /** deploymentTitle is a one-line name: the commit subject, else the image. */
 export function deploymentTitle(d: Deployment): string {
@@ -25,7 +29,26 @@ export function commitUrl(service: Pick<Service, "repo">, d: Deployment): string
     : null;
 }
 
-/** CommitMeta is the quiet line under a deployment title: sha, trigger, author, extras. */
+/** CommitSha is a deployment's short SHA, linked to GitHub when it can be. */
+export function CommitSha({
+  service,
+  deployment: d,
+}: {
+  service: Pick<Service, "repo">;
+  deployment: Deployment;
+}) {
+  if (!d.commitSha) return null;
+  const url = commitUrl(service, d);
+  return url ? (
+    <a className={styles.sha} href={url} target="_blank" rel="noreferrer">
+      {shortSha(d.commitSha)}
+    </a>
+  ) : (
+    <span className={styles.sha}>{shortSha(d.commitSha)}</span>
+  );
+}
+
+/** CommitMeta is the quiet line under a deployment title: sha, source, author, extras. */
 export function CommitMeta({
   service,
   deployment: d,
@@ -35,32 +58,11 @@ export function CommitMeta({
   deployment: Deployment;
   children?: ReactNode;
 }) {
-  const url = commitUrl(service, d);
-  const trigger = triggers[d.trigger];
   return (
     <span className={styles.meta}>
-      {d.commitSha &&
-        (url ? (
-          <a className={styles.sha} href={url} target="_blank" rel="noreferrer">
-            <GitCommitHorizontal size={12} />
-            {shortSha(d.commitSha)}
-          </a>
-        ) : (
-          <span className={styles.sha}>
-            <GitCommitHorizontal size={12} />
-            {shortSha(d.commitSha)}
-          </span>
-        ))}
-      <span className={styles.item}>
-        {trigger.icon}
-        {trigger.label}
-      </span>
-      {d.commitAuthor && (
-        <span className={styles.item}>
-          <Avatar name={d.commitAuthor} size={16} />
-          {d.commitAuthor}
-        </span>
-      )}
+      <CommitSha service={service} deployment={d} />
+      <Pill>{triggerLabel(d)}</Pill>
+      {d.commitAuthor && <span>by {d.commitAuthor}</span>}
       {children}
     </span>
   );

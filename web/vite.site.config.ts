@@ -10,7 +10,8 @@ const path = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 // The footer shows the newest release in CHANGELOG.md, which every release
 // adds a section to before it's tagged.
-const version = readFileSync(path("../CHANGELOG.md"), "utf8").match(/^## (v\S+)/m)?.[1];
+const changelog = readFileSync(path("../CHANGELOG.md"), "utf8");
+const version = changelog.match(/^## (v\S+)/m)?.[1];
 if (!version) throw new Error("site: CHANGELOG.md has no release section");
 
 /**
@@ -32,7 +33,10 @@ export default defineConfig(({ isSsrBuild }) => ({
     }),
     react({ include: /\.(mdx|tsx?)$/ }),
   ],
-  define: { __SHED_VERSION__: JSON.stringify(version) },
+  define: {
+    __SHED_VERSION__: JSON.stringify(version),
+    __SHED_CHANGELOG__: JSON.stringify(changelog),
+  },
   build: {
     // One stylesheet, linked from every prerendered page, so a page's CSS
     // doesn't wait for its route chunk and the HTML never paints unstyled.

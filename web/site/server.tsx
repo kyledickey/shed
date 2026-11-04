@@ -5,7 +5,7 @@ import { headFor, type Head } from "./head";
 import { createSiteRouter } from "./router";
 
 /** paths lists every page to prerender. */
-export const paths: string[] = ["/", ...docPages.map((p) => `/docs/${p.slug}`)];
+export const paths: string[] = ["/", "/changelog", ...docPages.map((p) => `/docs/${p.slug}`)];
 
 /** render renders the page at path to the HTML that goes inside #root. */
 export async function render(path: string): Promise<{ html: string; head: Head }> {

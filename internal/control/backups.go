@@ -11,9 +11,6 @@ import (
 	"github.com/kyledickey/shed/internal/store"
 )
 
-// backupsPageSize is how many backups a service or shed.db lists.
-const backupsPageSize = 100
-
 // forgetTimeout bounds how long deleting a service waits for its running
 // backup to stop.
 const forgetTimeout = 30 * time.Second
@@ -54,18 +51,20 @@ func (p *Plane) forgetBackups(ctx context.Context, serviceIDs ...string) {
 	}
 }
 
-// backupList returns the policy and newest backups of a service, or of
-// shed.db for an empty serviceID. serviceName is empty for shed.db.
-func (p *Plane) backupList(ctx context.Context, serviceID, serviceName string) (BackupList, error) {
+// backupList returns the policy and a page of the backups of a service, or
+// of shed.db for an empty serviceID. serviceName is empty for shed.db.
+func (p *Plane) backupList(ctx context.Context, serviceID, serviceName string, page Page) (BackupList, error) {
 	policy, err := p.backups.Policy(ctx, serviceID)
 	if err != nil {
 		return BackupList{}, err
 	}
-	backups, err := p.backups.Backups(ctx, serviceID, backupsPageSize)
+	limit := page.limit()
+	backups, err := p.backups.Backups(ctx, serviceID, page.Before, limit+1)
 	if err != nil {
 		return BackupList{}, err
 	}
-	out := BackupList{Policy: policy, Backups: make([]BackupView, 0, len(backups))}
+	backups, next := cut(backups, limit, func(b store.Backup) string { return b.ID })
+	out := BackupList{Policy: policy, Backups: make([]BackupView, 0, len(backups)), Next: next}
 	for _, b := range backups {
 		out.Backups = append(out.Backups, toBackup(b, serviceName))
 	}
@@ -77,14 +76,14 @@ func toBackup(b store.Backup, serviceName string) BackupView {
 	return BackupView{Backup: b, FileName: backup.DownloadName(b, serviceName)}
 }
 
-// ServiceBackups returns a service's backup policy, its newest backups, and
-// its latest restore.
-func (p *Plane) ServiceBackups(ctx context.Context, serviceID string) (BackupList, error) {
+// ServiceBackups returns a service's backup policy, a page of its backups,
+// and its latest restore.
+func (p *Plane) ServiceBackups(ctx context.Context, serviceID string, page Page) (BackupList, error) {
 	svc, err := p.store.Service(ctx, serviceID)
 	if err != nil {
 		return BackupList{}, err
 	}
-	out, err := p.backupList(ctx, svc.ID, svc.Name)
+	out, err := p.backupList(ctx, svc.ID, svc.Name, page)
 	if err != nil {
 		return BackupList{}, err
 	}
@@ -97,9 +96,10 @@ func (p *Plane) ServiceBackups(ctx context.Context, serviceID string) (BackupLis
 	return out, nil
 }
 
-// SystemBackups returns the backup policy and newest backups of shed.db.
-func (p *Plane) SystemBackups(ctx context.Context) (BackupList, error) {
-	return p.backupList(ctx, "", "")
+// SystemBackups returns the backup policy and a page of the backups of
+// shed.db.
+func (p *Plane) SystemBackups(ctx context.Context, page Page) (BackupList, error) {
+	return p.backupList(ctx, "", "", page)
 }
 
 // SetServiceBackupPolicy saves a service's backup policy.

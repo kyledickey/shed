@@ -14,15 +14,39 @@ import (
 const runtimeLogTail = 500
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) error {
-	deps, err := s.control.Deployments(r.Context(), r.PathValue("id"), control.MaxDeployments)
+	page, err := pageParams(r)
 	if err != nil {
 		return err
 	}
-	out := make([]deploymentJSON, 0, len(deps))
-	for _, d := range deps {
-		out = append(out, toDeployment(d))
+	deps, err := s.control.Deployments(r.Context(), r.PathValue("id"), page)
+	if err != nil {
+		return err
+	}
+	out := deploymentPageJSON{Deployments: make([]deploymentJSON, 0, len(deps.Deployments)), Next: nextCursor(deps.Next)}
+	for _, d := range deps.Deployments {
+		out.Deployments = append(out.Deployments, toDeployment(d))
 	}
 	return writeJSON(w, http.StatusOK, out)
+}
+
+// pageParams reads the before and limit parameters of a list of
+// deployments or backups. A limit above control.MaxPage is lowered to it.
+func pageParams(r *http.Request) (control.Page, error) {
+	q := r.URL.Query()
+	limit, err := positiveInt(q.Get("limit"), "limit")
+	if err != nil {
+		return control.Page{}, err
+	}
+	return control.Page{Before: q.Get("before"), Limit: int(min(limit, control.MaxPage))}, nil
+}
+
+// nextCursor returns the JSON form of a page's next cursor: null on the last
+// page.
+func nextCursor(next string) *string {
+	if next == "" {
+		return nil
+	}
+	return &next
 }
 
 // createDeployment deploys the head of the service's branch, or its image.

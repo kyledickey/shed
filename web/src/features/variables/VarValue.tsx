@@ -1,13 +1,13 @@
 import styles from "./Variables.module.css";
 
-/** VarValue renders a value with ${{ }} references as crayon chips. */
+/** VarValue renders a value with its ${{ }} references set off in outlined chips. */
 export function VarValue({ value }: { value: string }) {
   const parts = value.split(/(\$\{\{\s*[^}]+\s*\}\})/g);
   return (
     <>
       {parts.map((p, i) =>
         p.startsWith("${{") ? (
-          <span key={i} className={styles.ref} data-tone={p.includes(".") ? "sky" : "grape"}>
+          <span key={i} className={styles.ref}>
             {p}
           </span>
         ) : (

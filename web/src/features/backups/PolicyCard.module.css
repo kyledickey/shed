@@ -1,0 +1,113 @@
+.policy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
+
+  @media (min-width: 641px) {
+    flex-wrap: nowrap;
+  }
+
+  @media (max-width: 640px) {
+    justify-content: flex-start;
+  }
+}
+
+.presets {
+  width: auto;
+}
+
+.cron {
+  width: 160px;
+  font-family: var(--font-mono);
+}
+
+.hint {
+  max-width: 64ch;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  text-wrap: pretty;
+
+  & code {
+    font-size: 12px;
+  }
+}
+
+.select {
+  width: 160px;
+}
+
+.nested {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.nestedText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nestedLabel {
+  font-weight: 500;
+}
+
+.retention {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+
+  @media (max-width: 640px) {
+    align-items: flex-start;
+  }
+}
+
+.link {
+  color: var(--text-color-kumo-link);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.error {
+  margin: 0;
+  color: var(--text-color-kumo-danger);
+  font-size: var(--text-sm);
+}

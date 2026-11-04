@@ -1,11 +1,11 @@
+import { Button, Input } from "@cloudflare/kumo";
 import { useNavigate } from "@tanstack/react-router";
-import { FolderPlus } from "lucide-react";
 import { useId, useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useCreateProject } from "../../api/projects";
-import { Button } from "../../components/Button";
-import { Field, Input } from "../../components/Form";
-import { Dialog, useToast } from "../../components/Overlay";
+import { useToast } from "../../components/Overlay";
+import { FormDialog } from "../settings/FormDialog";
+import styles from "./ProjectList.module.css";
 
 type NewProjectDialogProps = { open: boolean; onOpenChange: (open: boolean) => void };
 
@@ -27,15 +27,15 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
   };
 
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={change}
+      size="base"
       title="New project"
-      description="A project groups services that reach each other over a private network."
-      icon={<FolderPlus size={18} />}
+      description="A project groups services that reach each other over a private network. Add an app or a database once it exists."
       footer={
         <>
-          <Button variant="ghost" onClick={() => change(false)}>
+          <Button variant="secondary" onClick={() => change(false)}>
             Cancel
           </Button>
           <Button
@@ -52,6 +52,7 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
     >
       <form
         id={formId}
+        className={styles.form}
         onSubmit={(e) => {
           e.preventDefault();
           if (!trimmed) return;
@@ -63,19 +64,16 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
           });
         }}
       >
-        <Field label="Name" error={create.error && errorMessage(create.error)}>
-          {(id) => (
-            <Input
-              id={id}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="my-project"
-              autoComplete="off"
-              autoFocus
-            />
-          )}
-        </Field>
+        <Input
+          label="Project name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="my-project"
+          autoComplete="off"
+          autoFocus
+          error={create.error ? errorMessage(create.error) : undefined}
+        />
       </form>
-    </Dialog>
+    </FormDialog>
   );
 }

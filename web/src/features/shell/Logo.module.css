@@ -1,0 +1,42 @@
+.logo {
+  display: block;
+  flex: none;
+}
+
+/* The mark keeps the same colors in both themes, like the favicon. */
+.edge {
+  fill: oklch(0.44 0.13 var(--accent-h));
+}
+
+.sheen {
+  fill: oklch(0.69 0.16 var(--accent-h));
+}
+
+.face {
+  fill: oklch(0.6 0.17 var(--accent-h));
+}
+
+.glyphEdge {
+  fill: oklch(0.83 0.07 var(--accent-h));
+  stroke: oklch(0.83 0.07 var(--accent-h));
+}
+
+.glyph {
+  fill: oklch(0.99 0.012 var(--accent-h));
+  stroke: oklch(0.99 0.012 var(--accent-h));
+}
+
+.roof {
+  fill: none;
+  stroke-width: 44;
+  stroke-linecap: round;
+}
+
+.body {
+  stroke-width: 20;
+  stroke-linejoin: round;
+}
+
+.slat {
+  fill: oklch(0.42 0.12 var(--accent-h));
+}

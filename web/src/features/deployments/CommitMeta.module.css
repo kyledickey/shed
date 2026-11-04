@@ -4,26 +4,17 @@
   flex-wrap: wrap;
   gap: 4px 12px;
   min-width: 0;
-  color: var(--ink-3);
-  font-size: var(--text-xs);
-}
-
-.item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
 }
 
 .sha {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--ink-2);
+  color: var(--text-color-kumo-default);
   font-family: var(--font-mono);
+  font-size: var(--text-sm);
 
   &:is(a):hover {
-    color: var(--ink);
+    color: var(--text-color-kumo-link);
     text-decoration: underline;
     text-underline-offset: 2px;
   }

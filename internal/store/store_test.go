@@ -612,3 +612,64 @@ func TestDeleteDisallowedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDeploymentsBefore(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	p := mustProject(t, s, "p")
+	sv := mustService(t, s, Service{ProjectID: p.ID, Name: "a", Kind: "app"})
+	other := mustService(t, s, Service{ProjectID: p.ID, Name: "b", Kind: "app"})
+	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	// d0 and d1 share a creation time, as do d2, d3, d4, and the other
+	// service's deployment, so rowid breaks the ties.
+	var ids []string
+	for i, at := range []time.Time{t0, t0, t0.Add(time.Minute), t0.Add(time.Minute), t0.Add(time.Minute)} {
+		d, err := s.CreateDeployment(ctx, Deployment{ServiceID: sv.ID, Status: StatusFailed, Trigger: TriggerPush})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE deployments SET created_at = ? WHERE id = ?`, formatTime(at), d.ID); err != nil {
+			t.Fatalf("deployment %d: %v", i, err)
+		}
+		ids = append(ids, d.ID)
+	}
+	o, err := s.CreateDeployment(ctx, Deployment{ServiceID: other.ID, Status: StatusFailed, Trigger: TriggerPush})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE deployments SET created_at = ? WHERE id = ?`, formatTime(t0.Add(time.Minute)), o.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name   string
+		before string
+		limit  int
+		want   []int
+	}{
+		{"first page", "", 2, []int{4, 3}},
+		{"same time as cursor", ids[3], 2, []int{2, 1}},
+		{"across times", ids[2], 0, []int{1, 0}},
+		{"short last page", ids[1], 5, []int{0}},
+		{"after the oldest", ids[0], 5, nil},
+		{"unknown cursor", "nope", 5, nil},
+		{"another service's cursor", o.ID, 5, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ds, err := s.DeploymentsBefore(ctx, sv.ID, tt.before, tt.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want []string
+			for _, d := range ds {
+				got = append(got, d.ID)
+			}
+			for _, i := range tt.want {
+				want = append(want, ids[i])
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("DeploymentsBefore(%q, %d) = %v, want %v", tt.before, tt.limit, got, want)
+			}
+		})
+	}
+}

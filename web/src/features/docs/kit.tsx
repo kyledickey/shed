@@ -1,11 +1,36 @@
+import { Button } from "@cloudflare/kumo";
+import { CheckIcon, CopyIcon } from "@phosphor-icons/react";
 import { SlidersHorizontal } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { LayerCard } from "../../components/Card";
-import { CopyButton } from "../../components/Misc";
 import { cx } from "../../lib/cx";
 import styles from "./kit.module.css";
 
-/** CodeBlock shows code or terminal text with a copy button. */
+/** CopyCode copies text to the clipboard and shows a check for a moment. */
+function CopyCode({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      shape="square"
+      aria-label={copied ? "Copied" : "Copy code"}
+      className={styles.copy}
+      icon={copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+      onClick={() => {
+        navigator.clipboard.writeText(value).then(
+          () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          },
+          () => {},
+        );
+      }}
+    />
+  );
+}
+
+/** CodeBlock shows code or terminal text on a recessed panel with a copy button. */
 export function CodeBlock({
   title,
   lang,
@@ -13,25 +38,23 @@ export function CodeBlock({
 }: {
   /** File name or a short label, e.g. "shed.toml". */
   title?: string;
-  /** Shown when there is no title, e.g. "sh". */
+  /** The fence's language, e.g. "sh". */
   lang?: string;
   children: string;
 }) {
   const code = children.replace(/^\n/, "").replace(/\s+$/, "");
   return (
-    <div className={styles.code}>
-      <div className={styles.codeHead}>
-        <span className={styles.codeTitle}>{title ?? lang}</span>
-        <CopyButton value={code} label="Copy code" />
-      </div>
+    <div className={cx(styles.code, title && styles.titled)} data-lang={lang}>
+      {title && <div className={styles.codeHead}>{title}</div>}
       <pre className={styles.pre}>
         {code.split("\n").map((line, i) => (
-          <span key={i} className={cx(styles.line, /^\s*(#|\/\/|--)/.test(line) && styles.comment)}>
+          <span key={i} className={cx(/^\s*(#|\/\/|--)/.test(line) && styles.comment)}>
             {line || " "}
             {"\n"}
           </span>
         ))}
       </pre>
+      <CopyCode value={code} />
     </div>
   );
 }
@@ -71,6 +94,43 @@ export function DocTable({
   );
 }
 
+/** CalloutTone is how much a callout matters: a note, a tip, a warning, or a danger. */
+type CalloutTone = "note" | "tip" | "warning" | "danger";
+
+/** Older crayon names that pages may still pass as a tone. */
+const toneAliases: Record<string, CalloutTone | undefined> = {
+  sky: "note",
+  info: "note",
+  grass: "tip",
+  accent: "tip",
+  sunflower: "warning",
+  tangerine: "warning",
+  tomato: "danger",
+};
+
+/**
+ * Callout sets a paragraph apart: a quiet bordered block with a thin
+ * colored bar on its left edge and an optional bold title.
+ */
+export function Callout({
+  tone = "note",
+  title,
+  children,
+}: {
+  /** A CalloutTone, or a crayon name such as "sky" that maps to one. */
+  tone?: string;
+  title?: ReactNode;
+  children?: ReactNode;
+}) {
+  const t = toneAliases[tone] ?? tone;
+  return (
+    <aside className={styles.callout} data-tone={t}>
+      {title && <div className={styles.calloutTitle}>{title}</div>}
+      {children && <div className={styles.calloutBody}>{children}</div>}
+    </aside>
+  );
+}
+
 /**
  * Demo frames an interactive explainer that runs entirely in the browser on
  * sample data or what the reader types. It never calls the API.
@@ -89,6 +149,7 @@ export function Demo({
   return (
     <LayerCard
       className={styles.demo}
+      sheetClassName={styles.demoSheet}
       title={title}
       icon={<SlidersHorizontal size={14} />}
       actions={actions}

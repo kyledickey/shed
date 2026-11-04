@@ -59,11 +59,11 @@ func (f *fakeBackups) BackUp(ctx context.Context, serviceID string) (store.Backu
 	})
 }
 
-func (f *fakeBackups) Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error) {
-	if err := f.record(fmt.Sprintf("backups %s %d", serviceID, limit)); err != nil {
+func (f *fakeBackups) Backups(ctx context.Context, serviceID, before string, limit int) ([]store.Backup, error) {
+	if err := f.record(fmt.Sprintf("backups %s %s %d", serviceID, before, limit)); err != nil {
 		return nil, err
 	}
-	return f.st.Backups(ctx, serviceID, limit)
+	return f.st.BackupsBefore(ctx, serviceID, before, limit)
 }
 
 func (f *fakeBackups) Restore(ctx context.Context, backupID string) (store.Restore, error) {
@@ -253,8 +253,53 @@ func TestServiceBackups(t *testing.T) {
 		r["error"] != "" || r["finishedAt"] != nil || r["createdAt"] == nil || len(r) != 7 {
 		t.Errorf("restore = %v", r)
 	}
-	if !slices.Contains(f.backups.seen(), "backups "+svc.ID+" 100") {
-		t.Errorf("calls = %v, want a limit of 100", f.backups.seen())
+	if next, ok := got["next"]; !ok || next != nil {
+		t.Errorf("next = %#v, want null", next)
+	}
+	// The default page of 10 is asked for with one more, to tell whether
+	// there is a next page.
+	if !slices.Contains(f.backups.seen(), "backups "+svc.ID+"  11") {
+		t.Errorf("calls = %v, want a limit of 11", f.backups.seen())
+	}
+}
+
+func TestBackupPages(t *testing.T) {
+	f := newFixture(t)
+	svc := createApp(t, f.st)
+	var ids []string // Newest first.
+	for i := range 3 {
+		b := f.createBackup(svc.ID, store.Backup{CreatedAt: backupTime.Add(-time.Duration(i) * time.Hour), Status: store.BackupSucceeded})
+		ids = append(ids, b.ID)
+	}
+	f.createBackup("", store.Backup{Method: store.MethodSQLite, Status: store.BackupSucceeded})
+
+	for _, tt := range []struct {
+		name, target string
+		want         []string
+		next         any
+	}{
+		{"first page", "/api/services/" + svc.ID + "/backups?limit=2", ids[:2], ids[1]},
+		{"last page", "/api/services/" + svc.ID + "/backups?limit=2&before=" + ids[1], ids[2:], nil},
+		{"unknown cursor", "/api/services/" + svc.ID + "/backups?before=nope", nil, nil},
+		{"over the maximum", "/api/services/" + svc.ID + "/backups?limit=1000", ids, nil},
+		{"system", "/api/backups/system?limit=1&before=" + ids[0], nil, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := f.decode(f.do("GET", tt.target, ""), http.StatusOK)
+			var gotIDs []string
+			for _, b := range got["backups"].([]any) {
+				gotIDs = append(gotIDs, b.(map[string]any)["id"].(string))
+			}
+			if !slices.Equal(gotIDs, tt.want) || got["next"] != tt.next {
+				t.Errorf("page = %v next %v, want %v next %v", gotIDs, got["next"], tt.want, tt.next)
+			}
+		})
+	}
+	if !slices.Contains(f.backups.seen(), "backups "+svc.ID+"  101") {
+		t.Errorf("calls = %v, want a limit of 101", f.backups.seen())
+	}
+	for _, target := range []string{"/api/services/" + svc.ID + "/backups?limit=0", "/api/backups/system?limit=x"} {
+		f.decode(f.do("GET", target, ""), http.StatusBadRequest)
 	}
 }
 

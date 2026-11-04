@@ -26,6 +26,7 @@
 
   & ul {
     padding-left: var(--space-4);
+    list-style: disc;
   }
 
   & h4,
@@ -59,6 +60,75 @@
 
     &:hover {
       text-decoration: underline;
+    }
+  }
+}
+
+.page {
+  color: var(--text-color-kumo-default);
+  font-size: 15px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+
+  & > :first-child {
+    margin-top: 0;
+  }
+
+  & p {
+    margin: 0 0 16px;
+  }
+
+  & > p:first-child {
+    font-size: 17px;
+    line-height: 1.55;
+  }
+
+  & ul {
+    margin: 0 0 16px;
+    padding-left: 20px;
+    list-style: disc;
+  }
+
+  & li {
+    margin: 6px 0;
+    padding-left: 2px;
+
+    &::marker {
+      color: var(--text-color-kumo-inactive);
+    }
+  }
+
+  & h4 {
+    margin: 32px 0 8px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  & h5 {
+    margin: 20px 0 4px;
+    color: var(--text-color-kumo-subtle);
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  & strong {
+    font-weight: 600;
+  }
+
+  & code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  & a {
+    color: var(--text-color-kumo-subtle);
+    text-decoration: underline;
+    text-decoration-color: var(--color-kumo-line);
+    text-underline-offset: 4px;
+
+    &:hover {
+      color: var(--text-color-kumo-default);
+      text-decoration-color: currentColor;
     }
   }
 }

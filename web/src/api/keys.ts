@@ -6,9 +6,13 @@ export const keys = {
   service: (id: string) => ["services", id] as const,
   variables: (serviceId: string) => ["services", serviceId, "variables"] as const,
   deployments: (serviceId: string) => ["services", serviceId, "deployments"] as const,
+  deploymentPage: (serviceId: string, before: string | null) =>
+    ["services", serviceId, "deployments", "page", before] as const,
   metrics: (serviceId: string, range: string) => ["services", serviceId, "metrics", range] as const,
   hostMetrics: (range: string) => ["host", "metrics", range] as const,
+  /** Every page of a service's backups; add the page's before for one. */
   serviceBackups: (serviceId: string) => ["services", serviceId, "backups"] as const,
+  /** Every page of shed.db's backups; add the page's before for one. */
   systemBackups: ["backups", "system"] as const,
   backupSettings: ["backups", "settings"] as const,
   update: ["update"] as const,

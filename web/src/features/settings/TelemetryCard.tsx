@@ -1,34 +1,24 @@
+import { Banner, Switch } from "@cloudflare/kumo";
+import { WarningIcon } from "@phosphor-icons/react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { serviceTelemetryQuery, useSetServiceCaps } from "../../api/telemetry";
 import type { Service, TelemetryCaps } from "../../api/types";
-import { Badge } from "../../components/Badge";
-import { Field, Input, Switch } from "../../components/Form";
-import { Callout } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
+import { SettingRow, Well } from "../../components/Settings";
 import { HelpTip } from "../docs/HelpTip";
-import { SettingsCard } from "./SectionForm";
-import styles from "./Settings.module.css";
+import { NumberInput } from "./fields";
+import styles from "./Telemetry.module.css";
+import { SettingsForm } from "./SectionForm";
 
-const capFields: { key: keyof TelemetryCaps; label: string; suffix: string; hint: string }[] = [
-  { key: "spansPerSecond", label: "Spans", suffix: "/s", hint: "Trace spans per second." },
-  {
-    key: "logsPerSecond",
-    label: "Log records",
-    suffix: "/s",
-    hint: "OTLP log records and lines of output per second.",
-  },
-  {
-    key: "series",
-    label: "Series",
-    suffix: "series",
-    hint: "Distinct metric series in the last hour.",
-  },
+const capFields: { key: keyof TelemetryCaps; label: string; unit: string }[] = [
+  { key: "spansPerSecond", label: "Spans", unit: "/s" },
+  { key: "logsPerSecond", label: "Log records", unit: "/s" },
+  { key: "series", label: "Series", unit: "per hour" },
 ];
 
-/** TelemetryCard shows whether the service is dropping telemetry and edits its caps. */
-export function TelemetryCard({ service }: { service: Service }) {
+/** TelemetrySection shows whether the service is dropping telemetry and edits its caps. */
+export function TelemetrySection({ service }: { service: Service }) {
   const { data } = useSuspenseQuery(serviceTelemetryQuery(service.id));
   const save = useSetServiceCaps(service.id);
   const toast = useToast();
@@ -39,73 +29,77 @@ export function TelemetryCard({ service }: { service: Service }) {
   const invalid = own && capFields.some(({ key }) => !(caps[key] >= 1));
 
   return (
-    <SettingsCard
-      title={
-        <>
-          Telemetry <HelpTip topic="telemetryCaps" />{" "}
-          {data.dropping && (
-            <Badge tone="tangerine" size="sm">
-              Dropping telemetry
-            </Badge>
-          )}
-        </>
-      }
-      meta="What this service may send while telemetry is on. Records over a cap are dropped."
-      form={{
-        dirty,
-        invalid,
-        pending: save.isPending,
-        error: save.error,
-        reset: () => {
-          setOwn(data.overridden);
-          setCaps(data.caps);
-          save.reset();
-        },
-        save: () =>
-          save.mutate(own ? caps : null, {
-            onSuccess: (t) => {
-              setCaps(t.caps);
-              toast.add({
-                type: "success",
-                title: "Saved",
-                description: "Applies within seconds.",
-              });
-            },
-          }),
-      }}
-    >
-      <div className={styles.fields}>
-        {data.listenerError && (
-          <Callout tone="tangerine" icon={<TriangleAlert size={16} />} title="Not receiving OTLP">
-            {data.listenerError}
-          </Callout>
-        )}
-        <Switch
-          checked={own}
-          onChange={setOwn}
-          label="Own caps"
-          description="Off uses the defaults from Server → Telemetry."
+    <>
+      {data.listenerError && (
+        <Banner
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          title="Not receiving OTLP"
+          description={data.listenerError}
         />
-        <div className={styles.twoCol}>
-          {capFields.map(({ key, label, suffix, hint }) => (
-            <Field key={key} label={label} hint={hint}>
-              {(id) => (
-                <Input
-                  id={id}
-                  type="number"
+      )}
+      {data.dropping && (
+        <Banner
+          variant="alert"
+          icon={<WarningIcon weight="fill" />}
+          title="Dropping telemetry"
+          description="This service is sending more than its caps allow. Records over a cap are dropped."
+        />
+      )}
+      <SettingsForm
+        form={{
+          dirty,
+          invalid,
+          message: invalid ? "Every cap must be at least 1." : undefined,
+          pending: save.isPending,
+          error: save.error,
+          reset: () => {
+            setOwn(data.overridden);
+            setCaps(data.caps);
+            save.reset();
+          },
+          save: () =>
+            save.mutate(own ? caps : null, {
+              onSuccess: (t) => {
+                setCaps(t.caps);
+                toast.add({
+                  type: "success",
+                  title: "Saved",
+                  description: "Applies within seconds.",
+                });
+              },
+            }),
+        }}
+      >
+        <SettingRow
+          label={
+            <>
+              <HelpTip topic="telemetryCaps">Own caps</HelpTip>
+            </>
+          }
+          description="Limit what this service may send. Records over a cap are dropped. Off uses the defaults from Server → Telemetry."
+          control={<Switch aria-label="Own caps" checked={own} onCheckedChange={setOwn} />}
+        >
+          <Well>
+            <div className={styles.caps}>
+              {capFields.map(({ key, label, unit }) => (
+                <NumberInput
+                  key={key}
+                  aria-label={label}
+                  prefix={label}
+                  unit={unit}
                   min={1}
                   step={1}
-                  mono
-                  suffix={suffix}
                   disabled={!own}
+                  className={styles.cap}
                   value={caps[key]}
                   onChange={(e) => setCaps((c) => ({ ...c, [key]: Number(e.target.value) }))}
                 />
-              )}
-            </Field>
-          ))}
-        </div>
-      </div>
-    </SettingsCard>
+              ))}
+            </div>
+          </Well>
+        </SettingRow>
+      </SettingsForm>
+    </>
   );
 }

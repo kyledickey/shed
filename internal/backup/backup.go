@@ -53,6 +53,7 @@ type Store interface {
 	UpdateBackup(ctx context.Context, b store.Backup) error
 	Backup(ctx context.Context, id string) (store.Backup, error)
 	Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error)
+	BackupsBefore(ctx context.Context, serviceID, before string, limit int) ([]store.Backup, error)
 	DeleteBackup(ctx context.Context, id string) error
 	DeleteFailedBackupsBefore(ctx context.Context, t time.Time) (int64, error)
 	UploadingBackups(ctx context.Context) ([]store.Backup, error)
@@ -614,12 +615,14 @@ func (m *Manager) BackUp(ctx context.Context, serviceID string) (store.Backup, e
 }
 
 // Backups returns the backups of a service, or of shed.db for an empty
-// serviceID, newest first. A limit of zero or less returns all of them.
-func (m *Manager) Backups(ctx context.Context, serviceID string, limit int) ([]store.Backup, error) {
+// serviceID, newest first, starting after the backup before, or at the
+// newest for an empty before. A before that is not one of them returns
+// none. A limit of zero or less returns all of them.
+func (m *Manager) Backups(ctx context.Context, serviceID, before string, limit int) ([]store.Backup, error) {
 	if err := m.checkService(ctx, serviceID); err != nil {
 		return nil, err
 	}
-	bs, err := m.store.Backups(ctx, serviceID, limit)
+	bs, err := m.store.BackupsBefore(ctx, serviceID, before, limit)
 	if err != nil {
 		return nil, fmt.Errorf("backup: %w", err)
 	}

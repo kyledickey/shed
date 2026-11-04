@@ -1,160 +1,105 @@
+import { Button, Input } from "@cloudflare/kumo";
+import { TrashIcon } from "@phosphor-icons/react";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleX, Trash, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import { useDeleteProject, useRenameProject } from "../../api/projects";
 import type { ProjectDetail } from "../../api/types";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input } from "../../components/Form";
-import { Callout } from "../../components/Misc";
-import { Dialog, useToast } from "../../components/Overlay";
-import styles from "./ProjectSettings.module.css";
+import { useToast } from "../../components/Overlay";
+import { SettingRow } from "../../components/Settings";
+import { cx } from "../../lib/cx";
+import { ConfirmDialog } from "../settings/ConfirmDialog";
+import styles from "../settings/Form.module.css";
+import { SettingsForm } from "../settings/SectionForm";
 
-/** RenameCard edits the project's name. */
-export function RenameCard({ project }: { project: ProjectDetail }) {
+/** GeneralSection edits the project's name. */
+export function GeneralSection({ project }: { project: ProjectDetail }) {
   const [name, setName] = useState(project.name);
   const rename = useRenameProject(project.id);
   const toast = useToast();
   const trimmed = name.trim();
 
   return (
-    <LayerCard title="General" padded>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!trimmed || trimmed === project.name) return;
+    <SettingsForm
+      form={{
+        dirty: trimmed !== project.name,
+        invalid: !trimmed,
+        message: trimmed ? undefined : "The name can't be empty.",
+        pending: rename.isPending,
+        error: rename.error,
+        reset: () => {
+          setName(project.name);
+          rename.reset();
+        },
+        save: () =>
           rename.mutate(trimmed, {
             onSuccess: (p) => {
               setName(p.name);
               toast.add({ title: "Project renamed", description: p.name, type: "success" });
             },
-          });
-        }}
-      >
-        <Field label="Project name" error={rename.error && errorMessage(rename.error)}>
-          {(id) => (
-            <div className={styles.row}>
-              <div className={styles.grow}>
-                <Input
-                  id={id}
-                  value={name}
-                  autoComplete="off"
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    rename.reset();
-                  }}
-                />
-              </div>
-              <Button
-                type="submit"
-                variant="primary"
-                loading={rename.isPending}
-                disabled={!trimmed || trimmed === project.name}
-              >
-                Save
-              </Button>
-            </div>
-          )}
-        </Field>
-      </form>
-    </LayerCard>
+          }),
+      }}
+    >
+      <SettingRow
+        label="Name"
+        description="How the project appears across shed."
+        control={
+          <Input
+            aria-label="Project name"
+            className={cx(styles.wide)}
+            value={name}
+            autoComplete="off"
+            onChange={(e) => {
+              setName(e.target.value);
+              rename.reset();
+            }}
+          />
+        }
+      />
+    </SettingsForm>
   );
 }
 
-/** DangerCard deletes the project after the user types its name. */
-export function DangerCard({ project }: { project: ProjectDetail }) {
+/** DangerSection deletes the project after the user types its name. */
+export function DangerSection({ project }: { project: ProjectDetail }) {
   const [open, setOpen] = useState(false);
-  const [typed, setTyped] = useState("");
   const remove = useDeleteProject(project.id);
   const navigate = useNavigate();
   const toast = useToast();
 
-  const change = (next: boolean) => {
-    if (!next) {
-      setTyped("");
-      remove.reset();
-    }
-    setOpen(next);
-  };
-
   return (
-    <LayerCard
-      title="Danger zone"
-      icon={<TriangleAlert size={14} />}
-      className={styles.danger}
-      padded
-    >
-      <div className={styles.dangerRow}>
-        <div className={styles.grow}>
-          <div className={styles.dangerTitle}>Delete project</div>
-          <p className={styles.dangerText}>
-            Removes every service in this project with its containers, volumes and data.
-          </p>
-        </div>
-        <Button variant="danger" onClick={() => change(true)}>
-          <Trash size={14} />
-          Delete project
+    <SettingRow
+      label="Delete project"
+      description="Remove every service in this project with its containers, volumes, and data."
+      control={
+        <Button variant="destructive" icon={<TrashIcon />} onClick={() => setOpen(true)}>
+          Delete
         </Button>
-      </div>
-      <Dialog
+      }
+    >
+      <ConfirmDialog
         open={open}
-        onOpenChange={change}
+        onOpenChange={(next) => {
+          setOpen(next);
+          remove.reset();
+        }}
         title={`Delete ${project.name}?`}
-        description="This stops and removes every service in the project, including their containers, volumes and data. This can't be undone."
-        icon={<TriangleAlert size={18} />}
-        iconTone="tomato"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => change(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              disabled={typed !== project.name}
-              loading={remove.isPending}
-              onClick={() =>
-                remove.mutate(undefined, {
-                  onSuccess: () => {
-                    toast.add({
-                      title: "Project deleted",
-                      description: project.name,
-                      type: "success",
-                    });
-                    void navigate({ to: "/" });
-                  },
-                })
-              }
-            >
-              Delete project
-            </Button>
-          </>
+        confirmLabel="Delete project"
+        typeToConfirm={project.name}
+        pending={remove.isPending}
+        error={remove.error ? errorMessage(remove.error) : undefined}
+        onConfirm={() =>
+          remove.mutate(undefined, {
+            onSuccess: () => {
+              toast.add({ title: "Project deleted", description: project.name, type: "success" });
+              void navigate({ to: "/" });
+            },
+          })
         }
       >
-        <Field
-          label={
-            <>
-              Type <code className={styles.code}>{project.name}</code> to confirm
-            </>
-          }
-        >
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={typed}
-              autoComplete="off"
-              autoFocus
-              onChange={(e) => setTyped(e.target.value)}
-            />
-          )}
-        </Field>
-        {remove.error && (
-          <Callout tone="tomato" icon={<CircleX size={16} />} title="Couldn't delete project">
-            {errorMessage(remove.error)}
-          </Callout>
-        )}
-      </Dialog>
-    </LayerCard>
+        This stops and removes every service in the project, including their containers, volumes,
+        and data. This can't be undone.
+      </ConfirmDialog>
+    </SettingRow>
   );
 }

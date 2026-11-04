@@ -1,16 +1,16 @@
-import { Ban, CircleX, ScrollText } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Button, LayerCard } from "@cloudflare/kumo";
+import { ProhibitIcon, ScrollIcon, XCircleIcon } from "@phosphor-icons/react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Deployment, Service } from "../../api/types";
-import { StatusBadge } from "../../components/Badge";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
 import { DeploySteps } from "../../components/deploy/Deploy";
-import { Callout } from "../../components/Misc";
-import { shortSha } from "../../lib/names";
-import { formatDuration } from "../../lib/time";
-import { CommitMeta, deploymentTitle } from "./CommitMeta";
-import styles from "./LatestDeployment.module.css";
+import { Notice } from "../../components/Notice";
+import { Pill } from "../../components/Pill";
+import { RecordEmpty } from "../../components/RecordList";
+import { imageName, shortSha } from "../../lib/names";
+import { formatDate, formatDuration, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
+import { CommitMeta, CommitSha, deploymentTitle, triggerLabel } from "./CommitMeta";
+import styles from "./LatestDeployment.module.css";
 
 /** useTick re-renders every second, for live elapsed times. */
 function useTick() {
@@ -33,6 +33,83 @@ export function WaitingForCi({ deployment: d }: { deployment: Deployment }) {
   );
 }
 
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className={styles.fact}>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+
+/**
+ * ActiveDeployment is the deployment serving traffic, as a row of facts:
+ * version, when it went live, where it came from, and how long it took.
+ */
+export function ActiveDeployment({
+  service,
+  deployment: d,
+  onViewLogs,
+}: {
+  service: Service;
+  deployment: Deployment | undefined;
+  onViewLogs: (id: string) => void;
+}) {
+  return (
+    <LayerCard>
+      <LayerCard.Secondary className={styles.head}>
+        <span className={styles.headTitle}>Active deployment</span>
+        {d && service.status === "stopped" && <Pill>Stopped</Pill>}
+        {d && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<ScrollIcon size={14} />}
+            className={styles.headAction}
+            onClick={() => onViewLogs(d.id)}
+          >
+            Build logs
+          </Button>
+        )}
+      </LayerCard.Secondary>
+      <LayerCard.Primary className={styles.body}>
+        {d ? (
+          <dl className={styles.facts}>
+            <Fact label={d.commitSha ? "Commit" : "Image"}>
+              {d.commitSha ? (
+                <CommitSha service={service} deployment={d} />
+              ) : (
+                <span className={styles.mono}>{d.image ? imageName(d.image) : "–"}</span>
+              )}
+            </Fact>
+            <Fact label="Deployed">
+              <time dateTime={d.finishedAt ?? d.createdAt} title={formatDate(d.createdAt)}>
+                {relativeTime(d.finishedAt ?? d.createdAt)}
+              </time>
+            </Fact>
+            <Fact label="Source">
+              <Pill>{triggerLabel(d)}</Pill>
+            </Fact>
+            {service.repo && <Fact label="Branch">{service.branch}</Fact>}
+            {d.commitAuthor && <Fact label="Author">{d.commitAuthor}</Fact>}
+            {d.startedAt && (
+              <Fact label="Build time">{formatDuration(d.startedAt, d.finishedAt)}</Fact>
+            )}
+            <div className={styles.messageFact}>
+              <dt>Message</dt>
+              <dd className={styles.message} title={deploymentTitle(d)}>
+                {deploymentTitle(d)}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <RecordEmpty>No deployment is serving traffic.</RecordEmpty>
+        )}
+      </LayerCard.Primary>
+    </LayerCard>
+  );
+}
+
 /** InProgressCard tracks the deployment that is currently queued, building or starting. */
 export function InProgressCard({
   service,
@@ -46,32 +123,30 @@ export function InProgressCard({
   useTick();
   const since = d.startedAt ?? d.createdAt;
   return (
-    <LayerCard
-      title={
-        <>
-          In progress <HelpTip topic="pipeline" />
-        </>
-      }
-      meta={<StatusBadge kind="deployment" status={d.status} size="sm" />}
-      actions={
-        <Button size="sm" onClick={onViewLogs} aria-label="View logs">
-          <ScrollText size={13} />
+    <LayerCard>
+      <LayerCard.Secondary className={styles.head}>
+        <span className={styles.headTitle}>
+          <HelpTip topic="pipeline">In progress</HelpTip>
+        </span>
+        <span className={styles.elapsed}>{formatDuration(since, null)}</span>
+        <Button
+          size="sm"
+          icon={<ScrollIcon size={14} />}
+          className={styles.headAction}
+          onClick={onViewLogs}
+          aria-label="View logs"
+        >
           <span className={styles.hideNarrow}>View logs</span>
         </Button>
-      }
-      padded
-    >
-      <div className={styles.body}>
-        <div className={styles.head}>
-          <div className={styles.commit}>
-            <span className={styles.title}>{deploymentTitle(d)}</span>
-            <CommitMeta service={service} deployment={d} />
-          </div>
-          <span className={styles.elapsed}>{formatDuration(since, null)}</span>
+      </LayerCard.Secondary>
+      <LayerCard.Primary className={styles.progress}>
+        <div className={styles.commit}>
+          <span className={styles.title}>{deploymentTitle(d)}</span>
+          <CommitMeta service={service} deployment={d} />
         </div>
         <DeploySteps status={d.status} />
         {d.status === "waiting" && <WaitingForCi deployment={d} />}
-      </div>
+      </LayerCard.Primary>
     </LayerCard>
   );
 }
@@ -101,20 +176,20 @@ export function LatestProblem({
   if (!problem) return null;
   const severe = d.status === "failed" || d.status === "crashed";
   return (
-    <Callout
-      tone={severe ? "tomato" : "neutral"}
-      icon={severe ? <CircleX size={16} /> : <Ban size={16} />}
+    <Notice
+      icon={severe ? <XCircleIcon size={16} /> : <ProhibitIcon size={16} />}
       title={`${problem.title}: ${deploymentTitle(d)}`}
+      danger={severe}
       actions={
         <Button size="sm" onClick={onViewLogs}>
           View logs
         </Button>
       }
     >
-      <span className={styles.error}>{d.error || problem.fallback}</span>
+      {d.error || problem.fallback}
       {serving && serving.id !== d.id && (
         <span className={styles.serving}> The previous deployment is still serving traffic.</span>
       )}
-    </Callout>
+    </Notice>
   );
 }

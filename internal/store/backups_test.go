@@ -374,3 +374,58 @@ func TestSnapshot(t *testing.T) {
 		t.Error("Snapshot to an existing path succeeded, want error")
 	}
 }
+
+func TestBackupsBefore(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	sv := mustService(t, s, Service{ProjectID: mustProject(t, s, "p").ID, Name: "a", Kind: "postgres"})
+	t0 := time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)
+	// Each scope has b0 and b1 at one time and b2, b3, b4 at a later one, so
+	// rowid breaks the ties.
+	times := []time.Time{t0, t0, t0.Add(time.Hour), t0.Add(time.Hour), t0.Add(time.Hour)}
+	ids := map[string][]string{}
+	for _, scope := range []string{sv.ID, ""} {
+		for _, at := range times {
+			b, err := s.CreateBackup(ctx, Backup{ServiceID: scope, Trigger: BackupSchedule, Method: MethodDump, Status: BackupSucceeded, CreatedAt: at})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids[scope] = append(ids[scope], b.ID)
+		}
+	}
+
+	svc, sys := ids[sv.ID], ids[""]
+	for _, tt := range []struct {
+		name      string
+		serviceID string
+		before    string
+		limit     int
+		want      []int
+	}{
+		{"first page", sv.ID, "", 2, []int{4, 3}},
+		{"same time as cursor", sv.ID, svc[3], 2, []int{2, 1}},
+		{"across times", sv.ID, svc[2], 0, []int{1, 0}},
+		{"after the oldest", sv.ID, svc[0], 5, nil},
+		{"unknown cursor", sv.ID, "nope", 5, nil},
+		{"system", "", sys[4], 2, []int{3, 2}},
+		{"system with a service cursor", "", svc[4], 5, nil},
+		{"service with a system cursor", sv.ID, sys[4], 5, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			bs, err := s.BackupsBefore(ctx, tt.serviceID, tt.before, tt.limit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want []string
+			for _, b := range bs {
+				got = append(got, b.ID)
+			}
+			for _, i := range tt.want {
+				want = append(want, ids[tt.serviceID][i])
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("BackupsBefore(%q, %q, %d) = %v, want %v", tt.serviceID, tt.before, tt.limit, got, want)
+			}
+		})
+	}
+}

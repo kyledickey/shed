@@ -1,464 +1,183 @@
-import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
-import { Link, Outlet, useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { buttonVariants, DropdownMenu, Tooltip } from "@cloudflare/kumo";
 import {
-  Archive,
-  ChartNoAxesCombined,
-  BookOpen,
-  ChartArea,
-  Command as CommandIcon,
-  FolderPlus,
-  Layers,
-  LayoutGrid,
-  LogOut,
-  Monitor,
-  Moon,
-  Plus,
-  Rocket,
-  ScrollText,
-  Server,
-  Settings,
-  SlidersHorizontal,
-  Sun,
-} from "lucide-react";
-import { useState, type ReactNode } from "react";
+  ArrowCircleUpIcon,
+  BookOpenIcon,
+  ChartLineIcon,
+  DesktopIcon,
+  HardDrivesIcon,
+  MagnifyingGlassIcon,
+  MoonIcon,
+  SignOutIcon,
+  SunIcon,
+} from "@phosphor-icons/react";
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query";
+import { Link, Outlet, useNavigate, useParams } from "@tanstack/react-router";
+import { useState } from "react";
 import { meQuery, useLogout } from "../../api/auth";
-import { errorMessage } from "../../api/client";
-import { useDeploy } from "../../api/deployments";
-import { projectQuery, projectsQuery } from "../../api/projects";
-import { serviceQuery } from "../../api/services";
 import { telemetryQuery } from "../../api/telemetry";
 import { updateQuery } from "../../api/update";
-import type { Service } from "../../api/types";
-import { Button, LinkButton } from "../../components/Button";
-import { CommandPalette, type Command } from "../../components/CommandPalette";
-import { Badge } from "../../components/Badge";
-import { Avatar, Kbd, ServiceIcon } from "../../components/Misc";
-import {
-  Menu,
-  MenuItem,
-  MenuLabel,
-  MenuSeparator,
-  Tooltip,
-  useToast,
-} from "../../components/Overlay";
-import { Crumbs, Logo, Shell, type Crumb } from "../../components/Shell";
-import { Tabs } from "../../components/Tabs";
+import { Avatar } from "../../components/Misc";
 import { useTheme, type Theme } from "../../lib/theme";
-import { docPages } from "../docs/registry";
 import styles from "./AppShell.module.css";
+import { Logo } from "./Logo";
+import { Palette } from "./Palette";
+import { TabBar } from "./TabBar";
+import { TabsProvider } from "./TabsContext";
 
-export type ServiceTab = "deployments" | "logs" | "metrics" | "variables" | "backups" | "settings";
-type ProjectTab = "services" | "settings";
-type RootTab = "projects" | "server" | "docs" | "settings";
-
-const serviceTabs: { value: ServiceTab; label: string; icon: ReactNode }[] = [
-  { value: "deployments", label: "Deployments", icon: <Rocket size={15} /> },
-  { value: "logs", label: "Logs", icon: <ScrollText size={15} /> },
-  { value: "metrics", label: "Metrics", icon: <ChartArea size={15} /> },
-  { value: "variables", label: "Variables", icon: <SlidersHorizontal size={15} /> },
-  { value: "backups", label: "Backups", icon: <Archive size={15} /> },
-  { value: "settings", label: "Settings", icon: <Settings size={15} /> },
-];
-
-const projectTabs: { value: ProjectTab; label: string; icon: ReactNode }[] = [
-  { value: "services", label: "Services", icon: <Layers size={15} /> },
-  { value: "settings", label: "Settings", icon: <Settings size={15} /> },
-];
-
-const rootTabs: { value: RootTab; label: string; icon: ReactNode }[] = [
-  { value: "projects", label: "Projects", icon: <Layers size={15} /> },
-  { value: "server", label: "Server", icon: <Server size={15} /> },
-  { value: "settings", label: "Settings", icon: <Settings size={15} /> },
-  { value: "docs", label: "Docs", icon: <BookOpen size={15} /> },
-];
-
-/** visibleServiceTabs hides Backups from services that have no volume to back up. */
-function visibleServiceTabs(service?: Service) {
-  return serviceTabs.filter((t) => t.value !== "backups" || (service?.volumes.length ?? 0) > 0);
-}
-
-/** AppShell frames every signed-in page: switcher crumbs, section tabs and account actions. */
+/**
+ * AppShell frames every signed-in page: a top bar with shed's tabs and
+ * account actions over a page that scrolls like any web page, so browser
+ * gestures such as swipe-to-go-back keep working.
+ */
 export function AppShell() {
   const { projectId, serviceId } = useParams({ strict: false });
   const [palette, setPalette] = useState(false);
   return (
-    <Shell
-      brand={<Brand projectId={projectId} serviceId={serviceId} />}
-      nav={<Nav projectId={projectId} serviceId={serviceId} />}
-      actions={
-        <>
+    <TabsProvider>
+      <header className={styles.top}>
+        <Link to="/" className={styles.home} aria-label="Home">
+          <Logo size={26} />
+        </Link>
+        <TabBar />
+        <div className={styles.actions}>
           <UpdateBadge />
+          <SearchButton onClick={() => setPalette(true)} />
           <GrafanaButton />
-          <Tooltip
-            content={
-              <>
-                Command palette <Kbd>⌘K</Kbd>
-              </>
-            }
-          >
-            <Button
-              variant="ghost"
-              icon
-              aria-label="Command palette"
-              onClick={() => setPalette(true)}
-            >
-              <CommandIcon size={16} />
-            </Button>
-          </Tooltip>
-          <ThemeButton />
+          <ServerButton />
           <UserMenu />
-        </>
-      }
-    >
-      <Outlet />
+        </div>
+      </header>
+      <main className={styles.main}>
+        <Outlet />
+      </main>
       <Palette
         open={palette}
         onOpenChange={setPalette}
         projectId={projectId}
         serviceId={serviceId}
       />
-    </Shell>
+    </TabsProvider>
   );
 }
 
-function Brand({ projectId, serviceId }: { projectId?: string; serviceId?: string }) {
-  const navigate = useNavigate();
-  const projects = useQuery(projectsQuery);
-  const project = useQuery({ ...projectQuery(projectId ?? ""), enabled: !!projectId });
-  const service = useQuery({ ...serviceQuery(serviceId ?? ""), enabled: !!serviceId });
-
-  const items: Crumb[] = [];
-  if (projectId) {
-    items.push({
-      label: project.data?.name ?? "…",
-      menu: (
-        <>
-          <MenuLabel>Projects</MenuLabel>
-          {projects.data?.map((p) => (
-            <MenuItem
-              key={p.id}
-              icon={<LayoutGrid size={14} />}
-              onClick={() =>
-                void navigate({ to: "/projects/$projectId", params: { projectId: p.id } })
-              }
-            >
-              {p.name}
-            </MenuItem>
-          ))}
-          <MenuSeparator />
-          <MenuItem icon={<Layers size={14} />} onClick={() => void navigate({ to: "/" })}>
-            All projects
-          </MenuItem>
-        </>
-      ),
-    });
-  }
-  if (projectId && serviceId) {
-    items.push({
-      label: service.data?.name ?? "…",
-      icon: service.data && <ServiceIcon kind={service.data.kind} size={18} />,
-      menu: (
-        <>
-          <MenuLabel>Services</MenuLabel>
-          {project.data?.services.map((s) => (
-            <MenuItem
-              key={s.id}
-              icon={<ServiceIcon kind={s.kind} size={18} />}
-              onClick={() =>
-                void navigate({
-                  to: "/projects/$projectId/services/$serviceId",
-                  params: { projectId, serviceId: s.id },
-                })
-              }
-            >
-              {s.name}
-            </MenuItem>
-          ))}
-        </>
-      ),
-    });
-  }
-
+function SearchButton({ onClick }: { onClick: () => void }) {
   return (
-    <>
-      <button
-        type="button"
-        className={styles.home}
-        aria-label="All projects"
-        onClick={() => void navigate({ to: "/" })}
-      >
-        <Logo />
-      </button>
-      {items.length > 0 && <Crumbs items={items} />}
-    </>
+    <button type="button" className={styles.search} onClick={onClick}>
+      <MagnifyingGlassIcon size={15} />
+      <span className={styles.searchLabel}>Search</span>
+      <kbd className={styles.searchKey}>⌘K</kbd>
+    </button>
   );
 }
 
-/** activeTab is the last path segment after `base`, or `fallback` at the base itself. */
-function activeTab<T extends string>(pathname: string, base: string, tabs: T[], fallback: T): T {
-  const rest = pathname
-    .slice(base.length)
-    .replace(/^\/|\/$/g, "")
-    .split("/")[0];
-  return tabs.find((t) => t === rest) ?? fallback;
-}
-
-function Nav({ projectId, serviceId }: { projectId?: string; serviceId?: string }) {
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
-  const service = useQuery({ ...serviceQuery(serviceId ?? ""), enabled: !!serviceId });
-
-  if (projectId && serviceId) {
-    const base = `/projects/${projectId}/services/${serviceId}`;
-    const tab = activeTab(
-      pathname,
-      base,
-      serviceTabs.map((t) => t.value),
-      "deployments",
-    );
-    return (
-      <Tabs
-        label="Service sections"
-        value={tab}
-        items={visibleServiceTabs(service.data)}
-        onChange={(next) =>
-          void navigate({ to: next === "deployments" ? base : `${base}/${next}` })
-        }
-      />
-    );
-  }
-  if (projectId) {
-    const base = `/projects/${projectId}`;
-    const tab = activeTab(pathname, base, ["settings"] as ProjectTab[], "services");
-    return (
-      <Tabs
-        label="Project sections"
-        value={tab}
-        items={projectTabs}
-        onChange={(next) => void navigate({ to: next === "services" ? base : `${base}/${next}` })}
-      />
-    );
-  }
-  return (
-    <Tabs
-      label="Sections"
-      value={activeTab(pathname, "", ["server", "docs", "settings"] as RootTab[], "projects")}
-      items={rootTabs}
-      onChange={(next) => void navigate({ to: next === "projects" ? "/" : `/${next}` })}
-    />
-  );
-}
-
-/** UpdateBadge links to Settings while a newer shed release is available or downloaded. */
+/** UpdateBadge links to the update settings while a newer release is available. */
 function UpdateBadge() {
   // A failed status request just hides the badge; Settings reports the error.
   const { data } = useQuery({ ...updateQuery, retry: false });
   if (!data || data.unsupported || !(data.available || data.staged)) return null;
   return (
-    <Link to="/settings" className={styles.update}>
-      <Badge tone="accent" size="sm">
-        Update available
-      </Badge>
+    <Link
+      to="/server/$section"
+      params={{ section: "updates" }}
+      className={`${buttonVariants({ variant: "ghost", size: "sm" })} ${styles.update}`}
+      aria-label={data.staged ? "Restart to update" : "Update available"}
+      title={data.staged ? "Restart to update" : "Update available"}
+    >
+      <ArrowCircleUpIcon size={16} />
+      <span className={styles.updateLabel}>{data.staged ? "Restart to update" : "Update"}</span>
     </Link>
+  );
+}
+
+/** ServerButton opens the server settings. */
+function ServerButton() {
+  return (
+    <Tooltip
+      content="Server"
+      render={
+        <Link
+          to="/server"
+          className={buttonVariants({ variant: "ghost", shape: "square", size: "sm" })}
+          aria-label="Server"
+        >
+          <HardDrivesIcon size={16} />
+        </Link>
+      }
+    />
   );
 }
 
 /** GrafanaButton opens Grafana in a new tab while telemetry is on. */
 function GrafanaButton() {
-  // A failed request just hides the button; Server → Telemetry reports it.
   const { data } = useQuery({ ...telemetryQuery, retry: false, refetchInterval: false });
   if (!data?.settings.enabled) return null;
   return (
-    <Tooltip content="Open Grafana">
-      <LinkButton
-        variant="ghost"
-        icon
-        aria-label="Open Grafana"
-        href={data.grafanaUrl}
-        target="_blank"
-        rel="noreferrer"
-      >
-        <ChartNoAxesCombined size={16} />
-      </LinkButton>
-    </Tooltip>
+    <Tooltip
+      content="Open Grafana"
+      render={
+        <a
+          className={styles.iconLink}
+          href={data.grafanaUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Open Grafana"
+        >
+          <ChartLineIcon size={16} />
+        </a>
+      }
+    />
   );
 }
 
-const themeIcons: Record<Theme, ReactNode> = {
-  system: <Monitor size={16} />,
-  light: <Sun size={16} />,
-  dark: <Moon size={16} />,
-};
-
-function ThemeButton() {
-  const [theme, setTheme] = useTheme();
-  const next: Record<Theme, Theme> = { system: "light", light: "dark", dark: "system" };
-  return (
-    <Tooltip content={`Theme: ${theme}`}>
-      <Button variant="ghost" icon aria-label="Toggle theme" onClick={() => setTheme(next[theme])}>
-        {themeIcons[theme]}
-      </Button>
-    </Tooltip>
-  );
-}
+const themes = [
+  { value: "system", label: "System", icon: DesktopIcon },
+  { value: "light", label: "Light", icon: SunIcon },
+  { value: "dark", label: "Dark", icon: MoonIcon },
+] as const;
 
 function UserMenu() {
   const { data: me } = useSuspenseQuery(meQuery);
   const logout = useLogout();
   const navigate = useNavigate();
+  const [theme, setTheme] = useTheme();
   return (
-    <Menu
-      trigger={
-        <button type="button" className={styles.avatarButton} aria-label="Account">
-          <Avatar src={me.avatarUrl || undefined} name={me.login} size={30} />
-        </button>
-      }
-    >
-      <div className={styles.account}>
-        <Avatar src={me.avatarUrl || undefined} name={me.login} size={32} />
-        <div className={styles.accountText}>
+    <DropdownMenu>
+      <DropdownMenu.Trigger
+        render={
+          <button type="button" className={styles.avatarButton} aria-label="Account">
+            <Avatar src={me.avatarUrl || undefined} name={me.login} size={26} />
+          </button>
+        }
+      />
+      <DropdownMenu.Content align="end">
+        <div className={styles.account}>
           <span className={styles.userName}>{me.name || me.login}</span>
           <span className={styles.userLogin}>@{me.login}</span>
         </div>
-      </div>
-      <MenuItem icon={<Settings size={14} />} onClick={() => void navigate({ to: "/settings" })}>
-        Settings
-      </MenuItem>
-      <MenuItem
-        icon={<LogOut size={14} />}
-        onClick={() => logout.mutate(undefined, { onSuccess: () => navigate({ to: "/login" }) })}
-      >
-        Sign out
-      </MenuItem>
-    </Menu>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Group>
+          <DropdownMenu.Label className={styles.menuLabel}>Theme</DropdownMenu.Label>
+          <DropdownMenu.RadioGroup value={theme} onValueChange={(v: Theme) => setTheme(v)}>
+            {themes.map((t) => (
+              <DropdownMenu.RadioItem key={t.value} value={t.value} icon={t.icon}>
+                {t.label}
+                <DropdownMenu.RadioItemIndicator />
+              </DropdownMenu.RadioItem>
+            ))}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Group>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item icon={BookOpenIcon} onClick={() => void navigate({ to: "/docs" })}>
+          Docs
+        </DropdownMenu.Item>
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item
+          icon={SignOutIcon}
+          onClick={() => logout.mutate(undefined, { onSuccess: () => navigate({ to: "/login" }) })}
+        >
+          Sign out
+        </DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu>
   );
-}
-
-function Palette({
-  open,
-  onOpenChange,
-  projectId,
-  serviceId,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  projectId?: string;
-  serviceId?: string;
-}) {
-  const navigate = useNavigate();
-  const toast = useToast();
-  const [, setTheme] = useTheme();
-  const projects = useQuery(projectsQuery);
-  const service = useQuery({ ...serviceQuery(serviceId ?? ""), enabled: !!serviceId });
-  const deploy = useDeploy(serviceId ?? "");
-
-  const commands: Command[] = [];
-  if (service.data && projectId && serviceId) {
-    const s = service.data;
-    const base = `/projects/${projectId}/services/${serviceId}`;
-    commands.push({
-      id: "deploy",
-      group: s.name,
-      label: `Deploy ${s.name}`,
-      icon: <Rocket size={15} />,
-      run: () =>
-        deploy.mutate(undefined, {
-          onSuccess: () => toast.add({ title: "Deployment queued", description: s.name }),
-          onError: (err) =>
-            toast.add({ title: "Deploy failed", description: errorMessage(err), type: "error" }),
-        }),
-    });
-    for (const t of visibleServiceTabs(s)) {
-      commands.push({
-        id: `tab-${t.value}`,
-        group: s.name,
-        label: t.label,
-        icon: t.icon,
-        run: () => void navigate({ to: t.value === "deployments" ? base : `${base}/${t.value}` }),
-      });
-    }
-  }
-  if (projectId) {
-    commands.push({
-      id: "new-service",
-      group: "Actions",
-      label: "New service",
-      icon: <Plus size={15} />,
-      run: () =>
-        void navigate({ to: "/projects/$projectId", params: { projectId }, search: { new: true } }),
-    });
-  }
-  commands.push(
-    {
-      id: "server",
-      group: "Actions",
-      label: "Server metrics",
-      icon: <Server size={15} />,
-      run: () => void navigate({ to: "/server" }),
-    },
-    {
-      id: "docs",
-      group: "Actions",
-      label: "Docs",
-      icon: <BookOpen size={15} />,
-      run: () => void navigate({ to: "/docs" }),
-    },
-    {
-      id: "settings",
-      group: "Actions",
-      label: "Settings",
-      icon: <Settings size={15} />,
-      run: () => void navigate({ to: "/settings" }),
-    },
-    {
-      id: "new-project",
-      group: "Actions",
-      label: "New project",
-      icon: <FolderPlus size={15} />,
-      run: () => void navigate({ to: "/", search: { new: true } }),
-    },
-    {
-      id: "theme",
-      group: "Actions",
-      label: "Toggle dark mode",
-      icon: <Moon size={15} />,
-      run: () => setTheme(document.documentElement.matches("[data-theme=dark]") ? "light" : "dark"),
-    },
-  );
-  for (const p of projects.data ?? []) {
-    commands.push({
-      id: `project-${p.id}`,
-      group: "Projects",
-      label: p.name,
-      icon: <LayoutGrid size={15} />,
-      hint: `${p.services.length} services`,
-      run: () => void navigate({ to: "/projects/$projectId", params: { projectId: p.id } }),
-    });
-    for (const s of p.services) {
-      commands.push({
-        id: `service-${s.id}`,
-        group: "Services",
-        label: `${p.name} / ${s.name}`,
-        icon: <ServiceIcon kind={s.kind} size={18} />,
-        hint: s.kind,
-        run: () =>
-          void navigate({
-            to: "/projects/$projectId/services/$serviceId",
-            params: { projectId: p.id, serviceId: s.id },
-          }),
-      });
-    }
-  }
-
-  for (const page of docPages) {
-    commands.push({
-      id: `docs-${page.slug}`,
-      group: "Docs",
-      label: page.title,
-      icon: <BookOpen size={15} />,
-      run: () => void navigate({ to: "/docs/$slug", params: { slug: page.slug } }),
-    });
-  }
-
-  return <CommandPalette open={open} onOpenChange={onOpenChange} commands={commands} />;
 }

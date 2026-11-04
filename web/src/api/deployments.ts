@@ -1,13 +1,41 @@
-import { queryOptions, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  queryOptions,
+  useMutation,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { api } from "./client";
 import { keys } from "./keys";
-import { isPending, type Deployment } from "./types";
+import { pagePath } from "./paging";
+import { isPending, type Deployment, type DeploymentPage } from "./types";
 
+/** RECENT is how many deployments deploymentsQuery holds. */
+const RECENT = 50;
+
+const pollInterval = (list: Deployment[] | undefined) =>
+  list?.some((d) => isPending(d.status)) ? 2000 : 15_000;
+
+/**
+ * deploymentsQuery is a service's newest deployments: enough for the latest
+ * one, the active one, and recent activity, apart from the paged history.
+ */
 export const deploymentsQuery = (serviceId: string) =>
   queryOptions({
     queryKey: keys.deployments(serviceId),
-    queryFn: () => api.get<Deployment[]>(`/services/${serviceId}/deployments`),
-    refetchInterval: (q) => (q.state.data?.some((d) => isPending(d.status)) ? 2000 : 15_000),
+    queryFn: async () =>
+      (await api.get<DeploymentPage>(pagePath(`/services/${serviceId}/deployments`, null, RECENT)))
+        .deployments,
+    refetchInterval: (q) => pollInterval(q.state.data),
+  });
+
+/** deploymentPageQuery is one page of a service's deployment history, the one after before. */
+export const deploymentPageQuery = (serviceId: string, before: string | null) =>
+  queryOptions({
+    queryKey: keys.deploymentPage(serviceId, before),
+    queryFn: () => api.get<DeploymentPage>(pagePath(`/services/${serviceId}/deployments`, before)),
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => pollInterval(q.state.data?.deployments),
   });
 
 export function invalidateDeployments(qc: QueryClient, serviceId: string) {

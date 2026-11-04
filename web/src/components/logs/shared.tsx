@@ -1,4 +1,5 @@
-import { ArrowDown } from "lucide-react";
+import { Button } from "@cloudflare/kumo";
+import { ArrowDownIcon } from "@phosphor-icons/react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { StreamState } from "../../api/events";
 import { Spinner } from "../Badge";
@@ -37,12 +38,14 @@ export function useFollow(count: number) {
   return { ref, onScroll, following, unseen: Math.max(0, count - seen), jump };
 }
 
+/** JumpToLatest floats over a scrolled-up log and returns to the newest line. */
 export function JumpToLatest({ unseen, onClick }: { unseen: number; onClick: () => void }) {
   return (
-    <button type="button" className={styles.jump} onClick={onClick}>
-      <ArrowDown size={13} />
-      {unseen > 0 ? `${unseen} new line${unseen === 1 ? "" : "s"}` : "Jump to latest"}
-    </button>
+    <div className={styles.jump}>
+      <Button size="sm" icon={<ArrowDownIcon size={14} />} onClick={onClick}>
+        {unseen > 0 ? `${unseen} new line${unseen === 1 ? "" : "s"}` : "Jump to latest"}
+      </Button>
+    </div>
   );
 }
 
@@ -54,19 +57,15 @@ const streamLabels: Record<StreamState, string> = {
   closed: "Disconnected",
 };
 
+/**
+ * StreamIndicator says whether a log stream is live. A spinner means lines
+ * are arriving; a lost connection reads in the danger color.
+ */
 export function StreamIndicator({ state, paused }: { state: StreamState; paused?: boolean }) {
-  const tone = paused
-    ? "sunflower"
-    : state === "open"
-      ? "grass"
-      : state === "closed"
-        ? "tomato"
-        : "neutral";
+  const live = (state === "open" || state === "connecting" || state === "reconnecting") && !paused;
   return (
-    <span className={styles.stream} data-tone={tone}>
-      {(state === "open" || state === "connecting" || state === "reconnecting") && !paused && (
-        <Spinner tone={tone} size={9} />
-      )}
+    <span className={styles.stream} data-closed={(state === "closed" && !paused) || undefined}>
+      {live && <Spinner tone={state === "open" ? "grass" : "neutral"} size={10} />}
       {paused ? "Paused" : streamLabels[state]}
     </span>
   );

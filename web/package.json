@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
+    "mock": "bun mock/server.ts",
     "build": "vp build && touch dist/.gitkeep",
     "site:dev": "vp dev -c vite.site.config.ts",
     "site:build": "vp build -c vite.site.config.ts && vp build -c vite.site.config.ts --ssr server.tsx && bun site/prerender.ts",
@@ -15,9 +16,12 @@
     "fmt": "vp fmt"
   },
   "dependencies": {
-    "@base-ui/react": "^1.8.0",
+    "@base-ui/react": "^1.9.0",
+    "@cloudflare/kumo": "2.17.0",
+    "@phosphor-icons/react": "^2.1.10",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-router": "^1.170.41",
+    "echarts": "^6.1.0",
     "lucide-react": "^1.51.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
@@ -25,6 +29,7 @@
   "devDependencies": {
     "@mdx-js/mdx": "^3.1.1",
     "@mdx-js/rollup": "^3.1.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@tanstack/router-plugin": "^1.168.42",
     "@types/mdx": "^2.0.14",
     "@types/node": "^26.6.4",
@@ -35,6 +40,7 @@
     "mdast-util-to-string": "^4.0.0",
     "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
+    "satori": "^0.63.2",
     "typescript": "~6.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.0.0",
     "vite-plus": "1.0.0",

@@ -2546,6 +2546,13 @@ SSE endpoints emit `event: log` (one line per event), `event: status`
 Reconnecting clients get history replayed. Runtime log lines start with the
 container's RFC 3339 timestamp and a space. Runtime logs send `end` right away
 when nothing is running. Setup failures redirect to `/setup?error=…`.
+The deployment and backup lists are paged by cursor, newest first by creation
+time and then insertion order: `limit` (default 10, at most 100; larger values
+are lowered, anything but a positive integer is 400) and `before`, the ID of
+the last record of the previous page. A page carries `next`, the `before` of
+the following page, or `null` on the last. A `before` that is not in the list
+(unknown, another service's, or deleted since) returns an empty page with
+`next: null`.
 
 ```
 GET    /api/me                                  → User
@@ -2587,7 +2594,7 @@ DELETE /api/domains/{id}                        204 (Shed-Routes: pending if rou
 POST   /api/services/{id}/volumes   {mountPath} → Volume
 DELETE /api/volumes/{id}                        204  (removes data)
 
-GET    /api/services/{id}/deployments           → Deployment[]  (newest first, 50; imageAvailable when Docker is reachable)
+GET    /api/services/{id}/deployments?before=&limit=  → DeploymentPage  (paged, see above; imageAvailable when Docker is reachable)
 POST   /api/services/{id}/deployments           → Deployment    (deploy branch head / image; 409 if fenced)
 GET    /api/deployments/{id}                    → Deployment
 POST   /api/deployments/{id}/redeploy           → Deployment    (reuse image = rollback; 409 if fenced or image unavailable)
@@ -2598,10 +2605,10 @@ GET    /api/services/{id}/metrics?range=        → Metrics  (range: 1h | 6h | 2
 GET    /api/host/metrics?range=                 → HostMetrics  (same ranges)
 GET    /api/logs                                SSE shed's own log (last 1000 lines, follow)
 
-GET    /api/services/{id}/backups               → ServiceBackups  (newest first, 100)
+GET    /api/services/{id}/backups?before=&limit=  → ServiceBackups  (a page of backups, see above)
 PUT    /api/services/{id}/backups/policy  BackupPolicyInput → BackupPolicy
 POST   /api/services/{id}/backups               202 → Backup  (run now; 409 if one is queued/running/uploading; 400 if no volumes or never deployed)
-GET    /api/backups/system                      → SystemBackups
+GET    /api/backups/system?before=&limit=       → SystemBackups  (a page of backups, see above)
 PUT    /api/backups/system/policy  BackupPolicyInput → BackupPolicy
 POST   /api/backups/system                      202 → Backup
 GET    /api/backups/{id}/download               archive, decrypted, still zstd-compressed (Content-Disposition)
@@ -2811,6 +2818,7 @@ type Deployment = {
   imageAvailable?: boolean; // only in lists: image remains on this server
   createdAt: string; startedAt: string | null; finishedAt: string | null;
 };
+type DeploymentPage = { deployments: Deployment[]; next: string | null };  // pass as before
 
 type Domain = { id: string; host: string; generated: boolean; url: string };
 type Volume = { id: string; mountPath: string; createdAt: string };
@@ -2879,8 +2887,9 @@ type Restore = {
   status: "running" | "succeeded" | "failed"; error: string;
   createdAt: string; finishedAt: string | null;
 };
-type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; restore: Restore | null }; // latest restore
-type SystemBackups = { policy: BackupPolicy; backups: Backup[] };
+// next: pass as before for the following page; null on the last.
+type ServiceBackups = { policy: BackupPolicy; backups: Backup[]; next: string | null; restore: Restore | null }; // latest restore
+type SystemBackups = { policy: BackupPolicy; backups: Backup[]; next: string | null };
 type S3Settings = {
   endpoint: string;                    // URL, e.g. "https://s3.us-east-1.amazonaws.com"
   region: string; bucket: string; prefix: string;

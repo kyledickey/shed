@@ -1,22 +1,40 @@
+import { LinkSimpleIcon } from "@phosphor-icons/react";
 import { Link } from "@tanstack/react-router";
-import { Link as LinkIcon } from "lucide-react";
 import type { MDXComponents, MDXContent } from "mdx/types";
 import { isValidElement, type ComponentProps, type ReactNode } from "react";
-import { Callout } from "../../components/Misc";
+import { AgentPrompt } from "./AgentPrompt";
 import { HelpTip } from "./HelpTip";
-import { CodeBlock, Demo, Figure, Term } from "./kit";
-import styles from "./kit.module.css";
-import { docGroups, type DocMeta } from "./registry";
+import { Callout, CodeBlock, Demo, Figure, Term } from "./kit";
+import kit from "./kit.module.css";
+import styles from "./mdx.module.css";
+import type { DocMeta } from "./registry";
+
+/** Anchor is the link to a heading that appears beside it on hover. */
+function Anchor({ id }: { id?: string }) {
+  return (
+    <a href={`#${id}`} className={styles.anchor} aria-label="Link to this section">
+      <LinkSimpleIcon size={16} />
+    </a>
+  );
+}
 
 /** Heading2 is a section heading with a hover anchor link. */
 function Heading2({ id, children }: ComponentProps<"h2">) {
   return (
     <h2 id={id} className={styles.h2}>
-      <a href={`#${id}`} className={styles.anchor} aria-label="Link to this section">
-        <LinkIcon size={14} />
-      </a>
       {children}
+      <Anchor id={id} />
     </h2>
+  );
+}
+
+/** Heading3 is a subsection heading with a hover anchor link. */
+function Heading3({ id, children }: ComponentProps<"h3">) {
+  return (
+    <h3 id={id} className={styles.h3}>
+      {children}
+      <Anchor id={id} />
+    </h3>
   );
 }
 
@@ -63,8 +81,8 @@ function Pre({ children }: { children?: ReactNode }) {
 /** Table wraps a Markdown table in the docs table frame. */
 function Table(props: ComponentProps<"table">) {
   return (
-    <div className={styles.tableWrap}>
-      <table className={styles.table} {...props} />
+    <div className={kit.tableWrap}>
+      <table className={kit.table} {...props} />
     </div>
   );
 }
@@ -75,9 +93,11 @@ function Table(props: ComponentProps<"table">) {
  */
 const mdxComponents: MDXComponents = {
   h2: Heading2,
+  h3: Heading3,
   a: DocLink,
   pre: Pre,
   table: Table,
+  AgentPrompt,
   Callout,
   CodeBlock,
   Demo,
@@ -86,13 +106,11 @@ const mdxComponents: MDXComponents = {
   Term,
 };
 
-/** MdxPage renders a docs page: group eyebrow, title, lede, then the MDX body. */
+/** MdxPage renders a docs page: title, lede, then the MDX body. */
 export function MdxPage({ meta, Content }: { meta: DocMeta; Content: MDXContent }) {
-  const group = docGroups.find((g) => g.pages.some((p) => p.slug === meta.slug));
   return (
     <article className={styles.doc}>
       <header className={styles.head}>
-        {group && <div className={styles.eyebrow}>{group.title}</div>}
         <h1 className={styles.title}>{meta.title}</h1>
         {meta.description && <p className={styles.lede}>{meta.description}</p>}
       </header>

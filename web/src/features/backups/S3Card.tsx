@@ -1,16 +1,16 @@
-import { CircleCheck, CircleX } from "lucide-react";
+import { Button, Input, Switch } from "@cloudflare/kumo";
+import { CheckCircleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useSaveBackupSettings, useTestBackupSettings } from "../../api/backups";
 import { errorMessage } from "../../api/client";
 import type { BackupSettings, BackupSettingsInput, S3Settings } from "../../api/types";
-import { Button } from "../../components/Button";
-import { Field, Input, Switch } from "../../components/Form";
-import { Callout } from "../../components/Misc";
 import { useToast } from "../../components/Overlay";
+import { SettingRow } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
-import { SettingsCard } from "../settings/SectionForm";
-import styles from "../settings/Settings.module.css";
-import { HelpTip } from "../docs/HelpTip";
+
+import styles from "../settings/Form.module.css";
+import { SettingsForm } from "../settings/SectionForm";
 
 type Draft = Omit<S3Settings, "hasSecret"> & { secretAccessKey: string };
 type S3Input = NonNullable<BackupSettingsInput["s3"]>;
@@ -47,7 +47,7 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-/** S3Card edits the global S3 destination and tests it before saving. */
+/** S3Card edits the global S3 destination and tests it before saving: rows for a server section. */
 export function S3Card({ settings }: { settings: BackupSettings }) {
   const saved = toDraft(settings.s3);
   const hasSecret = settings.s3?.hasSecret ?? false;
@@ -76,6 +76,9 @@ export function S3Card({ settings }: { settings: BackupSettings }) {
     pending: save.isPending,
     error: save.error,
     invalid: !complete,
+    message: complete
+      ? undefined
+      : "An http(s) endpoint, a bucket, an access key ID, and a secret are required.",
     reset: () => {
       setDraft(saved);
       save.reset();
@@ -94,134 +97,96 @@ export function S3Card({ settings }: { settings: BackupSettings }) {
       ),
   };
 
+  const text = (key: Exclude<keyof Draft, "pathStyle">, label: string, placeholder?: string) => (
+    <Input
+      aria-label={label}
+      className={cx(styles.wide, styles.mono)}
+      value={draft[key]}
+      onChange={(e) => set(key, e.target.value)}
+      placeholder={placeholder}
+      autoComplete="off"
+      spellCheck={false}
+    />
+  );
+
   return (
-    <SettingsCard
-      title={
-        <>
-          S3 destination <HelpTip topic="backupS3" />
-        </>
-      }
-      meta="Where backups are uploaded."
-      form={form}
-      footerStart={
-        <>
-          <Button
-            size="sm"
-            loading={test.isPending}
-            disabled={!complete}
-            onClick={() => test.mutate({ s3: toInput(draft), encryption })}
-          >
-            Test connection
-          </Button>
-          {settings.s3 && (
-            <Button size="sm" variant="danger" onClick={() => setRemoving(true)}>
-              Remove destination
-            </Button>
-          )}
-        </>
-      }
-    >
-      <Field
-        label="Endpoint URL"
-        hint="For example https://s3.us-east-1.amazonaws.com, or your MinIO or R2 URL."
-      >
-        {(id) => (
-          <Input
-            id={id}
-            mono
-            value={draft.endpoint}
-            onChange={(e) => set("endpoint", e.target.value)}
-            placeholder="https://s3.us-east-1.amazonaws.com"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        )}
-      </Field>
-      <div className={styles.twoCol}>
-        <Field label="Region">
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={draft.region}
-              onChange={(e) => set("region", e.target.value)}
-              placeholder="us-east-1"
-              autoComplete="off"
-              spellCheck={false}
-            />
-          )}
-        </Field>
-        <Field label="Bucket">
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={draft.bucket}
-              onChange={(e) => set("bucket", e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          )}
-        </Field>
-      </div>
-      <Field label="Prefix" hint="Optional folder inside the bucket.">
-        {(id) => (
-          <Input
-            id={id}
-            mono
-            value={draft.prefix}
-            onChange={(e) => set("prefix", e.target.value)}
-            placeholder="shed"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        )}
-      </Field>
-      <div className={styles.twoCol}>
-        <Field label="Access key ID">
-          {(id) => (
-            <Input
-              id={id}
-              mono
-              value={draft.accessKeyId}
-              onChange={(e) => set("accessKeyId", e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          )}
-        </Field>
-        <Field
+    <>
+      <SettingsForm form={form}>
+        <SettingRow
+          label="Endpoint URL"
+          description="For example https://s3.us-east-1.amazonaws.com, or your MinIO or R2 URL."
+          control={text("endpoint", "Endpoint URL", "https://s3.us-east-1.amazonaws.com")}
+        />
+        <SettingRow label="Region" control={text("region", "Region", "us-east-1")} />
+        <SettingRow label="Bucket" control={text("bucket", "Bucket")} />
+        <SettingRow
+          label="Prefix"
+          description="Optional folder inside the bucket."
+          control={text("prefix", "Prefix", "shed")}
+        />
+        <SettingRow label="Access key ID" control={text("accessKeyId", "Access key ID")} />
+        <SettingRow
           label="Secret access key"
-          hint={hasSecret ? "Leave blank to keep the saved secret." : undefined}
-        >
-          {(id) => (
+          description={hasSecret ? "Leave blank to keep the saved secret." : undefined}
+          control={
             <Input
-              id={id}
-              mono
+              aria-label="Secret access key"
+              className={cx(styles.wide, styles.mono)}
               type="password"
               value={draft.secretAccessKey}
               onChange={(e) => set("secretAccessKey", e.target.value)}
               placeholder={hasSecret ? "••••••• (saved)" : ""}
               autoComplete="new-password"
             />
-          )}
-        </Field>
-      </div>
-      <Switch
-        checked={draft.pathStyle}
-        onChange={(v) => set("pathStyle", v)}
-        label="Path-style addressing"
-        description="Use endpoint/bucket URLs instead of bucket.endpoint. MinIO and many self-hosted stores need this."
+          }
+        />
+        <SettingRow
+          label="Path-style addressing"
+          description="Use endpoint/bucket URLs instead of bucket.endpoint. MinIO and many self-hosted stores need this."
+          control={
+            <Switch
+              aria-label="Path-style addressing"
+              checked={draft.pathStyle}
+              onCheckedChange={(v) => set("pathStyle", v)}
+            />
+          }
+        />
+      </SettingsForm>
+      <SettingRow
+        label="Connection"
+        description={
+          test.isSuccess ? (
+            <span className={cx(styles.status, styles.statusOk)}>
+              <CheckCircleIcon weight="fill" /> Connection works. shed could reach the bucket.
+            </span>
+          ) : test.error ? (
+            <span className={cx(styles.status, styles.statusFailed)}>
+              Connection failed: {errorMessage(test.error)}
+            </span>
+          ) : (
+            "Check that shed can reach the bucket with these settings, before or after saving."
+          )
+        }
+        control={
+          <Button
+            loading={test.isPending}
+            disabled={!complete}
+            onClick={() => test.mutate({ s3: toInput(draft), encryption })}
+          >
+            Test connection
+          </Button>
+        }
       />
-      {test.isSuccess && (
-        <Callout tone="grass" icon={<CircleCheck size={16} />} title="Connection works">
-          shed could reach the bucket with these settings.
-        </Callout>
-      )}
-      {test.error && (
-        <Callout tone="tomato" icon={<CircleX size={16} />} title="Connection failed">
-          {errorMessage(test.error)}
-        </Callout>
+      {settings.s3 && (
+        <SettingRow
+          label="Remove destination"
+          description="New backups stay on this server only."
+          control={
+            <Button variant="secondary-destructive" onClick={() => setRemoving(true)}>
+              Remove
+            </Button>
+          }
+        />
       )}
       <ConfirmDialog
         open={removing}
@@ -251,6 +216,6 @@ export function S3Card({ settings }: { settings: BackupSettings }) {
         be downloaded, restored, and deleted. Policies that keep no local backups must be changed
         first.
       </ConfirmDialog>
-    </SettingsCard>
+    </>
   );
 }

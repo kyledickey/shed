@@ -192,7 +192,9 @@ func (f *fakeBackups) ForgetService(_ context.Context, serviceID string) error {
 func (f *fakeBackups) BackUp(context.Context, string) (store.Backup, error) {
 	return store.Backup{}, nil
 }
-func (f *fakeBackups) Backups(context.Context, string, int) ([]store.Backup, error) { return nil, nil }
+func (f *fakeBackups) Backups(context.Context, string, string, int) ([]store.Backup, error) {
+	return nil, nil
+}
 func (f *fakeBackups) Restore(context.Context, string) (store.Restore, error) {
 	return store.Restore{}, nil
 }

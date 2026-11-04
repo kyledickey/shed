@@ -1,12 +1,16 @@
+import { Button, buttonVariants, Input, InputArea, Tabs } from "@cloudflare/kumo";
+import { FileArrowUpIcon, GithubLogoIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { CircleX, FileKey, Info } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { setupQuery, useImportApp } from "../api/auth";
 import { errorMessage } from "../api/client";
-import { Button, buttonClass } from "../components/Button";
-import { Field, Input, Segmented, Textarea } from "../components/Form";
-import { Callout, GitHubIcon } from "../components/Misc";
-import { AuthCard, authFormClass } from "../features/auth/AuthCard";
+import {
+  AuthCard,
+  authButtonClass,
+  authErrorClass,
+  authFormClass,
+} from "../features/auth/AuthCard";
+import styles from "../features/auth/Setup.module.css";
 
 type SetupSearch = { error?: string };
 
@@ -40,25 +44,33 @@ function SetupPage() {
           : "Reuse a GitHub App that shed created before. GitHub shows its secrets only once, so generate new ones in the app's settings."
       }
     >
-      <Segmented
-        label="GitHub App"
+      <Tabs
+        variant="segmented"
+        className={styles.modes}
+        listClassName={styles.modeList}
         value={mode}
-        onChange={setMode}
-        options={[
+        onValueChange={(v) => setMode(v === "existing" ? "existing" : "create")}
+        tabs={[
           { value: "create", label: "New app" },
           { value: "existing", label: "Existing app" },
         ]}
       />
       {error && (
-        <Callout tone="tomato" icon={<CircleX size={16} />}>
+        <p className={authErrorClass} role="alert">
           {errors[error] ?? `Setup failed: ${error}`}
-        </Callout>
+        </p>
       )}
       {mode === "create" ? (
         <form method="get" action="/api/setup/github" className={authFormClass}>
           <TokenField value={token} onChange={setToken} />
-          <Button type="submit" variant="primary" size="lg" disabled={!token}>
-            <GitHubIcon size={16} />
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className={authButtonClass}
+            disabled={!token}
+            icon={<GithubLogoIcon size={18} />}
+          >
             Create GitHub App
           </Button>
         </form>
@@ -71,27 +83,21 @@ function SetupPage() {
 
 function TokenField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <Field
+    <Input
       label="Setup token"
-      hint={
+      description={
         <>
           Printed once in the server log (<code>shed.log</code> or <code>journalctl -u shed</code>).
         </>
       }
-    >
-      {(id) => (
-        <Input
-          id={id}
-          name="token"
-          mono
-          required
-          autoFocus
-          autoComplete="off"
-          value={value}
-          onChange={(e) => onChange(e.target.value.trim())}
-        />
-      )}
-    </Field>
+      name="token"
+      className={styles.mono}
+      required
+      autoFocus
+      autoComplete="off"
+      value={value}
+      onChange={(e) => onChange(e.target.value.trim())}
+    />
   );
 }
 
@@ -114,89 +120,77 @@ function ExistingAppForm({ token, setToken }: { token: string; setToken: (v: str
     );
   };
 
-  const text = (label: string, value: string, set: (v: string) => void, hint?: string) => (
-    <Field label={label} hint={hint}>
-      {(id) => (
-        <Input
-          id={id}
-          mono
-          required
-          autoComplete="off"
-          value={value}
-          onChange={(e) => set(e.target.value.trim())}
-        />
-      )}
-    </Field>
+  const text = (label: string, value: string, set: (v: string) => void) => (
+    <Input
+      label={label}
+      className={styles.mono}
+      required
+      autoComplete="off"
+      value={value}
+      onChange={(e) => set(e.target.value.trim())}
+    />
   );
 
   return (
     <form onSubmit={submit} className={authFormClass}>
-      <Callout tone="sky" icon={<Info size={16} />}>
+      <p className={styles.note}>
         In the app's settings on GitHub, generate a client secret and a private key, and set a
         webhook secret. Its webhook URL must be <code>{origin}/api/github/webhook</code> and its
         callback URL <code>{origin}/api/auth/callback</code>.
-      </Callout>
+      </p>
       <TokenField value={token} onChange={setToken} />
-      <Field label="App ID">
-        {(id) => (
-          <Input
-            id={id}
-            mono
-            required
-            inputMode="numeric"
-            autoComplete="off"
-            value={appId}
-            onChange={(e) => setAppId(e.target.value.replace(/\D/g, ""))}
-          />
-        )}
-      </Field>
+      <Input
+        label="App ID"
+        className={styles.mono}
+        required
+        inputMode="numeric"
+        autoComplete="off"
+        value={appId}
+        onChange={(e) => setAppId(e.target.value.replace(/\D/g, ""))}
+      />
       {text("Client ID", clientId, setClientId)}
       {text("Client secret", clientSecret, setClientSecret)}
       {text("Webhook secret", webhookSecret, setWebhookSecret)}
-      <Field
-        label="Private key"
-        hint="Paste the contents of the .pem file GitHub downloaded, or choose the file."
-      >
-        {(id) => (
-          <>
-            <Textarea
-              id={id}
-              mono
-              required
-              spellCheck={false}
-              placeholder="-----BEGIN RSA PRIVATE KEY-----"
-              value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
-            />
-            <label className={buttonClass({ size: "sm" })}>
-              <input
-                type="file"
-                accept=".pem"
-                hidden
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setPrivateKey(await file.text());
-                }}
-              />
-              <FileKey size={14} />
-              Choose .pem file
-            </label>
-          </>
-        )}
-      </Field>
+      <div className={styles.key}>
+        <InputArea
+          label="Private key"
+          description="Paste the contents of the .pem file GitHub downloaded, or choose the file."
+          className={styles.mono}
+          required
+          rows={5}
+          spellCheck={false}
+          placeholder="-----BEGIN RSA PRIVATE KEY-----"
+          value={privateKey}
+          onValueChange={setPrivateKey}
+        />
+        <label className={buttonVariants({ size: "sm" })}>
+          <input
+            type="file"
+            accept=".pem"
+            hidden
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (file) setPrivateKey(await file.text());
+            }}
+          />
+          <FileArrowUpIcon size={14} />
+          Choose .pem file
+        </label>
+      </div>
       {importApp.error && (
-        <Callout tone="tomato" icon={<CircleX size={16} />}>
+        <p className={authErrorClass} role="alert">
           {errorMessage(importApp.error)}
-        </Callout>
+        </p>
       )}
       <Button
         type="submit"
         variant="primary"
         size="lg"
+        className={authButtonClass}
         disabled={!complete}
         loading={importApp.isPending}
+        icon={<GithubLogoIcon size={18} />}
       >
-        <GitHubIcon size={16} />
         Connect GitHub App
       </Button>
     </form>

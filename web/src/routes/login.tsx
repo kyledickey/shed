@@ -1,9 +1,13 @@
+import { LinkButton } from "@cloudflare/kumo";
+import { GithubLogoIcon } from "@phosphor-icons/react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { CircleX } from "lucide-react";
 import { meQuery, setupQuery } from "../api/auth";
-import { LinkButton } from "../components/Button";
-import { Callout, GitHubIcon } from "../components/Misc";
-import { AuthCard } from "../features/auth/AuthCard";
+import {
+  AuthCard,
+  authButtonClass,
+  authErrorClass,
+  authFormClass,
+} from "../features/auth/AuthCard";
 import { safeNext } from "../lib/next";
 
 /** next is a relative path to return to after signing in. */
@@ -31,22 +35,25 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const { error, next } = Route.useSearch();
   return (
-    <AuthCard title="Sign in" description="Use the GitHub account that owns this shed.">
-      {error && (
-        <Callout tone="tomato" icon={<CircleX size={16} />}>
-          {error === "denied"
-            ? "That GitHub account isn't allowed to sign in here."
-            : `Sign in failed: ${error}`}
-        </Callout>
-      )}
-      <LinkButton
-        href={next ? `/api/auth/login?next=${encodeURIComponent(next)}` : "/api/auth/login"}
-        variant="primary"
-        size="lg"
-      >
-        <GitHubIcon size={16} />
-        Sign in with GitHub
-      </LinkButton>
+    <AuthCard title="Sign in to shed" description="Use the GitHub account that owns this server.">
+      <div className={authFormClass}>
+        {error && (
+          <p className={authErrorClass} role="alert">
+            {error === "denied"
+              ? "That GitHub account isn't allowed to sign in here."
+              : `Sign in failed: ${error}`}
+          </p>
+        )}
+        <LinkButton
+          href={next ? `/api/auth/login?next=${encodeURIComponent(next)}` : "/api/auth/login"}
+          variant="primary"
+          size="lg"
+          className={authButtonClass}
+          icon={<GithubLogoIcon size={18} />}
+        >
+          Sign in with GitHub
+        </LinkButton>
+      </div>
     </AuthCard>
   );
 }

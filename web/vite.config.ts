@@ -15,7 +15,8 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:3000",
+      // SHED_API points the dev server at another API, such as the mock.
+      "/api": process.env["SHED_API"] ?? "http://127.0.0.1:3000",
     },
   },
   fmt: {

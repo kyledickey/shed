@@ -1,5 +1,12 @@
+import { Banner, Button, Loader, Select, Switch } from "@cloudflare/kumo";
+import {
+  ArrowClockwiseIcon,
+  ArrowUpRightIcon,
+  DownloadSimpleIcon,
+  WarningIcon,
+  CaretRightIcon,
+} from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CircleCheck, Download, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import type { UpdateChannel, UpdateStatus } from "../../api/types";
@@ -11,16 +18,14 @@ import {
   useSetAutoDownload,
   useSetUpdateChannel,
 } from "../../api/update";
-import { Button } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Segmented, Switch } from "../../components/Form";
-import { Skeleton } from "../../components/Misc";
+import { Rows, SettingRow, Well } from "../../components/Settings";
 import { formatDate, relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
 import { useBeginRestart } from "../update/restart";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+import form from "./Form.module.css";
 import { ReleaseNotes } from "./ReleaseNotes";
-import settings from "./Settings.module.css";
 import styles from "./UpdatesCard.module.css";
 
 /** UpdatesCard shows the running and latest shed versions and drives download and install. */
@@ -69,7 +74,12 @@ type ViewProps = {
   onCloseInstall: () => void;
 };
 
-/** UpdatesCardView renders the update card from a status; UpdatesCard wires it to the API. */
+const channels: { value: UpdateChannel; label: string }[] = [
+  { value: "stable", label: "Stable" },
+  { value: "nightly", label: "Nightly" },
+];
+
+/** UpdatesCardView renders the update settings from a status; UpdatesCard wires it to the API. */
 export function UpdatesCardView({
   status,
   loadError,
@@ -86,21 +96,14 @@ export function UpdatesCardView({
   onCloseInstall,
 }: ViewProps) {
   const [confirming, setConfirming] = useState(false);
-  const title = (
-    <>
-      Updates <HelpTip topic="updates" />
-    </>
-  );
 
   if (!status) {
-    return (
-      <LayerCard title={title} meta="Keep shed up to date." padded>
-        {loadError ? (
-          <p className={styles.error}>{loadError}</p>
-        ) : (
-          <Skeleton width="60%" height={14} />
-        )}
-      </LayerCard>
+    return loadError ? (
+      <Banner variant="error" icon={<WarningIcon weight="fill" />} description={loadError} />
+    ) : (
+      <Well empty>
+        <Loader size="sm" />
+      </Well>
     );
   }
 
@@ -108,136 +111,128 @@ export function UpdatesCardView({
   const busyChecking = checking || status.state === "checking";
   const busyDownloading = downloading || status.state === "downloading";
   const error = actionError || status.error;
+  const showNotes = !!latest?.notes && (status.available || !!status.staged);
 
   return (
-    <LayerCard
-      title={title}
-      meta="Keep shed up to date."
-      padded
-      actions={
-        <Button
-          size="sm"
-          loading={busyChecking}
-          disabled={!!unsupported || busyDownloading}
-          onClick={onCheck}
-        >
-          {!busyChecking && <RefreshCw size={13} />} Check now
-        </Button>
-      }
-    >
-      <div className={styles.body}>
-        <dl className={settings.facts}>
-          <div>
-            <dt>Running</dt>
-            <dd className={styles.mono}>{status.current}</dd>
-          </div>
-          <div>
-            <dt>Latest</dt>
-            <dd>
-              {latest ? (
-                <>
-                  <span className={styles.mono}>{latest.version}</span>
-                  <span className={styles.muted}> · {formatDate(latest.publishedAt)}</span>
-                  <a
-                    className={styles.link}
-                    href={latest.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                  >
-                    Release <ArrowUpRight size={12} />
-                  </a>
-                </>
-              ) : (
-                <span className={styles.muted}>Not checked yet</span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>Last checked</dt>
-            <dd>
-              {status.checkedAt ? (
-                <span title={formatDate(status.checkedAt)}>{relativeTime(status.checkedAt)}</span>
-              ) : (
-                <span className={styles.muted}>Never</span>
-              )}
-            </dd>
-          </div>
-        </dl>
-
-        <div className={styles.action}>
-          <div className={styles.state}>
-            {unsupported ? (
-              <p className={styles.muted}>{unsupported}</p>
-            ) : status.staged ? (
-              <p>
-                <span className={styles.mono}>{status.staged}</span> is downloaded and verified.
-              </p>
-            ) : status.available && latest ? (
-              <p>
-                <span className={styles.mono}>{latest.version}</span> is available.
-              </p>
+    <Rows>
+      {error && <Banner variant="error" icon={<WarningIcon weight="fill" />} description={error} />}
+      <SettingRow
+        label={
+          <>
+            <HelpTip topic="updates">Running version</HelpTip>
+          </>
+        }
+        description={
+          unsupported ||
+          (status.checkedAt ? (
+            <span title={formatDate(status.checkedAt)}>
+              Last checked {relativeTime(status.checkedAt)}.
+            </span>
+          ) : (
+            "Never checked for updates."
+          ))
+        }
+        control={
+          <>
+            <span className={form.value}>{status.current}</span>
+            <Button
+              icon={busyChecking ? undefined : <ArrowClockwiseIcon />}
+              loading={busyChecking}
+              disabled={!!unsupported || busyDownloading}
+              onClick={onCheck}
+            >
+              Check now
+            </Button>
+          </>
+        }
+      />
+      {!unsupported && (
+        <SettingRow
+          label="Latest release"
+          description={
+            latest ? (
+              <>
+                {status.staged
+                  ? `${status.staged} is downloaded and verified. `
+                  : status.available
+                    ? `${latest.version} is available. `
+                    : "shed is up to date. "}
+                <span>Published {formatDate(latest.publishedAt)} · </span>
+                <a
+                  className={form.link}
+                  href={latest.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Release <ArrowUpRightIcon size={12} />
+                </a>
+              </>
             ) : (
-              <p className={styles.upToDate}>
-                <CircleCheck size={15} /> shed is up to date
-              </p>
-            )}
-          </div>
-          {!unsupported && status.staged ? (
-            <Button variant="primary" onClick={() => setConfirming(true)}>
-              Install {status.staged} and restart
-            </Button>
-          ) : !unsupported && busyDownloading ? (
-            <Button variant="primary" loading disabled>
-              Downloading…
-            </Button>
-          ) : !unsupported && status.available && latest ? (
-            <Button variant="primary" onClick={onDownload}>
-              <Download size={14} /> Download {latest.version}
-            </Button>
-          ) : null}
-        </div>
-
-        {error && <p className={styles.error}>{error}</p>}
-
-        {!unsupported && (
-          <div className={styles.channel}>
-            <div className={styles.channelText}>
-              <span className={styles.channelLabel}>
-                Channel <HelpTip topic="updateChannel" />
-              </span>
-              <span className={styles.muted}>
-                Nightlies are untested daily builds of main. Switching back to stable waits for the
-                next stable release; shed never downgrades.
-              </span>
-            </div>
-            <Segmented
-              label="Update channel"
-              size="sm"
+              "Not checked yet."
+            )
+          }
+          control={
+            status.staged ? (
+              <Button variant="primary" onClick={() => setConfirming(true)}>
+                Install {status.staged} and restart
+              </Button>
+            ) : busyDownloading ? (
+              <Button variant="primary" loading disabled>
+                Downloading…
+              </Button>
+            ) : status.available && latest ? (
+              <Button variant="primary" icon={<DownloadSimpleIcon />} onClick={onDownload}>
+                Download {latest.version}
+              </Button>
+            ) : (
+              latest && <span className={form.value}>{latest.version}</span>
+            )
+          }
+        >
+          {showNotes && latest && (
+            <Well>
+              <details className={styles.notes}>
+                <summary>
+                  <CaretRightIcon size={12} className={styles.caret} />
+                  Release notes for {latest.version}
+                </summary>
+                <ReleaseNotes notes={latest.notes} />
+              </details>
+            </Well>
+          )}
+        </SettingRow>
+      )}
+      {!unsupported && (
+        <SettingRow
+          label={
+            <>
+              <HelpTip topic="updateChannel">Channel</HelpTip>
+            </>
+          }
+          description="Nightlies are untested daily builds of main. Switching back to stable waits for the next stable release; shed never downgrades."
+          control={
+            <Select
+              aria-label="Update channel"
+              className={styles.channel}
               value={status.channel}
-              onChange={onChannel}
-              options={[
-                { value: "stable", label: "Stable" },
-                { value: "nightly", label: "Nightly" },
-              ]}
+              onValueChange={(v) => v && onChannel(v)}
+              items={channels}
             />
-          </div>
-        )}
-
-        <Switch
-          checked={status.autoDownload}
-          onChange={onAutoDownload}
-          disabled={!!unsupported}
-          label="Download updates automatically"
-          description="New releases are downloaded and verified as soon as they are found. Installing is always manual."
+          }
         />
-
-        {latest?.notes && (status.available || status.staged) && (
-          <details className={styles.notes}>
-            <summary>Release notes for {latest.version}</summary>
-            <ReleaseNotes notes={latest.notes} />
-          </details>
-        )}
-      </div>
+      )}
+      <SettingRow
+        label="Download updates automatically"
+        description="New releases are downloaded and verified as soon as they are found. Installing is always manual."
+        control={
+          <Switch
+            aria-label="Download updates automatically"
+            checked={status.autoDownload}
+            disabled={!!unsupported}
+            onCheckedChange={onAutoDownload}
+          />
+        }
+      />
 
       <ConfirmDialog
         open={confirming}
@@ -256,6 +251,6 @@ export function UpdatesCardView({
         dashboard are unreachable for a few seconds. Running builds, backups, and restores are
         interrupted.
       </ConfirmDialog>
-    </LayerCard>
+    </Rows>
   );
 }

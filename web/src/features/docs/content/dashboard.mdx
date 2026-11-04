@@ -125,16 +125,17 @@ Write in the second person, keep paragraphs short, and verify every claim agains
 
 These are available in every page without an import:
 
-| Component   | Use                                                                       |
-| ----------- | ------------------------------------------------------------------------- |
-| `Callout`   | A highlighted note.                                                       |
-| `CodeBlock` | Code with a copy button. Fenced code blocks already render through it.    |
-| `Demo`      | Frames an interactive explainer that runs on sample data or reader input. |
-| `Figure`    | Frames a diagram or demo with a caption.                                  |
-| `HelpTip`   | The `?` tooltip, for a topic from `topics.ts`.                            |
-| `Term`      | An inline identifier. In Markdown, backticks do the same.                 |
+| Component     | Use                                                                        |
+| ------------- | -------------------------------------------------------------------------- |
+| `AgentPrompt` | A button that copies a prompt for a coding agent to install shed over SSH. |
+| `Callout`     | A note set apart by a thin bar. `tone` is note, tip, warning, or danger.   |
+| `CodeBlock`   | Code with a copy button. Fenced code blocks already render through it.     |
+| `Demo`        | Frames an interactive explainer that runs on sample data or reader input.  |
+| `Figure`      | Frames a diagram or demo with a caption.                                   |
+| `HelpTip`     | Underlines a label and explains it on hover, from a topic in `topics.ts`.  |
+| `Term`        | An inline identifier. In Markdown, backticks do the same.                  |
 
-Markdown maps onto the docs styles too: `##` is an anchored heading, a link to `/docs/...` is a client-side router link, any other link opens in a new tab, and a GFM table becomes a docs table. Give a fenced block a title with `title="..."` after the language, as in the example above.
+Markdown maps onto the docs styles too: `##` and `###` are anchored headings, a link to `/docs/...` is a client-side router link, any other link opens in a new tab, and a GFM table becomes a docs table. Give a fenced block a title with `title="..."` after the language, as in the example above.
 
 A component that belongs to one page lives in `components/<slug>/`, with its CSS module next to it, and the `.mdx` imports it at the top, as the example does. Pure logic goes in `features/docs/lib/` with a test beside it, and the component stays thin.
 
@@ -146,9 +147,9 @@ A component that belongs to one page lives in `components/<slug>/`, with its CSS
 
 Use a `Demo` when moving a slider or typing a value teaches more than a paragraph would. A demo runs entirely in the browser on sample data or what the reader types, and never calls the API.
 
-### Add a ? tooltip
+### Add a help tooltip
 
-A `HelpTip` is a small `?` that summarizes a concept on hover and links to its docs section. Add a topic to `topics.ts`, with the page slug, the id of one of its `##` headings, and a one-line summary. Then place the tip next to the title or label it explains.
+A `HelpTip` wraps the title or label it explains. The words get a faint dashed underline and a help cursor; hovering or focusing them shows a one-line summary, and clicking them opens the docs section. Add a topic to `topics.ts`, with the page slug, the id of one of its `##` headings, and a one-line summary. Then wrap the label in the tip.
 
 ```ts title="topics.ts"
 waitForCi: {
@@ -160,7 +161,7 @@ waitForCi: {
 
 ```tsx title="in a component"
 <label>
-  Wait for CI <HelpTip topic="waitForCi" />
+  <HelpTip topic="waitForCi">Wait for CI</HelpTip>
 </label>
 ```
 

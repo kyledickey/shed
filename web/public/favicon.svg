@@ -1,9 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#46c865"/>
-  <g transform="matrix(1.08 0 0 1.08 -4.06 -4.06)" stroke-linejoin="round">
-    <path d="M19 34 35 20 51 34V51H19Z" fill="#031405" stroke="#031405" stroke-width="13"/>
-    <path d="M16 31 32 17 48 31V48H16Z" fill="#031405" stroke="#031405" stroke-width="13"/>
-    <path d="M16 31 32 17 48 31V48H16Z" fill="#f6f4ec" stroke="#f6f4ec" stroke-width="4"/>
-    <path d="M27 36h10v12H27z" fill="#031405"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <clipPath id="face"><rect width="512" height="486" rx="163"/></clipPath>
+  <rect width="512" height="512" rx="163" fill="#006523"/>
+  <rect width="512" height="486" rx="163" fill="#46b55f"/>
+  <rect y="20" width="512" height="486" rx="163" fill="#0e9a3f" clip-path="url(#face)"/>
+  <g id="glyph" transform="translate(0 -13)">
+    <g fill="#a9d4ae" stroke="#a9d4ae" transform="translate(0 14)">
+      <path d="M120 206 392 140" fill="none" stroke-width="44" stroke-linecap="round"/>
+      <path d="M148 214 364 162V378H148Z" stroke-width="20" stroke-linejoin="round"/>
+    </g>
+    <g fill="#f7fef7" stroke="#f7fef7">
+      <path d="M120 206 392 140" fill="none" stroke-width="44" stroke-linecap="round"/>
+      <path d="M148 214 364 162V378H148Z" stroke-width="20" stroke-linejoin="round"/>
+    </g>
+    <g fill="#035e23">
+      <rect x="184" y="248" width="144" height="26" rx="13"/>
+      <rect x="184" y="296" width="144" height="26" rx="13"/>
+      <rect x="184" y="344" width="144" height="26" rx="13"/>
+    </g>
   </g>
 </svg>

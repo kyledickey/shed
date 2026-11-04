@@ -1,0 +1,201 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 48px;
+
+  @media (max-width: 1000px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  min-width: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-margin-top: 72px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.sectionTitle {
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toc {
+  position: sticky;
+  top: 72px;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  padding-left: 12px;
+  border-left: 1px solid var(--color-kumo-hairline);
+
+  @media (max-width: 1000px) {
+    display: none;
+  }
+}
+
+.tocItem {
+  position: relative;
+  padding: 5px 0;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+
+  &:hover {
+    color: var(--text-color-kumo-default);
+  }
+
+  &[aria-current] {
+    color: var(--text-color-kumo-default);
+
+    &::before {
+      content: "";
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      left: -13px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--text-color-kumo-default);
+    }
+  }
+}
+
+.tocDanger {
+  color: var(--text-color-kumo-danger);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--color-kumo-base);
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+}
+
+.rowMain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 32px;
+
+  @media (max-width: 640px) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rowLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.rowDescription {
+  max-width: 64ch;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+  text-wrap: pretty;
+}
+
+.rowControl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
+
+  .stacked & {
+    justify-content: stretch;
+
+    & > * {
+      flex: 1;
+    }
+  }
+}
+
+/* On its own a well reads like a setting row. */
+.well {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--color-kumo-base);
+  box-shadow: 0 0 0 1px var(--color-kumo-line);
+}
+
+/* Inside a setting row it continues the row under a hairline, on the same fill. */
+.row > .well:not(.empty) {
+  margin: 2px -16px 0;
+  padding: 14px 16px 0;
+  border-top: 1px solid var(--color-kumo-hairline);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.empty {
+  padding: 8px 8px 8px 16px;
+  border-radius: 8px;
+  background: var(--color-kumo-recessed);
+  box-shadow: none;
+  border: 1px dashed var(--color-kumo-line);
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+
+  &:not(:has(.wellAction)) {
+    min-height: 48px;
+  }
+}
+
+.wellBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.wellAction {
+  flex: none;
+}

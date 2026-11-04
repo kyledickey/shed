@@ -1,0 +1,10 @@
+.caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.caps .cap {
+  width: auto;
+  flex: 1 1 200px;
+}

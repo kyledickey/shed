@@ -1,17 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChartArea, CircleX } from "lucide-react";
-import { errorMessage } from "../../../../../../api/client";
-import { isMetricsRange, metricsQuery, metricsRanges } from "../../../../../../api/metrics";
+import { isMetricsRange, metricsQuery } from "../../../../../../api/metrics";
 import type { Metrics, MetricsRange } from "../../../../../../api/types";
-import { Button } from "../../../../../../components/Button";
-import { Segmented } from "../../../../../../components/Form";
-import { Grid, Section, Stack } from "../../../../../../components/Layout";
-import { Callout, EmptyState, Skeleton } from "../../../../../../components/Misc";
-import { ChartCard, ChartValue } from "../../../../../../features/metrics/ChartCard";
-import { formatBytes, formatPercent, formatRate } from "../../../../../../lib/format";
 import { HelpTip } from "../../../../../../features/docs/HelpTip";
+import { ChartCard } from "../../../../../../features/metrics/ChartCard";
+import { MetricsView } from "../../../../../../features/metrics/MetricsView";
+import { latest, type Stat } from "../../../../../../features/metrics/StatStrip";
 import { ServiceDashboards } from "../../../../../../features/telemetry/ServiceDashboards";
+import { formatBytes, formatPercent, formatRate } from "../../../../../../lib/format";
 
 type MetricsSearch = { range?: MetricsRange };
 
@@ -21,12 +17,15 @@ export const Route = createFileRoute("/_app/projects/$projectId/services/$servic
   component: MetricsPage,
 });
 
-const latest = (values: (number | null)[]) => values.findLast((v) => v !== null) ?? null;
-
 const seriesKeys = ["cpu", "memory", "netRx", "netTx", "diskRead", "diskWrite"] as const;
 
 function hasSamples(m: Metrics): boolean {
   return seriesKeys.some((k) => m[k].some((v) => v !== null));
+}
+
+/** sum adds two series sample by sample, keeping gaps where both are missing. */
+function sum(a: (number | null)[], b: (number | null)[]): (number | null)[] {
+  return a.map((v, i) => (v === null && b[i] == null ? null : (v ?? 0) + (b[i] ?? 0)));
 }
 
 function MetricsPage() {
@@ -39,102 +38,91 @@ function MetricsPage() {
     void navigate({ search: next === "1h" ? {} : { range: next }, replace: true });
 
   return (
-    <Stack gap={6}>
-      <Section
-        title={
+    <>
+      <MetricsView
+        intro={
           <>
-            Metrics <HelpTip topic="metrics" />
+            <HelpTip topic="metrics">Resource usage</HelpTip> of the running container.
           </>
         }
-        description="Resource usage of the running container."
-        actions={
-          <Segmented
-            label="Range"
-            size="sm"
-            value={range}
-            onChange={setRange}
-            options={metricsRanges}
-          />
+        range={range}
+        setRange={setRange}
+        data={data}
+        stats={data ? stats(data) : []}
+        charts={data && <Charts metrics={data} />}
+        empty={
+          data && !hasSamples(data)
+            ? {
+                title: "No metrics yet",
+                description:
+                  "shed samples running containers every 10 seconds. Usage shows up here once this service is running.",
+              }
+            : undefined
         }
-      >
-        {data ? (
-          hasSamples(data) ? (
-            <Charts metrics={data} />
-          ) : (
-            <EmptyState
-              icon={<ChartArea />}
-              tone="neutral"
-              title="No metrics yet"
-              description="shed samples running containers every 10 seconds. Usage shows up here once this service is running."
-            />
-          )
-        ) : error ? (
-          <Callout
-            tone="tomato"
-            icon={<CircleX size={16} />}
-            title="Couldn't load metrics"
-            actions={
-              <Button size="sm" onClick={() => void refetch()} loading={isRefetching}>
-                Retry
-              </Button>
-            }
-          >
-            {errorMessage(error)}
-          </Callout>
-        ) : (
-          <Grid min={440}>
-            {Array.from({ length: 4 }, (_, i) => (
-              <Skeleton key={i} height={262} radius={18} />
-            ))}
-          </Grid>
-        )}
-      </Section>
+        error={error}
+        retry={() => void refetch()}
+        retrying={isRefetching}
+      />
       <ServiceDashboards serviceId={serviceId} />
-    </Stack>
+    </>
   );
 }
 
-function Charts({ metrics: m }: { metrics: Metrics }) {
+function stats(m: Metrics): Stat[] {
   const cpu = latest(m.cpu);
   const memory = latest(m.memory);
-  const rx = latest(m.netRx);
-  const tx = latest(m.netTx);
-  const read = latest(m.diskRead);
-  const write = latest(m.diskWrite);
-  const cpuUnit = m.cpuLimit > 0 ? `of ${m.cpuLimit} vCPU` : undefined;
-  const memoryUnit = m.memoryLimit > 0 ? `of ${formatBytes(m.memoryLimit)}` : undefined;
+  const net = sum(m.netRx, m.netTx);
+  const disk = sum(m.diskRead, m.diskWrite);
+  const netNow = latest(net);
+  const diskNow = latest(disk);
+  return [
+    {
+      label: "CPU",
+      value: cpu === null ? null : formatPercent(cpu),
+      of: m.cpuLimit > 0 ? `of ${m.cpuLimit} vCPU` : undefined,
+      values: m.cpu,
+    },
+    {
+      label: "Memory",
+      value: memory === null ? null : formatBytes(memory),
+      of: m.memoryLimit > 0 ? `of ${formatBytes(m.memoryLimit)}` : undefined,
+      values: m.memory,
+    },
+    {
+      label: "Network",
+      value: netNow === null ? null : formatRate(netNow),
+      of: "in + out",
+      values: net,
+    },
+    {
+      label: "Disk I/O",
+      value: diskNow === null ? null : formatRate(diskNow),
+      of: "read + write",
+      values: disk,
+    },
+  ];
+}
 
+function Charts({ metrics: m }: { metrics: Metrics }) {
   return (
-    <Grid min={440}>
+    <>
       <ChartCard
         title="CPU"
-        now={cpu !== null && <ChartValue value={formatPercent(cpu)} unit={cpuUnit} />}
         series={[{ key: "cpu", label: "CPU", tone: "accent", values: m.cpu }]}
         start={m.start}
         step={m.step}
         format={formatPercent}
-        max={m.cpuLimit > 0 ? m.cpuLimit * 100 : undefined}
       />
       <ChartCard
         title="Memory"
-        now={memory !== null && <ChartValue value={formatBytes(memory)} unit={memoryUnit} />}
         series={[{ key: "memory", label: "Memory", tone: "sky", values: m.memory }]}
         start={m.start}
         step={m.step}
         format={formatBytes}
-        binary
         limit={m.memoryLimit > 0 ? { value: m.memoryLimit, label: "Limit" } : undefined}
       />
       <ChartCard
         title="Network"
-        now={
-          (rx !== null || tx !== null) && (
-            <>
-              {rx !== null && <ChartValue value={formatRate(rx)} unit="in" />}
-              {tx !== null && <ChartValue value={formatRate(tx)} unit="out" />}
-            </>
-          )
-        }
         series={[
           { key: "rx", label: "Inbound", tone: "accent", values: m.netRx },
           { key: "tx", label: "Outbound", tone: "sky", values: m.netTx },
@@ -142,18 +130,9 @@ function Charts({ metrics: m }: { metrics: Metrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
-        binary
       />
       <ChartCard
         title="Disk I/O"
-        now={
-          (read !== null || write !== null) && (
-            <>
-              {read !== null && <ChartValue value={formatRate(read)} unit="read" />}
-              {write !== null && <ChartValue value={formatRate(write)} unit="write" />}
-            </>
-          )
-        }
         series={[
           { key: "read", label: "Read", tone: "accent", values: m.diskRead },
           { key: "write", label: "Write", tone: "tangerine", values: m.diskWrite },
@@ -161,8 +140,7 @@ function Charts({ metrics: m }: { metrics: Metrics }) {
         start={m.start}
         step={m.step}
         format={formatRate}
-        binary
       />
-    </Grid>
+    </>
   );
 }

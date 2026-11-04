@@ -94,3 +94,30 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-color-kumo-default);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.statusSm {
+  gap: 6px;
+  font-size: var(--text-xs);
+}
+
+.bar {
+  flex: none;
+  width: 3px;
+  height: 1.1em;
+  border-radius: 2px;
+  background: var(--tone);
+
+  [data-tone="neutral"] > & {
+    background: var(--color-kumo-interact);
+  }
+}

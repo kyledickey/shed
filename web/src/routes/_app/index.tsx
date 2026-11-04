@@ -1,14 +1,12 @@
+import { Button } from "@cloudflare/kumo";
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { FolderPlus, Plus } from "lucide-react";
 import { projectsQuery } from "../../api/projects";
-import { Button } from "../../components/Button";
-import { Page } from "../../components/Layout";
-import { EmptyState } from "../../components/Misc";
-import { PageHeader } from "../../components/Shell";
-import { NewProjectDialog } from "../../features/projects/NewProjectDialog";
-import { ProjectGrid } from "../../features/projects/ProjectGrid";
+import { PageHeader } from "../../components/PageHeader";
 import { HelpTip } from "../../features/docs/HelpTip";
+import { NewProjectDialog } from "../../features/projects/NewProjectDialog";
+import { NoProjects, ProjectList } from "../../features/projects/ProjectList";
+import styles from "../../features/projects/ProjectList.module.css";
 
 type HomeSearch = { new?: boolean };
 
@@ -25,34 +23,25 @@ function ProjectsPage() {
   const setCreating = (open: boolean) =>
     void navigate({ search: open ? { new: true } : {}, replace: !open });
 
-  const newButton = (
-    <Button variant="primary" onClick={() => setCreating(true)}>
-      <Plus size={14} />
-      New project
-    </Button>
-  );
-
   return (
-    <Page>
+    <>
       <PageHeader
         title={
           <>
-            Projects <HelpTip topic="projects" />
+            <HelpTip topic="projects">Projects</HelpTip>
           </>
         }
-        actions={newButton}
+        description="Each project is a group of services that reach each other by name on a private network."
+        actions={
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            Create project
+          </Button>
+        }
       />
-      {projects.length === 0 ? (
-        <EmptyState
-          icon={<FolderPlus />}
-          title="No projects yet"
-          description="A project groups services that reach each other over a private network. Create one, then add an app or a database."
-          actions={newButton}
-        />
-      ) : (
-        <ProjectGrid projects={projects} onNew={() => setCreating(true)} />
-      )}
+      <div className={styles.page}>
+        {projects.length === 0 ? <NoProjects /> : <ProjectList projects={projects} />}
+      </div>
       <NewProjectDialog open={search.new === true} onOpenChange={setCreating} />
-    </Page>
+    </>
   );
 }

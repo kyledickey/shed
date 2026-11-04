@@ -1,16 +1,17 @@
-import { KeyRound, TriangleAlert } from "lucide-react";
+import { Banner, Button, ClipboardText, Switch } from "@cloudflare/kumo";
+import { CopyIcon, KeyIcon, WarningIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useRevealBackupKey, useSaveBackupSettings } from "../../api/backups";
 import { errorMessage } from "../../api/client";
 import type { BackupSettings } from "../../api/types";
-import { Button } from "../../components/Button";
-import { Switch } from "../../components/Form";
-import { Callout, CopyButton } from "../../components/Misc";
-import { Dialog, useToast } from "../../components/Overlay";
-import { SettingsCard } from "../settings/SectionForm";
-import styles from "./Backups.module.css";
-import settingsStyles from "../settings/Settings.module.css";
+import { useToast } from "../../components/Overlay";
+import { SettingRow } from "../../components/Settings";
 import { HelpTip } from "../docs/HelpTip";
+
+import form from "../settings/Form.module.css";
+import { FormDialog } from "../settings/FormDialog";
+import { SettingsForm } from "../settings/SectionForm";
+import styles from "./Encryption.module.css";
 
 /** EncryptionCard turns age encryption of new backups on or off and reveals the secret key. */
 export function EncryptionCard({ settings }: { settings: BackupSettings }) {
@@ -21,7 +22,7 @@ export function EncryptionCard({ settings }: { settings: BackupSettings }) {
   const toast = useToast();
   const { recipient } = settings.encryption;
 
-  const form = {
+  const state = {
     dirty: enabled !== saved,
     pending: save.isPending,
     error: save.error,
@@ -55,51 +56,44 @@ export function EncryptionCard({ settings }: { settings: BackupSettings }) {
   };
 
   return (
-    <SettingsCard
-      title={
-        <>
-          Encryption <HelpTip topic="backupEncryption" />
-        </>
-      }
-      meta="Protect archives with age."
-      form={form}
-    >
-      <Switch
-        checked={enabled}
-        onChange={setEnabled}
-        label="Encrypt new backups"
-        description="Every new archive, local and in S3, is encrypted to shed's key. Older archives keep the encryption they were created with."
-      />
+    <>
+      <SettingsForm form={state}>
+        <SettingRow
+          label={<HelpTip topic="backupEncryption">Encrypt new backups</HelpTip>}
+          description="Every new archive, local and in S3, is encrypted with age to shed's key. Older archives keep the encryption they were created with."
+          control={
+            <Switch
+              aria-label="Encrypt new backups"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+            />
+          }
+        />
+      </SettingsForm>
       {recipient && (
-        <div className={settingsStyles.fields}>
-          <div>
-            <p className={settingsStyles.subhead}>Public key</p>
-            <div className={styles.recipient}>
-              <span className={styles.recipientValue} title={recipient}>
-                {recipient}
-              </span>
-              <CopyButton value={recipient} label="Copy public key" />
-            </div>
-          </div>
-          <div>
-            <Button size="sm" onClick={() => setRevealing(true)}>
-              <KeyRound size={13} /> Reveal secret key
-            </Button>
-          </div>
-        </div>
+        <SettingRow
+          label="Public key"
+          description="Archives are encrypted to this recipient."
+          control={<ClipboardText text={recipient} size="base" className={styles.recipient} />}
+        />
       )}
-      {saved && (
-        <Callout
-          tone="sunflower"
-          icon={<TriangleAlert size={16} />}
-          title="Keep the secret key safe"
-        >
-          Without the secret key, encrypted backups can't be recovered, including those of shed's
-          own database. Store a copy off this server.
-        </Callout>
+      {recipient && (
+        <SettingRow
+          label="Secret key"
+          description={
+            saved
+              ? "Without the secret key, encrypted backups can't be recovered, including those of shed's own database. Store a copy off this server."
+              : "Decrypts archives made while encryption was on."
+          }
+          control={
+            <Button icon={<KeyIcon />} onClick={() => setRevealing(true)}>
+              Reveal secret key
+            </Button>
+          }
+        />
       )}
       <KeyDialog open={revealing} onOpenChange={setRevealing} />
-    </SettingsCard>
+    </>
   );
 }
 
@@ -112,36 +106,51 @@ function KeyDialog({
 }) {
   const reveal = useRevealBackupKey();
   const { mutate, reset } = reveal;
+  const [copied, setCopied] = useState(false);
   // Fetch when the dialog opens and drop the key when it closes.
   useEffect(() => {
     if (open) mutate();
-    else reset();
+    else {
+      reset();
+      setCopied(false);
+    }
   }, [open, mutate, reset]);
 
+  const identity = reveal.data?.identity;
   return (
-    <Dialog
+    <FormDialog
       open={open}
       onOpenChange={onOpenChange}
       title="Secret key"
-      icon={<KeyRound size={18} />}
-      iconTone="sunflower"
-      size="md"
-      footer={<Button onClick={() => onOpenChange(false)}>Done</Button>}
+      size="xl"
+      footer={
+        <>
+          <Button
+            icon={<CopyIcon />}
+            disabled={!identity}
+            onClick={() =>
+              identity && void navigator.clipboard.writeText(identity).then(() => setCopied(true))
+            }
+          >
+            {copied ? "Copied" : "Copy secret key"}
+          </Button>
+          <Button variant="primary" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </>
+      }
     >
-      <div className={settingsStyles.fields}>
-        <Callout tone="tomato" icon={<TriangleAlert size={16} />} title="Store this off the server">
-          Anyone with this key can read your backups. If you lose it, and this server's disk is lost
-          too, encrypted backups can't be recovered. Save it in a password manager now.
-        </Callout>
-        {reveal.error ? (
-          <p className={settingsStyles.error}>{errorMessage(reveal.error)}</p>
-        ) : (
-          <div className={styles.keyBlock}>
-            <pre className={styles.key}>{reveal.data?.identity ?? "Loading…"}</pre>
-            {reveal.data && <CopyButton value={reveal.data.identity} label="Copy secret key" />}
-          </div>
-        )}
-      </div>
-    </Dialog>
+      <Banner
+        variant="alert"
+        icon={<WarningIcon weight="fill" />}
+        title="Store this off the server"
+        description="Anyone with this key can read your backups. If you lose it, and this server's disk is lost too, encrypted backups can't be recovered. Save it in a password manager now."
+      />
+      {reveal.error ? (
+        <p className={form.error}>{errorMessage(reveal.error)}</p>
+      ) : (
+        <pre className={styles.key}>{identity ?? "Loading…"}</pre>
+      )}
+    </FormDialog>
   );
 }

@@ -1,0 +1,119 @@
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 28px var(--page-gutter) 0;
+}
+
+.trail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: -6px;
+  font-size: var(--text-sm);
+}
+
+.slash {
+  color: var(--text-color-kumo-inactive);
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-color-kumo-subtle);
+  font-size: inherit;
+
+  &:hover {
+    background: var(--color-kumo-tint);
+    color: var(--text-color-kumo-default);
+  }
+}
+
+.crumbCurrent {
+  padding: 2px 6px;
+  color: var(--text-color-kumo-subtle);
+}
+
+.caret {
+  color: var(--text-color-kumo-inactive);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Below this width the actions wrap under the title instead of squeezing it. */
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.titleLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-color-kumo-subtle);
+  font-size: var(--text-sm);
+}
+
+.description {
+  max-width: 68ch;
+  color: var(--text-color-kumo-subtle);
+  text-wrap: pretty;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.tabRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.tabs {
+  min-width: 0;
+  max-width: 100%;
+}

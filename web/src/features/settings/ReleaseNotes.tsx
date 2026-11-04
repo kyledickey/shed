@@ -67,9 +67,16 @@ function inline(text: string): ReactNode[] {
 }
 
 /** ReleaseNotes renders a release's Markdown notes: headings, bullets, bold, code, and links. */
-export function ReleaseNotes({ notes }: { notes: string }) {
+export function ReleaseNotes({
+  notes,
+  page = false,
+}: {
+  notes: string;
+  /** Full-size prose for a page of its own, instead of a small scrolling box. */
+  page?: boolean;
+}) {
   return (
-    <div className={styles.notes}>
+    <div className={page ? styles.page : styles.notes}>
       {parse(notes).map((b, i) => {
         switch (b.kind) {
           case "heading":

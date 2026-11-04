@@ -1,6 +1,13 @@
+import { Banner, Button, ClipboardText, LinkButton, Switch, Table } from "@cloudflare/kumo";
+import {
+  ArrowClockwiseIcon,
+  ArrowUpRightIcon,
+  BellRingingIcon,
+  InfoIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import { useSuspenseQuery } from "@tanstack/react-query";
-import { BellRing, ExternalLink, Info, RotateCw } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { errorMessage } from "../../api/client";
 import {
   telemetryQuery,
@@ -15,20 +22,19 @@ import type {
   TelemetryComponentName,
   TelemetrySettings,
 } from "../../api/types";
-import { Badge, Spinner } from "../../components/Badge";
-import { Button, LinkButton } from "../../components/Button";
-import { LayerCard } from "../../components/Card";
-import { Field, Input, Switch } from "../../components/Form";
-import { Section, Stack } from "../../components/Layout";
-import { Callout, CopyButton } from "../../components/Misc";
+import { Spinner } from "../../components/Badge";
 import { useToast } from "../../components/Overlay";
-import type { Tone } from "../../components/tone";
+import { Pill } from "../../components/Pill";
+import { Rows, SettingRow, Well } from "../../components/Settings";
+import { cx } from "../../lib/cx";
 import { formatBytes, formatPercent } from "../../lib/format";
 import { relativeTime } from "../../lib/time";
 import { HelpTip } from "../docs/HelpTip";
 import { ConfirmDialog } from "../settings/ConfirmDialog";
-import { SettingsCard } from "../settings/SectionForm";
-import settingsStyles from "../settings/Settings.module.css";
+import { InlineNumber } from "../settings/fields";
+import form from "../settings/Form.module.css";
+import { Group, Groups } from "../settings/Group";
+import { SettingsForm } from "../settings/SectionForm";
 import styles from "./Telemetry.module.css";
 
 const componentLabels: Record<TelemetryComponentName, string> = {
@@ -38,142 +44,147 @@ const componentLabels: Record<TelemetryComponentName, string> = {
   grafana: "Grafana",
 };
 
-const stateLooks: Record<
-  TelemetryComponent["state"],
-  { tone: Tone; label: string; live?: boolean }
-> = {
-  running: { tone: "grass", label: "Running" },
-  starting: { tone: "sky", label: "Starting", live: true },
-  stopped: { tone: "neutral", label: "Stopped" },
-  failed: { tone: "tomato", label: "Failed" },
+const stateLabels: Record<TelemetryComponent["state"], string> = {
+  running: "Running",
+  starting: "Starting",
+  stopped: "Stopped",
+  failed: "Failed",
 };
 
 /** TelemetryPage turns the telemetry stack on and off, tunes it, and shows how it is doing. */
 export function TelemetryPage() {
   const { data } = useSuspenseQuery(telemetryQuery);
   return (
-    <Section
-      title="Telemetry"
-      description="Metrics, logs, and traces of every service, kept on this server and explored in Grafana."
-    >
-      <Stack gap={4}>
-        <EnableCard telemetry={data} />
-        {data.components.length > 0 && <ComponentsCard telemetry={data} />}
-        {data.settings.enabled && <IngestCard telemetry={data} />}
-        {data.settings.enabled && <DashboardsCard />}
-        <SettingsForm settings={data.settings} />
-        <DeleteCard telemetry={data} />
-      </Stack>
-    </Section>
+    <Groups>
+      <StackGroup telemetry={data} />
+      {data.components.length > 0 && <ComponentsGroup telemetry={data} />}
+      {data.settings.enabled && <IngestGroup telemetry={data} />}
+      {data.settings.enabled && <DashboardsGroup />}
+      <SettingsGroup settings={data.settings} />
+      <DeleteGroup telemetry={data} />
+    </Groups>
   );
 }
 
-function EnableCard({ telemetry }: { telemetry: Telemetry }) {
+function StackGroup({ telemetry }: { telemetry: Telemetry }) {
   const save = useSaveTelemetry();
   const [toggled, setToggled] = useState(false);
   const { settings } = telemetry;
   return (
-    <LayerCard
+    <Group
       title="Telemetry stack"
       actions={
         settings.enabled && (
-          <LinkButton size="sm" href={telemetry.grafanaUrl} target="_blank" rel="noreferrer">
-            <ExternalLink size={14} />
+          <LinkButton
+            size="sm"
+            variant="secondary"
+            href={telemetry.grafanaUrl}
+            target="_blank"
+            rel="noreferrer"
+            icon={<ArrowUpRightIcon />}
+          >
             Open Grafana
           </LinkButton>
         )
       }
-      padded
     >
-      <div className={settingsStyles.fields}>
-        <Switch
-          checked={settings.enabled}
-          disabled={save.isPending}
-          onChange={(enabled) =>
-            save.mutate({ ...settings, enabled }, { onSuccess: () => setToggled(true) })
-          }
-          label={
-            <>
-              Collect telemetry <HelpTip topic="telemetry" />
-            </>
-          }
-          description="Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana as containers on this server. Turning it off stops them and keeps their data."
-        />
-        <dl className={settingsStyles.facts}>
-          <div>
-            <dt>OTLP endpoint for services</dt>
-            <dd>
-              <code className={styles.endpoint}>{telemetry.otlpEndpoint}</code>
-              <CopyButton value={telemetry.otlpEndpoint} label="Copy OTLP endpoint" />
-            </dd>
-          </div>
-          <div>
-            <dt>Grafana</dt>
-            <dd>
-              <code className={styles.endpoint}>{telemetry.grafanaUrl}</code>
-            </dd>
-          </div>
-        </dl>
-        {save.error && <p className={settingsStyles.error}>{errorMessage(save.error)}</p>}
+      <SettingRow
+        label={
+          <>
+            <HelpTip topic="telemetry">Collect telemetry</HelpTip>
+          </>
+        }
+        description="Runs VictoriaMetrics, VictoriaLogs, VictoriaTraces, and Grafana as containers on this server. Turning it off stops them and keeps their data."
+        control={
+          <Switch
+            aria-label="Collect telemetry"
+            checked={settings.enabled}
+            disabled={save.isPending}
+            onCheckedChange={(enabled) =>
+              save.mutate({ ...settings, enabled }, { onSuccess: () => setToggled(true) })
+            }
+          />
+        }
+      >
+        {save.error && <p className={form.error}>{errorMessage(save.error)}</p>}
         {toggled && (
-          <Callout tone="sky" icon={<Info size={16} />}>
-            Apps get the OTLP variables, or lose them, with their next deployment.
-          </Callout>
+          <Well>
+            <div className={form.note}>
+              <InfoIcon size={16} />
+              Apps get the OTLP variables, or lose them, with their next deployment.
+            </div>
+          </Well>
         )}
-      </div>
-    </LayerCard>
+      </SettingRow>
+      <SettingRow
+        label="OTLP endpoint"
+        description="Where services send traces, metrics, and logs."
+        control={
+          <ClipboardText text={telemetry.otlpEndpoint} size="base" className={styles.endpoint} />
+        }
+      />
+      <SettingRow
+        label="Grafana"
+        control={
+          <a className={form.link} href={telemetry.grafanaUrl} target="_blank" rel="noreferrer">
+            {telemetry.grafanaUrl}
+            <ArrowUpRightIcon size={12} />
+          </a>
+        }
+      />
+    </Group>
   );
 }
 
-function ComponentsCard({ telemetry }: { telemetry: Telemetry }) {
+function ComponentsGroup({ telemetry }: { telemetry: Telemetry }) {
   const restart = useRestartTelemetryComponent();
   const toast = useToast();
   const enabled = telemetry.settings.enabled;
   return (
-    <LayerCard title="Components">
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Component</th>
-            <th>State</th>
-            <th className={styles.num}>CPU</th>
-            <th className={styles.num}>Memory</th>
-            <th className={styles.num}>Disk</th>
-            <th aria-label="Actions" />
-          </tr>
-        </thead>
-        <tbody>
-          {telemetry.components.map((c) => {
-            const look = stateLooks[c.state];
-            return (
-              <tr key={c.name}>
-                <td>
+    <Group title="Components">
+      <div className={form.table}>
+        <Table>
+          <Table.Header>
+            <Table.Row>
+              <Table.Head>Component</Table.Head>
+              <Table.Head>State</Table.Head>
+              <Table.Head className={form.cellNum}>CPU</Table.Head>
+              <Table.Head className={form.cellNum}>Memory</Table.Head>
+              <Table.Head className={form.cellNum}>Disk</Table.Head>
+              <Table.Head aria-label="Actions" />
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {telemetry.components.map((c) => (
+              <Table.Row key={c.name}>
+                <Table.Cell>
                   <span className={styles.name}>{componentLabels[c.name]}</span>
                   <span className={styles.version}>{c.version}</span>
-                  {c.error && <span className={styles.problem}>{c.error}</span>}
-                </td>
-                <td>
-                  <Badge tone={look.tone} size="sm">
-                    {look.live && <Spinner tone={look.tone} size={8} />}
-                    {look.label}
-                  </Badge>
-                </td>
-                <td className={styles.num}>
+                  {c.error && <span className={form.cellProblem}>{c.error}</span>}
+                </Table.Cell>
+                <Table.Cell>
+                  <span className={cx(form.status, c.state === "failed" && form.statusFailed)}>
+                    {c.state === "starting" && <Spinner size={9} />}
+                    {stateLabels[c.state]}
+                  </span>
+                </Table.Cell>
+                <Table.Cell className={form.cellNum}>
                   {c.cpuPercent === null ? "—" : formatPercent(c.cpuPercent)}
-                </td>
-                <td className={styles.num}>
+                </Table.Cell>
+                <Table.Cell className={form.cellNum}>
                   {c.memoryBytes === null ? "—" : formatBytes(c.memoryBytes)}
-                  <span className={styles.limit}> / {formatBytes(c.memoryLimit)}</span>
-                </td>
-                <td className={styles.num}>
+                  <span className={form.muted}> / {formatBytes(c.memoryLimit)}</span>
+                </Table.Cell>
+                <Table.Cell className={form.cellNum}>
                   {c.diskBytes === null ? "—" : formatBytes(c.diskBytes)}
-                </td>
-                <td className={styles.actions}>
+                </Table.Cell>
+                <Table.Cell className={form.cellActions}>
                   {enabled && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      icon
+                      shape="square"
+                      icon={<ArrowClockwiseIcon />}
                       aria-label={`Restart ${componentLabels[c.name]}`}
                       loading={restart.isPending && restart.variables === c.name}
                       onClick={() =>
@@ -191,62 +202,78 @@ function ComponentsCard({ telemetry }: { telemetry: Telemetry }) {
                             }),
                         })
                       }
-                    >
-                      <RotateCw size={14} />
-                    </Button>
+                    />
                   )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </LayerCard>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
+    </Group>
   );
 }
 
-function IngestCard({ telemetry }: { telemetry: Telemetry }) {
+function IngestGroup({ telemetry }: { telemetry: Telemetry }) {
   const { ingest, droppedLastHour, firingAlerts } = telemetry;
   const rate = (n: number) => `${Number(n.toFixed(n < 10 ? 1 : 0))}/s`;
+  const stats = [
+    { label: "Spans", value: rate(ingest.spans) },
+    { label: "Log records", value: rate(ingest.logs) },
+    { label: "Metric points", value: rate(ingest.points) },
+    {
+      label: "Dropped in the last hour",
+      value: droppedLastHour.reduce((sum, d) => sum + d.count, 0).toFixed(0),
+    },
+  ];
   return (
-    <LayerCard title="Ingest" meta="Last minute" padded>
-      <div className={settingsStyles.fields}>
-        <dl className={settingsStyles.facts}>
-          <Fact label="Spans">{rate(ingest.spans)}</Fact>
-          <Fact label="Log records">{rate(ingest.logs)}</Fact>
-          <Fact label="Metric points">{rate(ingest.points)}</Fact>
-          <Fact label="Dropped in the last hour">
-            {droppedLastHour.reduce((sum, d) => sum + d.count, 0).toFixed(0)}
-          </Fact>
-        </dl>
-        {droppedLastHour.length > 0 && (
-          <ul className={styles.drops}>
-            {droppedLastHour.map((d) => (
-              <li key={`${d.signal}/${d.reason}`}>
-                <Badge size="sm" variant="outline">
-                  {d.signal}
-                </Badge>{" "}
-                {d.reason.replaceAll("_", " ")}: {d.count.toFixed(0)}
-              </li>
-            ))}
-          </ul>
-        )}
-        {firingAlerts.map((a) => (
-          <Callout
-            key={`${a.name}/${a.serviceId}`}
-            tone="tomato"
-            icon={<BellRing size={16} />}
-            title={a.name}
-          >
-            Firing since {relativeTime(a.since)}.
-          </Callout>
+    <Group title="Ingest" description="Rates over the last minute.">
+      {firingAlerts.map((a) => (
+        <Banner
+          key={`${a.name}/${a.serviceId}`}
+          variant="error"
+          icon={<BellRingingIcon weight="fill" />}
+          title={a.name}
+          description={`Firing since ${relativeTime(a.since)}.`}
+        />
+      ))}
+      <div className={styles.stats}>
+        {stats.map((s) => (
+          <div key={s.label} className={styles.stat}>
+            <span className={styles.statLabel}>{s.label}</span>
+            <span className={styles.statValue}>{s.value}</span>
+          </div>
         ))}
       </div>
-    </LayerCard>
+      {droppedLastHour.length > 0 && (
+        <div className={form.table}>
+          <Table>
+            <Table.Header>
+              <Table.Row>
+                <Table.Head>Signal</Table.Head>
+                <Table.Head>Reason</Table.Head>
+                <Table.Head className={form.cellNum}>Dropped</Table.Head>
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {droppedLastHour.map((d) => (
+                <Table.Row key={`${d.signal}/${d.reason}`}>
+                  <Table.Cell>
+                    <Pill>{d.signal}</Pill>
+                  </Table.Cell>
+                  <Table.Cell>{d.reason.replaceAll("_", " ")}</Table.Cell>
+                  <Table.Cell className={form.cellNum}>{d.count.toFixed(0)}</Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table>
+        </div>
+      )}
+    </Group>
   );
 }
 
-function DashboardsCard() {
+function DashboardsGroup() {
   const restore = useRestoreDashboards();
   const toast = useToast();
   const onRestore = () =>
@@ -256,35 +283,21 @@ function DashboardsCard() {
         toast.add({ title: "Couldn't restore", description: errorMessage(err), type: "error" }),
     });
   return (
-    <LayerCard
-      title={
-        <>
-          Dashboards <HelpTip topic="dashboards" />
-        </>
-      }
-    >
-      <div className={settingsStyles.section}>
-        <div className={settingsStyles.danger}>
-          <p className={settingsStyles.note}>
-            shed keeps default dashboards for itself, each project, and each service. Ones you save
-            in Grafana are left alone, and ones you delete stay deleted until you restore them.
-          </p>
-          <Button loading={restore.isPending} onClick={onRestore}>
-            <RotateCw size={14} />
-            Restore default dashboards
+    <Group title="Dashboards">
+      <SettingRow
+        label={
+          <>
+            <HelpTip topic="dashboards">Default dashboards</HelpTip>
+          </>
+        }
+        description="shed keeps default dashboards for itself, each project, and each service. Ones you save in Grafana are left alone, and ones you delete stay deleted until you restore them."
+        control={
+          <Button loading={restore.isPending} icon={<ArrowClockwiseIcon />} onClick={onRestore}>
+            Restore defaults
           </Button>
-        </div>
-      </div>
-    </LayerCard>
-  );
-}
-
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </div>
+        }
+      />
+    </Group>
   );
 }
 
@@ -301,7 +314,7 @@ export function validateSettings(s: TelemetrySettings): string | null {
   return null;
 }
 
-function SettingsForm({ settings }: { settings: TelemetrySettings }) {
+function SettingsGroup({ settings }: { settings: TelemetrySettings }) {
   const [draft, setDraft] = useState(settings);
   const save = useSaveTelemetry();
   const toast = useToast();
@@ -314,100 +327,148 @@ function SettingsForm({ settings }: { settings: TelemetrySettings }) {
   const dirty = JSON.stringify(saved) !== JSON.stringify(edited);
   const problem = validateSettings(draft);
 
-  const number = (value: number, onChange: (n: number) => void, suffix: string) => (id: string) => (
-    <Input
-      id={id}
-      type="number"
-      min={1}
-      step={1}
-      mono
-      suffix={suffix}
-      value={Number.isNaN(value) ? "" : value}
-      onChange={(e) => onChange(e.target.valueAsNumber)}
-    />
+  const number = (
+    label: string,
+    value: number,
+    onChange: (n: number) => void,
+    unit: string,
+    prefix?: string,
+  ) => (
+    <span className={form.sentence}>
+      {prefix && <span>{prefix}</span>}
+      <InlineNumber
+        aria-label={label}
+        min={1}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(e.target.valueAsNumber)}
+      />
+      <span>{unit}</span>
+    </span>
   );
 
   return (
-    <SettingsCard
+    <Group
       title="Retention and limits"
-      meta="Changing a retention restarts that store; data is kept."
-      form={{
-        dirty,
-        invalid: problem !== null,
-        pending: save.isPending,
-        error: save.error,
-        reset: () => {
-          setDraft(settings);
-          save.reset();
-        },
-        save: () =>
-          save.mutate(
-            { ...draft, enabled: settings.enabled },
-            { onSuccess: () => toast.add({ type: "success", title: "Telemetry settings saved" }) },
-          ),
-      }}
+      description="Changing a retention restarts that store; data is kept."
     >
-      <div className={settingsStyles.twoCol}>
-        <Field label="Keep metrics for">
-          {number(draft.metricsRetentionDays, (n) => set("metricsRetentionDays", n), "days")}
-        </Field>
-        <Field label="Keep logs for">
-          {number(draft.logsRetentionDays, (n) => set("logsRetentionDays", n), "days")}
-        </Field>
-        <Field label="Keep traces for">
-          {number(draft.tracesRetentionDays, (n) => set("tracesRetentionDays", n), "days")}
-        </Field>
-        <Field
-          label={
-            <>
-              Disk for logs and traces <HelpTip topic="telemetryDisk" />
-            </>
-          }
-          hint="60% for logs, 40% for traces; the oldest data goes first."
-        >
-          {number(draft.diskLimitGB, (n) => set("diskLimitGB", n), "GB")}
-        </Field>
-      </div>
-      <p className={settingsStyles.subhead}>Default limits per service</p>
-      <div className={settingsStyles.twoCol}>
-        <Field label="Spans">
-          {number(
-            draft.defaultCaps.spansPerSecond,
-            (n) => setCap("spansPerSecond", n),
-            "per second",
+      <SettingsForm
+        form={{
+          dirty,
+          invalid: problem !== null,
+          message: problem ?? undefined,
+          pending: save.isPending,
+          error: save.error,
+          reset: () => {
+            setDraft(settings);
+            save.reset();
+          },
+          save: () =>
+            save.mutate(
+              { ...draft, enabled: settings.enabled },
+              {
+                onSuccess: () => toast.add({ type: "success", title: "Telemetry settings saved" }),
+              },
+            ),
+        }}
+      >
+        <SettingRow
+          label="Keep metrics for"
+          control={number(
+            "Keep metrics for",
+            draft.metricsRetentionDays,
+            (n) => set("metricsRetentionDays", n),
+            "days",
           )}
-        </Field>
-        <Field label="Log records">
-          {number(draft.defaultCaps.logsPerSecond, (n) => setCap("logsPerSecond", n), "per second")}
-        </Field>
-        <Field label="Metric series" hint="Distinct series in the last hour.">
-          {number(draft.defaultCaps.series, (n) => setCap("series", n), "series")}
-        </Field>
-      </div>
-      {dirty && problem && <p className={settingsStyles.error}>{problem}</p>}
-    </SettingsCard>
+        />
+        <SettingRow
+          label="Keep logs for"
+          control={number(
+            "Keep logs for",
+            draft.logsRetentionDays,
+            (n) => set("logsRetentionDays", n),
+            "days",
+          )}
+        />
+        <SettingRow
+          label="Keep traces for"
+          control={number(
+            "Keep traces for",
+            draft.tracesRetentionDays,
+            (n) => set("tracesRetentionDays", n),
+            "days",
+          )}
+        />
+        <SettingRow
+          label={<HelpTip topic="telemetryDisk">Disk for logs and traces</HelpTip>}
+          description="60% for logs, 40% for traces; the oldest data goes first."
+          control={number(
+            "Disk for logs and traces",
+            draft.diskLimitGB,
+            (n) => set("diskLimitGB", n),
+            "GB",
+          )}
+        />
+        <SettingRow
+          label="Default limits per service"
+          description="What each service may send unless it sets its own caps. Series counts distinct metric series in the last hour."
+        >
+          <div className={styles.caps}>
+            {number(
+              "Spans per second",
+              draft.defaultCaps.spansPerSecond,
+              (n) => setCap("spansPerSecond", n),
+              "/s",
+              "Spans",
+            )}
+            {number(
+              "Log records per second",
+              draft.defaultCaps.logsPerSecond,
+              (n) => setCap("logsPerSecond", n),
+              "/s",
+              "Log records",
+            )}
+            {number(
+              "Metric series",
+              draft.defaultCaps.series,
+              (n) => setCap("series", n),
+              "per hour",
+              "Series",
+            )}
+          </div>
+        </SettingRow>
+      </SettingsForm>
+    </Group>
   );
 }
 
-function DeleteCard({ telemetry }: { telemetry: Telemetry }) {
+function DeleteGroup({ telemetry }: { telemetry: Telemetry }) {
   const [confirming, setConfirming] = useState(false);
   const remove = useDeleteTelemetryData();
   const toast = useToast();
   const enabled = telemetry.settings.enabled;
   return (
-    <LayerCard title="Danger zone">
-      <div className={settingsStyles.section}>
-        <div className={settingsStyles.danger}>
-          <p className={settingsStyles.note}>
-            {enabled
+    <Group title="Danger zone">
+      <Rows>
+        <SettingRow
+          label="Delete telemetry data"
+          description={
+            enabled
               ? "Turn telemetry off to delete its data."
-              : "Delete the telemetry containers, all stored metrics, logs, and traces, and Grafana's dashboards."}
-          </p>
-          <Button variant="danger" disabled={enabled} onClick={() => setConfirming(true)}>
-            Delete telemetry data
-          </Button>
-        </div>
-      </div>
+              : "Delete the telemetry containers, all stored metrics, logs, and traces, and Grafana's dashboards."
+          }
+          control={
+            <Button
+              variant="destructive"
+              icon={<TrashIcon />}
+              disabled={enabled}
+              onClick={() => setConfirming(true)}
+            >
+              Delete
+            </Button>
+          }
+        />
+      </Rows>
       <ConfirmDialog
         open={confirming}
         onOpenChange={(open) => {
@@ -431,6 +492,6 @@ function DeleteCard({ telemetry }: { telemetry: Telemetry }) {
         Every metric, log record, and trace on this server is deleted, with Grafana's users,
         dashboards, and settings. This can't be undone.
       </ConfirmDialog>
-    </LayerCard>
+    </Group>
   );
 }
