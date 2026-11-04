@@ -124,7 +124,7 @@ nothing from `internal/`. Consumers define the small interfaces they need
 | `internal/netns` | TCP listeners inside another process's network namespace (setns on a locked thread), and the namespace's identity | — |
 | `internal/host` | host CPU, memory, network, disk I/O, and filesystem usage from procfs/sysfs/statfs; the conntrack table over netlink | — |
 | `internal/s3` | S3-compatible object storage client (put, get, delete, check) | — |
-| `internal/notify` | notification channels and event rules, event- and alert-to-message mapping, crash-loop detection, outbox delivery with retries, provider registry, Hark push adapter | `telemetry`; store via interface |
+| `internal/notify` | notification channels and event rules, event- and alert-to-message mapping, crash-loop detection, outbox delivery with retries, provider registry, Hark and ntfy push adapters, SMTP email adapter | `telemetry`; store via interface |
 | `internal/update` | release checks, verified downloads, replacing the shed binary | — |
 | `internal/telemetry` | shed's own OpenTelemetry tracer, meter, and logger providers with switchable exporters; the slog bridge; the `Event` type deploys and backups report for annotations | — |
 | `internal/otlp` | OTLP/HTTP receiver: decode, attribute rewriting, masking hook, per-service caps, span metrics, forwarding | — |
@@ -1086,10 +1086,24 @@ recovered; restoring database rows does not restore local archive files.
 ### Notifications
 
 `internal/notify` sends notifications to the **channels** in
-`notification_channels`: a name, a provider (`hark`), a provider-specific
-target (for Hark, the webhook URL `https://hark.ryan.ceo/hooks/<token>`, whose
-token is the only credential), and an enabled flag. Every enabled channel gets
-every message: there is no routing and no severity.
+`notification_channels`: a name, a provider (`hark`, `ntfy`, or `smtp`), a
+provider-specific target URL, and an enabled flag. Every enabled channel gets
+every message: there is no routing and no severity. The targets are:
+
+- `hark`: the webhook URL `https://hark.ryan.ceo/hooks/<token>`, whose token
+  is the only credential.
+- `ntfy`: the topic URL `https://<host>[/<base path>]/<topic>`, with an
+  optional access token (`https://:<token>@host/topic`) or `user:pass` as
+  userinfo, sent as basic auth. The topic is 1 to 64 of `A-Za-z0-9_-`. shed
+  POSTs JSON (`topic`, `message`, `title`, `click`, and the project as a tag)
+  to the base URL; the message is cut to 4096 bytes.
+- `smtp`: `smtp://[user:pass@]host[:port]?from=<addr>&to=<addr>[,<addr>...]`
+  requires STARTTLS (port 587 by default), and `smtps://` uses implicit TLS
+  (port 465). Plain SMTP is allowed only to a loopback host and never with
+  credentials, which go as AUTH PLAIN. The mail is quoted-printable UTF-8
+  text: the body, then the project and the link.
+
+Plain `http` is accepted for Hark and ntfy only on loopback hosts.
 
 `Enqueue` rejects an empty body and writes one `pending` row of
 `notification_deliveries` per enabled channel. A repeated (channel, key) is
@@ -1103,7 +1117,11 @@ A failed send is retried after 1 minute, 5 minutes, 30 minutes, 2 hours, and
 6 hours; one more failure marks the row `failed`. An error that wraps
 `notify.ErrPermanent` fails the row at once. Hark treats an unknown token
 (404), any other 4xx except 429, and a message that reached no device as
-permanent; 429, 5xx, and transport errors are retried. Rows of a channel that
+permanent; 429, 5xx, and transport errors are retried. ntfy treats any 4xx
+except 429 as permanent and retries the rest. SMTP treats a 5xx reply and a
+server without STARTTLS as permanent; 4xx replies and transport errors are
+retried. ntfy has no idempotency key, so a retry after a lost response can
+repeat a notification; so can SMTP. Rows of a channel that
 was disabled after they were queued fail with "channel is disabled", and
 deleting a channel deletes its rows. `last_error` comes from the adapter,
 which never includes the target. Sent and failed rows are deleted after 30

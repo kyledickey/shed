@@ -19,6 +19,7 @@ import form from "../settings/Form.module.css";
 import { FormDialog } from "../settings/FormDialog";
 import { Group } from "../settings/Group";
 import styles from "./Notifications.module.css";
+import { type Field, targetForm } from "./targets";
 
 /** ChannelsCard lists where notifications go, and adds, edits, tests, and deletes channels. */
 export function ChannelsCard({
@@ -37,7 +38,7 @@ export function ChannelsCard({
   return (
     <Group
       title="Channels"
-      description="Where notifications are sent, such as your phone through Hark."
+      description="Where notifications are sent, such as your phone through Hark or ntfy, or email."
       actions={
         channels.length > 0 && (
           <Button size="sm" icon={<PlusIcon />} onClick={() => setEditing("new")}>
@@ -170,11 +171,7 @@ function ChannelRow({
   );
 }
 
-const targetHints: Record<string, string> = {
-  hark: "The webhook URL from the Hark app, like https://hark.ryan.ceo/hooks/<token>. It works like a password.",
-};
-
-/** ChannelDialog adds a channel, or edits one: the provider is fixed and a blank target keeps the saved one. */
+/** ChannelDialog adds a channel, or edits one: the provider is fixed and blank target fields keep the saved target. */
 function ChannelDialog({
   channel,
   providers,
@@ -187,12 +184,28 @@ function ChannelDialog({
   const formId = useId();
   const [name, setName] = useState(channel?.name ?? "");
   const [provider, setProvider] = useState(channel?.provider ?? providers[0] ?? "");
-  const [target, setTarget] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
   const create = useCreateNotificationChannel();
   const update = useUpdateNotificationChannel();
   const toast = useToast();
   const op = channel ? update : create;
-  const valid = name.trim() !== "" && provider !== "" && (channel !== null || target !== "");
+  const targetFields = targetForm(provider).fields;
+  const value = (f: Field) => values[f.key] ?? f.options?.[0]?.value ?? "";
+  // The saved target is never returned, so an edit with every field blank keeps it.
+  const keepTarget =
+    channel !== null && targetFields.every((f) => f.options || value(f).trim() === "");
+  let target: string | undefined;
+  let targetError: string | undefined;
+  if (!keepTarget && targetFields.every((f) => f.optional || value(f).trim() !== "")) {
+    try {
+      target = targetForm(provider).compose(
+        Object.fromEntries(targetFields.map((f) => [f.key, value(f)])),
+      );
+    } catch (e) {
+      targetError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const valid = name.trim() !== "" && provider !== "" && (keepTarget || target !== undefined);
 
   const submit = () => {
     const done = () => {
@@ -200,12 +213,12 @@ function ChannelDialog({
       toast.add({ type: "success", title: channel ? "Channel saved" : "Channel added" });
     };
     if (channel) {
-      update.mutate(
-        { id: channel.id, patch: { name: name.trim(), target: target || undefined } },
+      update.mutate({ id: channel.id, patch: { name: name.trim(), target } }, { onSuccess: done });
+    } else {
+      create.mutate(
+        { name: name.trim(), provider, target: target ?? "", enabled: true },
         { onSuccess: done },
       );
-    } else {
-      create.mutate({ name: name.trim(), provider, target, enabled: true }, { onSuccess: done });
     }
   };
 
@@ -250,24 +263,44 @@ function ChannelDialog({
         <Select
           label="Provider"
           value={provider}
-          onValueChange={(v) => v && setProvider(v)}
+          onValueChange={(v) => {
+            if (v) {
+              setProvider(v);
+              setValues({});
+            }
+          }}
           disabled={channel !== null}
           items={providers.map((p) => ({ value: p, label: p }))}
         />
-        <Input
-          label="Target"
-          description={
-            channel
-              ? "Leave blank to keep the saved target."
-              : (targetHints[provider] ?? "Where to send notifications.")
-          }
-          className={cx(form.mono)}
-          type="password"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          autoComplete="new-password"
-          spellCheck={false}
-        />
+        {channel && (
+          <p className={form.note}>Leave the fields below blank to keep the saved target.</p>
+        )}
+        {targetFields.map((f) =>
+          f.options ? (
+            <Select
+              key={`${provider}.${f.key}`}
+              label={f.label}
+              description={f.description}
+              value={value(f)}
+              onValueChange={(v) => v && setValues({ ...values, [f.key]: v })}
+              items={f.options}
+            />
+          ) : (
+            <Input
+              key={`${provider}.${f.key}`}
+              label={f.optional ? `${f.label} (optional)` : f.label}
+              description={f.description}
+              placeholder={f.placeholder}
+              className={cx(form.mono)}
+              type={f.secret ? "password" : "text"}
+              value={value(f)}
+              onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+              autoComplete={f.secret ? "new-password" : "off"}
+              spellCheck={false}
+            />
+          ),
+        )}
+        {targetError && <p className={form.error}>{targetError}</p>}
         {op.error && <p className={form.error}>{errorMessage(op.error)}</p>}
       </form>
     </FormDialog>

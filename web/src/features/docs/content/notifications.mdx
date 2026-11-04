@@ -2,14 +2,26 @@
 title: Notifications
 group: Operating
 order: 146
-description: "shed can push a message to your phone when a deploy, backup, or restore fails, when a service runs out of memory or crashes in a loop, or, with telemetry on, when a metric crosses a threshold."
+description: "shed can send a message to your phone or inbox when a deploy, backup, or restore fails, when a service runs out of memory or crashes in a loop, or, with telemetry on, when a metric crosses a threshold."
 ---
 
 ## Channels
 
-A channel is where notifications go. shed supports [Hark](https://hark.ryan.ceo), a push service for your phone. Add channels under **Server, Notifications**.
+A channel is where notifications go. Add channels under **Server, Notifications**. shed supports three providers:
 
-To get a Hark webhook, install the Hark app, create a webhook there, and copy its URL. It looks like `https://hark.ryan.ceo/hooks/<token>`. The token is the only credential, so shed treats the URL as a secret: it is encrypted in `shed.db`, shown only in the field you paste it into, and never returned by the API, written to the log, or recorded in the [audit log](/docs/audit). To change it, paste a new URL; leave the field blank to keep the saved one.
+- **hark**: [Hark](https://hark.ryan.ceo), a push service for your phone. Install the Hark app, create a webhook there, and paste its URL, which looks like `https://hark.ryan.ceo/hooks/<token>`.
+- **ntfy**: a topic on [ntfy.sh](https://ntfy.sh) or your own ntfy server. Enter the topic URL, like `https://ntfy.sh/my-topic`. The topic name is the last part of the path: letters, digits, `-`, and `_`, up to 64 characters. If the topic is protected, add an access token (`tk_...`). A message is tagged with its project name.
+- **smtp**: email through an SMTP server. Enter the server, the security, an optional port, an optional username and password, a From address, and one or more To addresses separated by commas. **STARTTLS** connects to port 587 by default and requires the server to upgrade to TLS; **TLS** connects with TLS from the start, on port 465 by default. The connection is only allowed without TLS to a server on the same machine (`localhost`). The password is only sent over TLS.
+
+The dashboard combines the fields into one target URL:
+
+| Provider | Target                                                                                    |
+| -------- | ----------------------------------------------------------------------------------------- |
+| hark     | `https://hark.ryan.ceo/hooks/<token>`                                                     |
+| ntfy     | `https://ntfy.sh/<topic>`, or `https://:<token>@<host>/<topic>` with a token              |
+| smtp     | `smtp://[user:pass@]host[:port]?from=<addr>&to=<addr>[,<addr>...]`, or `smtps://` for TLS |
+
+Use the URL directly when you add a channel through the API. A target holds credentials, so shed treats it as a secret: it is encrypted in `shed.db`, shown only in the fields you type it into, and never returned by the API, written to the log, or recorded in the [audit log](/docs/audit). Editing a channel shows the fields blank. Leave them all blank to keep the saved target, or fill in every required field to replace it.
 
 **Send test** sends a message straight to the channel, even if it is disabled, and shows the error if it fails. Test messages are not listed under recent deliveries.
 
@@ -67,13 +79,20 @@ shed provisions the `shed` contact point and the root notification policy on eve
 
 ## Delivery and retries
 
-Each message is stored in `shed.db` for every enabled channel before anything is sent, so a restart does not lose it. Sending is retried when it fails for a reason that might pass: after 1 minute, 5 minutes, 30 minutes, 2 hours, and 6 hours, after which the delivery is marked failed. Hark rejecting the webhook (an unknown token or another client error), or accepting the message with no device to receive it, fails the delivery at once without retries. A repeated event, such as the same deployment failing again, is sent once per channel.
+Each message is stored in `shed.db` for every enabled channel before anything is sent, so a restart does not lose it. Sending is retried when it fails for a reason that might pass: after 1 minute, 5 minutes, 30 minutes, 2 hours, and 6 hours, after which the delivery is marked failed. Some failures can't pass, so they fail the delivery at once without retries:
+
+- **hark**: Hark rejects the webhook (an unknown token or another client error), or accepts the message with no device to receive it.
+- **ntfy**: the server answers with a client error other than 429 (too many requests), such as a wrong token or a forbidden topic. The error ntfy gives is kept, with the token removed.
+- **smtp**: the server answers with a permanent (5xx) error, such as failed authentication or a rejected address.
+
+Rate limits, server errors, temporary (4xx) SMTP replies, and network errors are retried. A repeated event, such as the same deployment failing again, is sent once per channel.
 
 **Recent deliveries** lists the newest 50 with their status, attempts, and last error. Finished deliveries are deleted after 30 days. Deleting a channel deletes its deliveries.
 
 ## Limits
 
-- Hark is the only provider.
+- Providers are Hark, ntfy, and SMTP email.
+- An email is plain text.
 - Rules send to every enabled channel; you can't send a rule to one channel.
 - Crash-loop counts reset when shed restarts.
 - An alert Grafana sends while shed is down is sent again up to 5 minutes later, once shed is back.

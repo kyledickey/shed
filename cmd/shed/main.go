@@ -222,7 +222,8 @@ func run() error {
 	})
 
 	gh := &api.GitHubHolder{}
-	notifier := notify.New(notify.NewStore(st), cfg.Server.URL, log, notify.Hark(nil))
+	notifier := notify.New(notify.NewStore(st), cfg.Server.URL, log,
+		notify.Hark(nil), notify.Ntfy(nil), notify.SMTP())
 	// Annotate drops events while telemetry is off; notifications don't depend on it.
 	events := func(e telemetry.Event) {
 		dashboards.Annotate(e)
