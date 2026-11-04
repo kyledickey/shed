@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -20,27 +20,37 @@ function applyMode(theme: Theme) {
   document.documentElement.dataset.mode = dark ? "dark" : "light";
 }
 
+// Every useTheme shares the stored preference, so a choice made in one control
+// shows in the others and stops system mode from following the OS.
+const listeners = new Set<() => void>();
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  const media = matchMedia(darkQuery);
+  const onChange = () => {
+    if (storedTheme() === "system") applyMode("system");
+  };
+  media.addEventListener("change", onChange);
+  return () => {
+    listeners.delete(listener);
+    media.removeEventListener("change", onChange);
+  };
+}
+
+function setStoredTheme(next: Theme) {
+  try {
+    if (next === "system") localStorage.removeItem(storageKey);
+    else localStorage.setItem(storageKey, next);
+  } catch {}
+  applyMode(next);
+  for (const listener of listeners) listener();
+}
+
 /** Returns the user's theme preference and a setter that applies and persists it. */
 export function useTheme(): [Theme, (theme: Theme) => void] {
   // Prerendered pages start at "system"; the stored choice is read after hydration.
-  const [theme, setTheme] = useState<Theme>("system");
-  useEffect(() => setTheme(storedTheme()), []);
-  useEffect(() => {
-    if (theme !== "system") return;
-    const media = matchMedia(darkQuery);
-    const onChange = () => applyMode("system");
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, [theme]);
-  const apply = (next: Theme) => {
-    try {
-      if (next === "system") localStorage.removeItem(storageKey);
-      else localStorage.setItem(storageKey, next);
-    } catch {}
-    applyMode(next);
-    setTheme(next);
-  };
-  return [theme, apply];
+  const theme = useSyncExternalStore(subscribe, storedTheme, () => "system" as const);
+  return [theme, setStoredTheme];
 }
 
 /** useDarkMode reports whether the dashboard is currently drawn dark. */
