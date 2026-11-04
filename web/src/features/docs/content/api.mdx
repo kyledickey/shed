@@ -60,6 +60,7 @@ curl -s https://shed.example.com/api/projects \
     "id": "k3m9x2q7a1bz",
     "name": "blog",
     "createdAt": "2026-10-04T09:12:44Z",
+    "updatedAt": "2026-10-21T16:03:10Z",
     "services": [
       { "id": "p8d4n6t2c5wy", "name": "web", "kind": "app", "status": "active" },
       { "id": "h2v7r1j9e4ms", "name": "db", "kind": "postgres", "status": "active" }
@@ -125,6 +126,7 @@ type ServiceStatus = "offline" | "deploying" | "active" | "failed" | "crashed" |
 
 type Project = {
   id: string; name: string; createdAt: string;
+  updatedAt: string; // latest of createdAt and its services' and deployments' creation
   services: { id: string; name: string; kind: ServiceKind; status: ServiceStatus }[];
 };
 type ProjectDetail = Omit<Project, "services"> & { services: Service[] };

@@ -29,6 +29,8 @@ export type Project = {
   id: string;
   name: string;
   createdAt: string;
+  /** Latest of createdAt and the creation of its services and deployments. */
+  updatedAt: string;
   services: ServiceSummary[];
 };
 

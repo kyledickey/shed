@@ -30,6 +30,7 @@ type projectJSON[S any] struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	Services  []S       `json:"services"`
 }
 
@@ -138,7 +139,7 @@ func toProject(p control.ProjectView) projectJSON[serviceJSON] {
 	for _, svc := range p.Services {
 		services = append(services, toService(svc))
 	}
-	return projectJSON[serviceJSON]{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, Services: services}
+	return projectJSON[serviceJSON]{ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, Services: services}
 }
 
 func toService(v control.ServiceView) serviceJSON {

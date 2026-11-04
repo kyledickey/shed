@@ -16,6 +16,9 @@ type Project struct {
 	ID        string
 	Name      string
 	CreatedAt time.Time
+	// UpdatedAt is the latest of CreatedAt and the creation of the
+	// project's services and deployments.
+	UpdatedAt time.Time
 }
 
 // Service is a deployable unit within a project.

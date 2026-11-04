@@ -2565,7 +2565,7 @@ GET    /api/setup/github?token=                 HTML auto-submit form
 GET    /api/setup/github/callback?code=&state=  302 → GitHub install page
 POST   /api/setup/github/import  ImportApp     → Setup
 
-GET    /api/projects                            → Project[]
+GET    /api/projects                            → Project[] (most recently updated first)
 POST   /api/projects            {name}          → Project
 GET    /api/projects/{id}                       → ProjectDetail
 PATCH  /api/projects/{id}       {name}          → Project
@@ -2775,6 +2775,7 @@ type DeploymentStatus =
 
 type Project = {
   id: string; name: string; createdAt: string;
+  updatedAt: string; // latest of createdAt and its services' and deployments' creation
   services: { id: string; name: string; kind: ServiceKind; status: ServiceStatus }[];
 };
 type ProjectDetail = Omit<Project, "services"> & { services: Service[] };

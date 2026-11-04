@@ -207,6 +207,44 @@ func TestProjects(t *testing.T) {
 	}
 }
 
+func TestProjectsByUpdated(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	old := mustProject(t, s, "old")
+	busy := mustProject(t, s, "busy")
+	fresh := mustProject(t, s, "fresh")
+	svc := mustService(t, s, Service{ProjectID: old.ID, Name: "api", Kind: "app"})
+	d, err := s.CreateDeployment(ctx, Deployment{ServiceID: svc.ID, Status: StatusQueued, Trigger: TriggerPush})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []struct{ table, id, at string }{
+		{"projects", old.ID, "2026-01-01T00:00:00.000Z"},
+		{"projects", busy.ID, "2026-01-02T00:00:00.000Z"},
+		{"projects", fresh.ID, "2026-01-03T00:00:00.000Z"},
+		{"services", svc.ID, "2026-01-02T12:00:00.000Z"},
+		{"deployments", d.ID, "2026-01-04T00:00:00.000Z"},
+	} {
+		if err := s.exec(ctx, `UPDATE `+u.table+` SET created_at = ? WHERE id = ?`, u.at, u.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ps, err := s.Projects(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range ps {
+		got = append(got, p.Name)
+	}
+	if want := []string{"old", "fresh", "busy"}; !slices.Equal(got, want) {
+		t.Errorf("Projects() order = %v, want %v", got, want)
+	}
+	if want := "2026-01-04T00:00:00Z"; ps[0].UpdatedAt.Format(time.RFC3339) != want {
+		t.Errorf("UpdatedAt = %v, want %s", ps[0].UpdatedAt, want)
+	}
+}
+
 func TestServices(t *testing.T) {
 	ctx := context.Background()
 	s := newStore(t)

@@ -19,7 +19,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) error {
 			summaries = append(summaries, serviceSummaryJSON(svc))
 		}
 		out = append(out, projectJSON[serviceSummaryJSON]{
-			ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, Services: summaries,
+			ID: p.ID, Name: p.Name, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, Services: summaries,
 		})
 	}
 	return writeJSON(w, http.StatusOK, out)
