@@ -69,17 +69,18 @@ func TestDashboardsIntegration(t *testing.T) {
 	}
 	const grafanaURL = "http://shed.test/grafana/"
 	stack := observability.New(observability.Config{
-		Store:        st,
-		Docker:       dc,
-		Metrics:      victoria.NewMetrics("http://"+addrs.Metrics, nil),
-		Logs:         victoria.NewLogs("http://"+addrs.Logs, nil),
-		Traces:       victoria.NewTraces("http://"+addrs.Traces, nil),
-		Grafana:      func(pw string) observability.GrafanaAPI { return newClient(pw) },
-		Addrs:        addrs,
-		Dir:          filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL:   grafanaURL,
-		OTLPEndpoint: "http://localhost:4318",
-		Log:          log,
+		Store:           st,
+		Docker:          dc,
+		Metrics:         victoria.NewMetrics("http://"+addrs.Metrics, nil),
+		Logs:            victoria.NewLogs("http://"+addrs.Logs, nil),
+		Traces:          victoria.NewTraces("http://"+addrs.Traces, nil),
+		Grafana:         func(pw string) observability.GrafanaAPI { return newClient(pw) },
+		Addrs:           addrs,
+		Dir:             filepath.Join(t.TempDir(), "telemetry"),
+		GrafanaURL:      grafanaURL,
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + observability.AlertWebhookPath,
+		Log:             log,
 	})
 	dashboards := observability.NewDashboards(observability.DashboardsConfig{
 		Store: st,

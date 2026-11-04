@@ -32,6 +32,7 @@ import (
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 	"github.com/kyledickey/shed/internal/victoria"
 )
 
@@ -169,12 +170,13 @@ func TestIntegrationDatabaseExporters(t *testing.T) {
 		Grafana: func(pw string) observability.GrafanaAPI {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
-		Addrs:        addrs,
-		Dir:          filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL:   "http://" + addrs.Grafana + "/grafana/",
-		OTLPEndpoint: "http://localhost:4318",
-		Databases:    st,
-		Log:          log,
+		Addrs:           addrs,
+		Dir:             filepath.Join(t.TempDir(), "telemetry"),
+		GrafanaURL:      "http://" + addrs.Grafana + "/grafana/",
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + observability.AlertWebhookPath,
+		Databases:       st,
+		Log:             log,
 	})
 	t.Cleanup(func() {
 		off := observability.DefaultSettings()
@@ -291,7 +293,7 @@ func TestIntegrationDatabaseExporters(t *testing.T) {
 	}
 
 	// top_queries reads the statement statistics the exporters report.
-	plane := control.New(control.Config{Store: st, Telemetry: stack, Stores: control.TelemetryStores{Metrics: metrics}, Log: log})
+	plane := control.New(control.Config{Store: st, Variables: variables.New(st, nil), Telemetry: stack, Stores: control.TelemetryStores{Metrics: metrics}, Log: log})
 	wantStatement := map[string]string{"postgres": "pg_sleep", "mysql": "SELECT ?"}
 	for _, d := range dbs {
 		want, ok := wantStatement[d.svc.Kind]

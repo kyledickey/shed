@@ -32,6 +32,7 @@ import (
 	"github.com/kyledickey/shed/internal/proxy"
 	"github.com/kyledickey/shed/internal/store"
 	"github.com/kyledickey/shed/internal/telemetry"
+	"github.com/kyledickey/shed/internal/variables"
 	"github.com/kyledickey/shed/internal/victoria"
 )
 
@@ -108,13 +109,14 @@ func TestEdgeIntegration(t *testing.T) {
 		Grafana: func(pw string) observability.GrafanaAPI {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
-		Addrs:        addrs,
-		Dir:          filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL:   "http://127.0.0.1/grafana/",
-		OTLPEndpoint: "http://localhost:4318",
-		Log:          log,
+		Addrs:           addrs,
+		Dir:             filepath.Join(t.TempDir(), "telemetry"),
+		GrafanaURL:      "http://127.0.0.1/grafana/",
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + observability.AlertWebhookPath,
+		Log:             log,
 	})
-	plane := control.New(control.Config{Store: st, Telemetry: stack, Log: log})
+	plane := control.New(control.Config{Store: st, Variables: variables.New(st, nil), Telemetry: stack, Log: log})
 	edge := observability.NewEdge(observability.EdgeConfig{Store: st, Logs: logs, Mask: plane.ShedMask, Log: log})
 	stack.AddWorker(edge.Run)
 

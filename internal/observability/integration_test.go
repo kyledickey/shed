@@ -35,6 +35,7 @@ import (
 	"github.com/kyledickey/shed/internal/grafana"
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 	"github.com/kyledickey/shed/internal/victoria"
 )
 
@@ -100,15 +101,16 @@ func TestIntegration(t *testing.T) {
 		Grafana: func(pw string) observability.GrafanaAPI {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
-		Addrs:        addrs,
-		Dir:          dir,
-		MinFreeBytes: 0,
-		GrafanaURL:   shed.URL + "/grafana/",
-		OTLPEndpoint: "http://localhost:4318",
-		Log:          log,
+		Addrs:           addrs,
+		Dir:             dir,
+		MinFreeBytes:    0,
+		GrafanaURL:      shed.URL + "/grafana/",
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + observability.AlertWebhookPath,
+		Log:             log,
 	})
 	auditLog := audit.New(st, log)
-	plane := control.New(control.Config{Store: st, Audit: auditLog, Telemetry: stack, BaseURL: shed.URL, Log: log})
+	plane := control.New(control.Config{Store: st, Variables: variables.New(st, nil), Audit: auditLog, Telemetry: stack, BaseURL: shed.URL, Log: log})
 	authn := auth.New(api.AuthStore(st), auditLog, func() (auth.OAuth, bool) { return nil, false }, shed.URL, []string{"octocat"}, log)
 	srv, err := api.New(ctx, api.Config{
 		Control: plane, Settings: st, Auth: authn, GitHub: &api.GitHubHolder{}, BaseURL: shed.URL,

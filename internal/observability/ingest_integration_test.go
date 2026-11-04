@@ -33,6 +33,7 @@ import (
 	"github.com/kyledickey/shed/internal/observability"
 	"github.com/kyledickey/shed/internal/otlp"
 	"github.com/kyledickey/shed/internal/store"
+	"github.com/kyledickey/shed/internal/variables"
 	"github.com/kyledickey/shed/internal/victoria"
 )
 
@@ -161,10 +162,11 @@ func TestIngestIntegration(t *testing.T) {
 		Grafana: func(pw string) observability.GrafanaAPI {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
-		Addrs:        addrs,
-		Dir:          filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL:   "http://127.0.0.1/grafana/",
-		OTLPEndpoint: fmt.Sprintf("http://localhost:%d", port),
+		Addrs:           addrs,
+		Dir:             filepath.Join(t.TempDir(), "telemetry"),
+		GrafanaURL:      "http://127.0.0.1/grafana/",
+		OTLPEndpoint:    fmt.Sprintf("http://localhost:%d", port),
+		AlertWebhookURL: fmt.Sprintf("http://127.0.0.1:%d%s", port, observability.AlertWebhookPath),
 		Security: &observability.Security{
 			Docker: dc, Catalog: st, Audit: audit.New(st, log), Logs: vl, Conntrack: table{},
 		},
@@ -173,7 +175,7 @@ func TestIngestIntegration(t *testing.T) {
 	deployer := deploy.New(deploy.Config{Store: st, Docker: dc, LogDir: t.TempDir(), Log: log})
 	defer deployer.Stop()
 	auditLog := audit.New(st, log)
-	plane := control.New(control.Config{Store: st, Deployer: deployer, Audit: auditLog, Telemetry: stack, BaseURL: "http://127.0.0.1", Log: log})
+	plane := control.New(control.Config{Store: st, Variables: variables.New(st, nil), Deployer: deployer, Audit: auditLog, Telemetry: stack, BaseURL: "http://127.0.0.1", Log: log})
 	gateway := observability.NewGateway(observability.GatewayConfig{
 		Store: st, Docker: dc, Namespaces: netnsOpener{}, Masks: plane, Settings: stack.Settings, Port: port, Log: log,
 	})

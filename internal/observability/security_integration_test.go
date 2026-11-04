@@ -91,10 +91,11 @@ func TestSecurityIntegration(t *testing.T) {
 		Grafana: func(pw string) observability.GrafanaAPI {
 			return grafana.New("http://"+addrs.Grafana+"/grafana", pw, &http.Client{Timeout: 30 * time.Second})
 		},
-		Addrs:        addrs,
-		Dir:          filepath.Join(t.TempDir(), "telemetry"),
-		GrafanaURL:   "http://" + addrs.Grafana + "/grafana/",
-		OTLPEndpoint: "http://localhost:4318",
+		Addrs:           addrs,
+		Dir:             filepath.Join(t.TempDir(), "telemetry"),
+		GrafanaURL:      "http://" + addrs.Grafana + "/grafana/",
+		OTLPEndpoint:    "http://localhost:4318",
+		AlertWebhookURL: "http://127.0.0.1:4318" + observability.AlertWebhookPath,
 		Security: &observability.Security{
 			Docker: dc, Catalog: st, Audit: audit.New(st, log), Logs: logs, Conntrack: table{},
 		},
